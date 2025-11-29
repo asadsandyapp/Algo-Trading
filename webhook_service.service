@@ -1,0 +1,20 @@
+[Unit]
+Description=Binance Futures Webhook Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/binance-webhook
+Environment="PATH=/opt/binance-webhook/venv/bin"
+Environment="WEBHOOK_TOKEN=YOUR_WEBHOOK_TOKEN_HERE"
+Environment="BINANCE_API_KEY=YOUR_BINANCE_API_KEY"
+Environment="BINANCE_API_SECRET=YOUR_BINANCE_API_SECRET"
+Environment="BINANCE_TESTNET=false"
+ExecStart=/opt/binance-webhook/venv/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 --threads 2 --timeout 30 --access-logfile /opt/binance-webhook/access.log --error-logfile /opt/binance-webhook/error.log binance_webhook_service:app
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
