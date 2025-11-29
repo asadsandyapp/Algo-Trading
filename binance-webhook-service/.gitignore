@@ -12,12 +12,10 @@ ENV/
 # Environment variables
 .env
 .env.local
-*.env
 
 # Logs
-*.log
 logs/
-binance-webhook-service/logs/
+*.log
 
 # IDE
 .vscode/
@@ -33,10 +31,4 @@ Thumbs.db
 # Service specific
 *.pid
 *.sock
-
-# Credentials
-*credentials*
-*secrets*
-*api_key*
-*token*
 
