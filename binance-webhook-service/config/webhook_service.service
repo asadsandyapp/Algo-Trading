@@ -5,10 +5,10 @@ After=network.target
 [Service]
 Type=simple
 User=www-data
-WorkingDirectory=/opt/algo-trading/binance-webhook-service
-Environment="PATH=/opt/algo-trading/binance-webhook-service/venv/bin"
-EnvironmentFile=/opt/algo-trading/binance-webhook-service/.env
-ExecStart=/opt/algo-trading/binance-webhook-service/venv/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 --threads 2 --timeout 30 --access-logfile /opt/algo-trading/binance-webhook-service/logs/access.log --error-logfile /opt/algo-trading/binance-webhook-service/logs/error.log --pythonpath /opt/algo-trading/binance-webhook-service/src binance_webhook_service:app
+WorkingDirectory=/opt/Algo-Trading/binance-webhook-service
+Environment="PATH=/opt/Algo-Trading/binance-webhook-service/venv/bin"
+EnvironmentFile=/opt/Algo-Trading/binance-webhook-service/.env
+ExecStart=/opt/Algo-Trading/binance-webhook-service/venv/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 --threads 2 --timeout 30 --access-logfile /opt/Algo-Trading/binance-webhook-service/logs/access.log --error-logfile /opt/Algo-Trading/binance-webhook-service/logs/error.log --pythonpath /opt/Algo-Trading/binance-webhook-service/src binance_webhook_service:app
 Restart=always
 RestartSec=10
 

@@ -692,7 +692,7 @@ def create_limit_order(signal_data):
                     logger.error(f"Failed to create stop loss order: {e}")
             elif existing_sl:
                 logger.info(f"Stop loss order already exists for {symbol}, skipping creation")
-            
+        
             if take_profit and take_profit > 0 and not existing_tp:
                 try:
                     tp_side = 'SELL' if side == 'BUY' else 'BUY'
