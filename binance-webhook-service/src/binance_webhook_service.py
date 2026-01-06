@@ -35,6 +35,7 @@ WEBHOOK_TOKEN = os.getenv('WEBHOOK_TOKEN', 'CHANGE_ME')
 BINANCE_API_KEY = os.getenv('BINANCE_API_KEY', '')
 BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET', '')
 BINANCE_TESTNET = os.getenv('BINANCE_TESTNET', 'false').lower() == 'true'
+BINANCE_SUB_ACCOUNT_EMAIL = os.getenv('BINANCE_SUB_ACCOUNT_EMAIL', '')  # For sub-account trading
 
 # Initialize Binance client
 try:
@@ -130,6 +131,8 @@ def format_symbol(trading_symbol):
 def check_existing_position(symbol, signal_side):
     """Check if there's an existing open position for the symbol"""
     try:
+        # For sub-accounts, we need to use the sub-account's API keys directly
+        # If using sub-account API keys, this will work automatically
         positions = client.futures_position_information(symbol=symbol)
         for position in positions:
             position_amt = float(position.get('positionAmt', 0))
@@ -437,6 +440,17 @@ def create_limit_order(signal_data):
                     except Exception as e:
                         logger.warning(f"Failed to cancel {order.get('type')} order: {e}")
             logger.info(f"Canceled {canceled_count} limit orders for {symbol}")
+            
+            # Wait a moment for Binance to process cancellations
+            time.sleep(0.5)
+            
+            # Re-check orders to ensure they're canceled (prevent false duplicate detection)
+            has_orders_after_cancel, _ = check_existing_orders(symbol)
+            if has_orders_after_cancel:
+                logger.warning(f"Some orders still exist after cancellation. Waiting longer...")
+                time.sleep(1.0)
+                # Try canceling again
+                cancel_all_limit_orders(symbol)
         
         # Clean up old tracking (already done above, but ensure it's clean)
         if symbol in active_trades:
@@ -525,11 +539,19 @@ def create_limit_order(signal_data):
                 primary_order_params['positionSide'] = position_side
             
             logger.info(f"Creating PRIMARY entry limit order: {primary_order_params}")
-            primary_order_result = client.futures_create_order(**primary_order_params)
-            order_results.append(primary_order_result)
-            active_trades[symbol]['primary_order_id'] = primary_order_result.get('orderId')
-            active_trades[symbol]['primary_filled'] = False  # Will be updated when filled
-            active_trades[symbol]['position_open'] = True
+            try:
+                primary_order_result = client.futures_create_order(**primary_order_params)
+                order_results.append(primary_order_result)
+                active_trades[symbol]['primary_order_id'] = primary_order_result.get('orderId')
+                active_trades[symbol]['primary_filled'] = False  # Will be updated when filled
+                active_trades[symbol]['position_open'] = True
+                logger.info(f"✅ PRIMARY entry order created successfully: Order ID {primary_order_result.get('orderId')}")
+            except BinanceAPIException as e:
+                logger.error(f"❌ Failed to create PRIMARY entry order: {e.message} (Code: {e.code})")
+                return {'success': False, 'error': f'Failed to create order: {e.message}'}
+            except Exception as e:
+                logger.error(f"❌ Unexpected error creating PRIMARY entry order: {e}")
+                return {'success': False, 'error': f'Unexpected error: {str(e)}'}
             
             # Track order
             order_key = f"{symbol}_{primary_entry_price}_{side}_PRIMARY"
@@ -549,10 +571,17 @@ def create_limit_order(signal_data):
                     dca_order_params['positionSide'] = position_side
                 
                 logger.info(f"Creating DCA entry limit order: {dca_order_params}")
-                dca_order_result = client.futures_create_order(**dca_order_params)
-                order_results.append(dca_order_result)
-                active_trades[symbol]['dca_order_id'] = dca_order_result.get('orderId')
-                active_trades[symbol]['dca_filled'] = False  # Will be updated when filled
+                try:
+                    dca_order_result = client.futures_create_order(**dca_order_params)
+                    order_results.append(dca_order_result)
+                    active_trades[symbol]['dca_order_id'] = dca_order_result.get('orderId')
+                    active_trades[symbol]['dca_filled'] = False  # Will be updated when filled
+                    logger.info(f"✅ DCA entry order created successfully: Order ID {dca_order_result.get('orderId')}")
+                except BinanceAPIException as e:
+                    logger.error(f"❌ Failed to create DCA entry order: {e.message} (Code: {e.code})")
+                    # Continue with primary order even if DCA fails
+                except Exception as e:
+                    logger.error(f"❌ Unexpected error creating DCA entry order: {e}")
                 
                 # Track order
                 order_key = f"{symbol}_{dca_entry_price}_{side}_DCA"
@@ -582,10 +611,18 @@ def create_limit_order(signal_data):
                 dca_order_params['positionSide'] = position_side
             
             logger.info(f"Creating DCA entry limit order: {dca_order_params}")
-            order_result = client.futures_create_order(**dca_order_params)
-            order_results.append(order_result)
-            active_trades[symbol]['dca_order_id'] = order_result.get('orderId')
-            active_trades[symbol]['dca_filled'] = False
+            try:
+                order_result = client.futures_create_order(**dca_order_params)
+                order_results.append(order_result)
+                active_trades[symbol]['dca_order_id'] = order_result.get('orderId')
+                active_trades[symbol]['dca_filled'] = False
+                logger.info(f"✅ DCA entry order created successfully: Order ID {order_result.get('orderId')}")
+            except BinanceAPIException as e:
+                logger.error(f"❌ Failed to create DCA entry order: {e.message} (Code: {e.code})")
+                return {'success': False, 'error': f'Failed to create DCA order: {e.message}'}
+            except Exception as e:
+                logger.error(f"❌ Unexpected error creating DCA entry order: {e}")
+                return {'success': False, 'error': f'Unexpected error: {str(e)}'}
             
             # Track order
             order_key = f"{symbol}_{dca_entry_price}_{side}_DCA"
