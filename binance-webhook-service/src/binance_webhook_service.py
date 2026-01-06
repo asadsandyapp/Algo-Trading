@@ -798,6 +798,70 @@ def health():
         }), 500
 
 
+@app.route('/verify-account', methods=['GET'])
+def verify_account():
+    """Verify which account we're connected to and check orders"""
+    try:
+        if not client:
+            return jsonify({'error': 'Binance client not initialized'}), 500
+        
+        # Get account info
+        account_info = {}
+        try:
+            # Try to get futures account info
+            futures_account = client.futures_account()
+            account_info['futures_balance'] = futures_account.get('totalWalletBalance', 'N/A')
+            account_info['available_balance'] = futures_account.get('availableBalance', 'N/A')
+        except Exception as e:
+            account_info['futures_error'] = str(e)
+        
+        # Get open orders for BTCUSDT
+        open_orders = []
+        try:
+            orders = client.futures_get_open_orders(symbol='BTCUSDT')
+            open_orders = [{
+                'orderId': o.get('orderId'),
+                'symbol': o.get('symbol'),
+                'side': o.get('side'),
+                'type': o.get('type'),
+                'price': o.get('price'),
+                'quantity': o.get('origQty'),
+                'status': o.get('status'),
+                'time': o.get('time')
+            } for o in orders]
+        except Exception as e:
+            open_orders = {'error': str(e)}
+        
+        # Get all open orders (any symbol)
+        all_orders = []
+        try:
+            all_orders_list = client.futures_get_open_orders()
+            all_orders = [{
+                'orderId': o.get('orderId'),
+                'symbol': o.get('symbol'),
+                'side': o.get('side'),
+                'type': o.get('type'),
+                'price': o.get('price'),
+                'quantity': o.get('origQty'),
+                'status': o.get('status')
+            } for o in all_orders_list]
+        except Exception as e:
+            all_orders = {'error': str(e)}
+        
+        return jsonify({
+            'account_info': account_info,
+            'btcusdt_orders': open_orders,
+            'all_open_orders': all_orders,
+            'total_orders': len(all_orders) if isinstance(all_orders, list) else 0,
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+
 @app.route('/', methods=['GET'])
 def index():
     """Root endpoint"""
