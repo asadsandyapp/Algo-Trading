@@ -652,7 +652,7 @@ def create_limit_order(signal_data):
         if is_primary_entry and take_profit and take_profit > 0:
             # Check for existing TP orders
             has_orders, open_orders = check_existing_orders(symbol)
-            existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET' and o.get('reduceOnly')]
+            existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
             
             if not existing_tp:
                 try:
@@ -664,8 +664,8 @@ def create_limit_order(signal_data):
                         'type': 'TAKE_PROFIT_MARKET',
                         'timeInForce': 'GTC',
                         'quantity': total_quantity,  # Total quantity for both entries
-                        'stopPrice': tp_price,
-                        'reduceOnly': True
+                        'stopPrice': tp_price
+                        # Note: reduceOnly is not required for TAKE_PROFIT_MARKET orders
                     }
                     # Only include positionSide if in Hedge mode
                     if is_hedge_mode:
@@ -682,7 +682,7 @@ def create_limit_order(signal_data):
         if is_dca_entry and take_profit and take_profit > 0:
             # Check for existing TP orders
             has_orders, open_orders = check_existing_orders(symbol)
-            existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET' and o.get('reduceOnly')]
+            existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
             
             if not existing_tp:
                 # Get current position quantity to update TP
@@ -707,8 +707,8 @@ def create_limit_order(signal_data):
                             'type': 'TAKE_PROFIT_MARKET',
                             'timeInForce': 'GTC',
                             'quantity': current_position_qty,  # Current position quantity
-                            'stopPrice': tp_price,
-                            'reduceOnly': True
+                            'stopPrice': tp_price
+                            # Note: reduceOnly is not required for TAKE_PROFIT_MARKET orders
                         }
                         if is_hedge_mode:
                             tp_params['positionSide'] = position_side
