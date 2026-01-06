@@ -331,7 +331,7 @@ def create_limit_order(signal_data):
             logger.warning(f"Invalid webhook token received")
             return {'success': False, 'error': 'Invalid token'}
         
-        # Handle EXIT events - close position at market price and cancel unfilled orders
+        # Handle EXIT events - close position at market price and cancel all orders for symbol
         if event == 'EXIT':
             logger.info(f"Processing EXIT event for {symbol}")
             
@@ -345,6 +345,24 @@ def create_limit_order(signal_data):
             # Detect position mode
             is_hedge_mode = get_position_mode(symbol)
             
+            # Cancel ALL orders for this symbol first (even if entry didn't fill)
+            logger.info(f"Canceling all orders for {symbol}")
+            canceled_count = cancel_all_limit_orders(symbol)
+            logger.info(f"Canceled {canceled_count} limit orders for {symbol}")
+            
+            # Also cancel any TP/SL orders
+            try:
+                open_orders = client.futures_get_open_orders(symbol=symbol)
+                for order in open_orders:
+                    if order.get('type') in ['TAKE_PROFIT_MARKET', 'STOP_MARKET']:
+                        try:
+                            client.futures_cancel_order(symbol=symbol, orderId=order['orderId'])
+                            logger.info(f"Canceled {order.get('type')} order {order['orderId']} for {symbol}")
+                        except Exception as e:
+                            logger.warning(f"Failed to cancel {order.get('type')} order: {e}")
+            except Exception as e:
+                logger.warning(f"Error canceling TP/SL orders: {e}")
+            
             # Check if position actually exists before trying to close
             has_position, position_info = check_existing_position(symbol, signal_side)
             
@@ -355,44 +373,24 @@ def create_limit_order(signal_data):
                 
                 if close_result.get('success'):
                     logger.info(f"Position closed successfully: {close_result}")
-                    # Track EXIT processing
-                    recent_exits[symbol] = current_time
-                    
-                    # Clean up old exit tracking
-                    if len(recent_exits) > 1000:
-                        # Remove oldest entries
-                        sorted_exits = sorted(recent_exits.items(), key=lambda x: x[1])
-                        for key, _ in sorted_exits[:-1000]:
-                            del recent_exits[key]
                 else:
                     logger.error(f"Failed to close position: {close_result.get('error')}")
             else:
-                logger.info(f"No open position found for {symbol} - position may already be closed")
+                logger.info(f"No open position found for {symbol} - position may already be closed or entry never filled")
             
-            # Cancel any unfilled entry orders (Entry 2/DCA)
+            # Clean up tracking
             if symbol in active_trades:
-                trade_info = active_trades[symbol]
-                dca_order_id = trade_info.get('dca_order_id')
-                
-                if dca_order_id:
-                    # Check if DCA order still exists
-                    has_orders, open_orders = check_existing_orders(symbol)
-                    dca_order_exists = False
-                    if has_orders:
-                        dca_order_exists = any(o.get('orderId') == dca_order_id for o in open_orders)
-                    
-                    if dca_order_exists:
-                        logger.info(f"Canceling unfilled DCA order {dca_order_id} for {symbol}")
-                        cancel_order(symbol, dca_order_id)
-                    else:
-                        logger.info(f"DCA order {dca_order_id} already filled or canceled for {symbol}")
-                
-                # Clean up tracking
                 logger.info(f"Cleaning up closed trade tracking for {symbol}")
                 del active_trades[symbol]
             
-            # Track EXIT processing even if no position was found
+            # Track EXIT processing
             recent_exits[symbol] = current_time
+            
+            # Clean up old exit tracking
+            if len(recent_exits) > 1000:
+                sorted_exits = sorted(recent_exits.items(), key=lambda x: x[1])
+                for key, _ in sorted_exits[:-1000]:
+                    del recent_exits[key]
             
             return {'success': True, 'message': 'EXIT event processed'}
         
@@ -412,92 +410,43 @@ def create_limit_order(signal_data):
         is_primary_entry = (order_subtype == 'primary_entry' or order_subtype not in ['dca_fill', 'second_entry'])
         is_dca_entry = (order_subtype == 'dca_fill' or order_subtype == 'second_entry')
         
-        # Check for existing open position FIRST - this is the most reliable duplicate check
+        # IMPORTANT: When new trade alert comes for any symbol, close old orders for that symbol first
+        logger.info(f"Checking for existing orders/positions for {symbol} - will close old ones if found")
+        has_orders, open_orders = check_existing_orders(symbol)
         has_position, position_info = check_existing_position(symbol, signal_side)
         
-        # If position exists, reject ENTRY alerts immediately (strongest duplicate prevention)
-        # This handles the case where trade is already open and running
+        # If position exists, close it first (new trade replaces old trade)
         if has_position:
-            # Also check for pending limit orders - if position exists, we shouldn't create new orders
-            has_orders, open_orders = check_existing_orders(symbol)
-            matching_orders = [o for o in open_orders if o.get('side') == side and o.get('type') == 'LIMIT'] if has_orders else []
-            
-            logger.warning(f"Position already exists for {symbol} ({signal_side}). "
-                          f"Found {len(matching_orders)} pending limit orders. Discarding duplicate ENTRY alert.")
-            return {'success': False, 'error': f'Position already exists for {symbol} - duplicate ENTRY alert discarded'}
+            logger.info(f"Existing position found for {symbol}. Closing it before creating new trade.")
+            close_result = close_position_at_market(symbol, signal_side, is_hedge_mode)
+            if close_result.get('success'):
+                logger.info(f"Old position closed successfully")
+            else:
+                logger.warning(f"Failed to close old position: {close_result.get('error')}")
         
-        # Check active trades tracking
+        # Cancel all existing orders for this symbol (old trade orders)
+        if has_orders:
+            logger.info(f"Found {len(open_orders)} existing orders for {symbol}. Canceling all orders.")
+            canceled_count = cancel_all_limit_orders(symbol)
+            # Also cancel TP/SL orders
+            for order in open_orders:
+                if order.get('type') in ['TAKE_PROFIT_MARKET', 'STOP_MARKET']:
+                    try:
+                        client.futures_cancel_order(symbol=symbol, orderId=order['orderId'])
+                        logger.info(f"Canceled {order.get('type')} order {order['orderId']}")
+                    except Exception as e:
+                        logger.warning(f"Failed to cancel {order.get('type')} order: {e}")
+            logger.info(f"Canceled {canceled_count} limit orders for {symbol}")
+        
+        # Clean up old tracking (already done above, but ensure it's clean)
         if symbol in active_trades:
-            trade_info = active_trades[symbol]
-            # If both entries are already filled, reject any new alerts
-            if trade_info.get('primary_filled') and trade_info.get('dca_filled'):
-                logger.warning(f"Both entries already filled for {symbol}. Discarding duplicate alert.")
-                return {'success': False, 'error': 'Both entries already filled for this symbol'}
-            
-            # If primary entry is filled and this is another primary entry, reject
-            if is_primary_entry and trade_info.get('primary_filled'):
-                logger.warning(f"Primary entry already filled for {symbol}. Discarding duplicate primary entry alert.")
-                return {'success': False, 'error': 'Primary entry already filled for this symbol'}
-            
-            # If DCA entry is filled and this is another DCA entry, reject
-            if is_dca_entry and trade_info.get('dca_filled'):
-                logger.warning(f"DCA entry already filled for {symbol}. Discarding duplicate DCA entry alert.")
-                return {'success': False, 'error': 'DCA entry already filled for this symbol'}
-        
-        # Additional check: if we have active trades but no position, clean up
-        if symbol in active_trades and not has_position:
-            # Position was closed but tracking still exists - clean up
-            logger.info(f"Cleaning up stale trade tracking for {symbol} (position closed)")
+            logger.info(f"Cleaning up old trade tracking for {symbol}")
             del active_trades[symbol]
         
-        # Check for existing open orders and clean up if position is closed
-        has_orders, open_orders = check_existing_orders(symbol)
-        
-        # If position is closed but orders exist, clean them up
-        if not has_position and has_orders and is_primary_entry:
-            logger.info(f"Position closed but limit orders exist for {symbol}. Cleaning up...")
-            canceled = cancel_all_limit_orders(symbol, side)
-            logger.info(f"Canceled {canceled} limit orders for {symbol}")
-            # Clean up tracking
-            if symbol in active_trades:
-                del active_trades[symbol]
-        
-        # Check for duplicate limit orders (even if position doesn't exist yet)
-        if has_orders:
-            # Check if we already have matching limit orders for this entry type
-            matching_orders = [o for o in open_orders if o.get('side') == side and o.get('type') == 'LIMIT']
-            if matching_orders:
-                # Check if this is a duplicate primary or DCA entry
-                if is_primary_entry:
-                    # If we have any limit orders for primary entry, it's a duplicate
-                    logger.warning(f"Primary entry limit order already exists for {symbol}. "
-                                 f"Found {len(matching_orders)} matching limit orders. Discarding duplicate alert.")
-                    return {'success': False, 'error': 'Primary entry order already exists for this symbol'}
-                elif is_dca_entry:
-                    # Check if we have a DCA order already
-                    # Count limit orders - if we have 2, both entries are placed
-                    if len(matching_orders) >= 2:
-                        logger.warning(f"Both entry orders already exist for {symbol}. "
-                                     f"Found {len(matching_orders)} limit orders. Discarding duplicate alert.")
-                        return {'success': False, 'error': 'Both entry orders already exist for this symbol'}
-                    # If we have 1 order and this is DCA, check if primary is filled
-                    if symbol in active_trades and active_trades[symbol].get('primary_filled'):
-                        # This might be a duplicate DCA alert, but allow if DCA not filled
-                        if not active_trades[symbol].get('dca_filled'):
-                            logger.info(f"Primary entry filled, allowing DCA entry for {symbol}")
-                        else:
-                            logger.warning(f"DCA entry already filled. Discarding duplicate DCA alert.")
-                            return {'success': False, 'error': 'DCA entry already filled'}
-                    else:
-                        # We have 1 limit order but no tracking - might be a duplicate
-                        logger.warning(f"Found existing limit order for {symbol} but no tracking. "
-                                     f"Treating as duplicate DCA alert.")
-                        return {'success': False, 'error': 'Limit order already exists for this symbol'}
-        
-        # Get primary entry price
+        # Get primary entry price - use entry_price from JSON
         primary_entry_price = entry_price
         
-        # Get DCA entry price (second entry)
+        # Get DCA entry price (second entry) - use second_entry_price from JSON
         dca_entry_price = second_entry_price if second_entry_price and second_entry_price > 0 else None
         
         # If this is a primary entry, we need both prices to create both orders
@@ -505,7 +454,7 @@ def create_limit_order(signal_data):
             logger.warning(f"Primary entry signal received but no second_entry_price provided. Using entry_price for both.")
             dca_entry_price = primary_entry_price  # Fallback to same price if not provided
         
-        # If this is a DCA entry, use the second_entry_price or entry_price
+        # If this is a DCA entry, use the second_entry_price from JSON
         if is_dca_entry:
             if dca_entry_price and dca_entry_price > 0:
                 entry_price = dca_entry_price
@@ -659,41 +608,16 @@ def create_limit_order(signal_data):
         
         logger.info(f"{entry_type} order(s) created successfully: {order_results}")
         
-        # Calculate total quantity for TP/SL (both entries combined)
+        # Calculate total quantity for TP (both entries combined)
         total_quantity = primary_quantity + dca_quantity if is_primary_entry and dca_entry_price else quantity * TOTAL_ENTRIES
         
-        # Create stop loss and take profit orders (only for primary entry to avoid duplicates)
-        if is_primary_entry:
-            # Check for existing TP/SL orders
+        # Create take profit order ONLY (NO stop loss) - for primary entry
+        if is_primary_entry and take_profit and take_profit > 0:
+            # Check for existing TP orders
             has_orders, open_orders = check_existing_orders(symbol)
-            existing_sl = [o for o in open_orders if o.get('type') == 'STOP_MARKET' and o.get('reduceOnly')]
             existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET' and o.get('reduceOnly')]
             
-            if stop_loss and stop_loss > 0 and not existing_sl:
-                try:
-                    sl_side = 'SELL' if side == 'BUY' else 'BUY'
-                    sl_price = round(stop_loss / tick_size) * tick_size
-                    sl_params = {
-                        'symbol': symbol,
-                        'side': sl_side,
-                        'type': 'STOP_MARKET',
-                        'timeInForce': 'GTC',
-                        'quantity': total_quantity,  # Total quantity for both entries
-                        'stopPrice': sl_price,
-                        'reduceOnly': True
-                    }
-                    # Only include positionSide if in Hedge mode
-                    if is_hedge_mode:
-                        sl_params['positionSide'] = position_side
-                    sl_order = client.futures_create_order(**sl_params)
-                    active_trades[symbol]['sl_order_id'] = sl_order.get('orderId')
-                    logger.info(f"Stop loss order created: {sl_order}")
-                except Exception as e:
-                    logger.error(f"Failed to create stop loss order: {e}")
-            elif existing_sl:
-                logger.info(f"Stop loss order already exists for {symbol}, skipping creation")
-        
-            if take_profit and take_profit > 0 and not existing_tp:
+            if not existing_tp:
                 try:
                     tp_side = 'SELL' if side == 'BUY' else 'BUY'
                     tp_price = round(take_profit / tick_size) * tick_size
@@ -711,10 +635,53 @@ def create_limit_order(signal_data):
                         tp_params['positionSide'] = position_side
                     tp_order = client.futures_create_order(**tp_params)
                     active_trades[symbol]['tp_order_id'] = tp_order.get('orderId')
-                    logger.info(f"Take profit order created: {tp_order}")
+                    logger.info(f"Take profit order created: {tp_order} - will auto-close when price reaches TP")
                 except Exception as e:
                     logger.error(f"Failed to create take profit order: {e}")
-            elif existing_tp:
+            else:
+                logger.info(f"Take profit order already exists for {symbol}, skipping creation")
+        
+        # For DCA entry: Create TP order if not exists (using same TP price from primary entry)
+        if is_dca_entry and take_profit and take_profit > 0:
+            # Check for existing TP orders
+            has_orders, open_orders = check_existing_orders(symbol)
+            existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET' and o.get('reduceOnly')]
+            
+            if not existing_tp:
+                # Get current position quantity to update TP
+                try:
+                    positions = client.futures_position_information(symbol=symbol)
+                    current_position_qty = 0
+                    for pos in positions:
+                        pos_amt = float(pos.get('positionAmt', 0))
+                        if abs(pos_amt) > 0:
+                            pos_side = pos.get('positionSide', 'BOTH')
+                            if pos_side == 'BOTH' or pos_side == position_side.upper():
+                                current_position_qty = abs(pos_amt)
+                                break
+                    
+                    if current_position_qty > 0:
+                        # Update TP with current position quantity
+                        tp_side = 'SELL' if side == 'BUY' else 'BUY'
+                        tp_price = round(take_profit / tick_size) * tick_size
+                        tp_params = {
+                            'symbol': symbol,
+                            'side': tp_side,
+                            'type': 'TAKE_PROFIT_MARKET',
+                            'timeInForce': 'GTC',
+                            'quantity': current_position_qty,  # Current position quantity
+                            'stopPrice': tp_price,
+                            'reduceOnly': True
+                        }
+                        if is_hedge_mode:
+                            tp_params['positionSide'] = position_side
+                        tp_order = client.futures_create_order(**tp_params)
+                        if symbol in active_trades:
+                            active_trades[symbol]['tp_order_id'] = tp_order.get('orderId')
+                        logger.info(f"Take profit order created for DCA entry: {tp_order}")
+                except Exception as e:
+                    logger.error(f"Failed to create take profit order for DCA: {e}")
+            else:
                 logger.info(f"Take profit order already exists for {symbol}, skipping creation")
         
         return {
