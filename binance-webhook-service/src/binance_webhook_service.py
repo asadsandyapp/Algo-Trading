@@ -546,6 +546,41 @@ def create_limit_order(signal_data):
                 active_trades[symbol]['primary_filled'] = False  # Will be updated when filled
                 active_trades[symbol]['position_open'] = True
                 logger.info(f"✅ PRIMARY entry order created successfully: Order ID {primary_order_result.get('orderId')}")
+                
+                # Create TP order immediately after limit order (like Binance UI)
+                if take_profit and take_profit > 0:
+                    try:
+                        tp_side = 'SELL' if side == 'BUY' else 'BUY'
+                        tp_price = round(take_profit / tick_size) * tick_size
+                        tp_params = {
+                            'symbol': symbol,
+                            'side': tp_side,
+                            'type': 'TAKE_PROFIT_MARKET',
+                            'timeInForce': 'GTC',
+                            'stopPrice': tp_price,
+                            'closePosition': True  # Close entire position when TP hits
+                        }
+                        if is_hedge_mode:
+                            tp_params['positionSide'] = position_side
+                        
+                        tp_order = client.futures_create_order(**tp_params)
+                        active_trades[symbol]['tp_order_id'] = tp_order.get('orderId')
+                        logger.info(f"✅ Take profit order created: Order ID {tp_order.get('orderId')} @ {tp_price}")
+                    except BinanceAPIException as e:
+                        if e.code == -4120:
+                            # Order type not supported - store for later creation
+                            active_trades[symbol]['tp_price'] = take_profit
+                            active_trades[symbol]['tp_side'] = tp_side
+                            logger.info(f"TP order will be created after position exists (stored: {take_profit})")
+                        else:
+                            logger.warning(f"Could not create TP order: {e.message} (Code: {e.code}) - will retry later")
+                            active_trades[symbol]['tp_price'] = take_profit
+                            active_trades[symbol]['tp_side'] = tp_side
+                    except Exception as e:
+                        logger.warning(f"Could not create TP order: {e} - will retry later")
+                        active_trades[symbol]['tp_price'] = take_profit
+                        active_trades[symbol]['tp_side'] = tp_side
+                        
             except BinanceAPIException as e:
                 logger.error(f"❌ Failed to create PRIMARY entry order: {e.message} (Code: {e.code})")
                 return {'success': False, 'error': f'Failed to create order: {e.message}'}
@@ -648,36 +683,8 @@ def create_limit_order(signal_data):
         # Calculate total quantity for TP (both entries combined)
         total_quantity = primary_quantity + dca_quantity if is_primary_entry and dca_entry_price else quantity * TOTAL_ENTRIES
         
-        # Create take profit order ONLY (NO stop loss) - for primary entry
-        if is_primary_entry and take_profit and take_profit > 0:
-            # Check for existing TP orders
-            has_orders, open_orders = check_existing_orders(symbol)
-            existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
-            
-            if not existing_tp:
-                try:
-                    tp_side = 'SELL' if side == 'BUY' else 'BUY'
-                    tp_price = round(take_profit / tick_size) * tick_size
-                    tp_params = {
-                        'symbol': symbol,
-                        'side': tp_side,
-                        'type': 'TAKE_PROFIT_MARKET',
-                        'timeInForce': 'GTC',
-                        'quantity': total_quantity,  # Total quantity for both entries
-                        'stopPrice': tp_price
-                        # Note: reduceOnly is not required for TAKE_PROFIT_MARKET orders
-                    }
-                    # Only include positionSide if in Hedge mode
-                    if is_hedge_mode:
-                        tp_params['positionSide'] = position_side
-                    tp_order = client.futures_create_order(**tp_params)
-                    active_trades[symbol]['tp_order_id'] = tp_order.get('orderId')
-                    logger.info(f"Take profit order created: {tp_order} - will auto-close when price reaches TP")
-                except Exception as e:
-                    logger.error(f"Failed to create take profit order: {e}")
-            else:
-                logger.info(f"Take profit order already exists for {symbol}, skipping creation")
-        
+        # TP order is now created immediately after limit order (see above)
+        # This section removed - TP creation moved to right after limit order creation
         # For DCA entry: Create TP order if not exists (using same TP price from primary entry)
         if is_dca_entry and take_profit and take_profit > 0:
             # Check for existing TP orders
