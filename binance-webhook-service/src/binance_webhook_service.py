@@ -229,6 +229,28 @@ def verify_webhook_token(payload_token):
     return payload_token == WEBHOOK_TOKEN
 
 
+def safe_float(value, default=None):
+    """Safely convert value to float, handling None, 'null' string, and invalid values"""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        # Handle Pine Script's "null" string
+        if value.lower() == 'null' or value.strip() == '':
+            return default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+    try:
+        result = float(value)
+        # Check for invalid values (NaN, infinity, negative/zero for prices)
+        if result != result or result == float('inf') or result == float('-inf'):
+            return default
+        return result
+    except (ValueError, TypeError):
+        return default
+
+
 def get_order_side(signal_side):
     """Convert signal side to Binance order side"""
     signal_side = signal_side.upper()
@@ -471,17 +493,26 @@ def create_limit_order(signal_data):
         event = signal_data.get('event')
         signal_side = signal_data.get('signal_side')
         symbol = format_symbol(signal_data.get('symbol', ''))
-        entry_price = float(signal_data.get('entry_price', 0))
-        stop_loss = float(signal_data.get('stop_loss', 0)) if signal_data.get('stop_loss') else None
-        take_profit = float(signal_data.get('take_profit', 0)) if signal_data.get('take_profit') else None
+        
+        # Safely parse prices (handles None, "null" string, and invalid values)
+        entry_price = safe_float(signal_data.get('entry_price'), default=None)
+        stop_loss = safe_float(signal_data.get('stop_loss'), default=None)
+        take_profit = safe_float(signal_data.get('take_profit'), default=None)
+        second_entry_price = safe_float(signal_data.get('second_entry_price'), default=None)
+        
         reduce_only = signal_data.get('reduce_only', False)
         order_subtype = signal_data.get('order_subtype', 'primary_entry')
-        second_entry_price = float(signal_data.get('second_entry_price', 0)) if signal_data.get('second_entry_price') else None
         
         # Verify token
         if not verify_webhook_token(token):
             logger.warning(f"Invalid webhook token received")
             return {'success': False, 'error': 'Invalid token'}
+        
+        # Validate required fields for ENTRY events
+        if event == 'ENTRY':
+            if entry_price is None or entry_price <= 0:
+                logger.warning(f"Invalid or missing entry_price in webhook payload. Discarding request. entry_price={signal_data.get('entry_price')}")
+                return {'success': False, 'error': 'Invalid or missing entry_price (NA/null)'}
         
         # Handle EXIT events - close position at market price and cancel all orders for symbol
         if event == 'EXIT':
@@ -627,9 +658,10 @@ def create_limit_order(signal_data):
                 dca_entry_price = entry_price
                 logger.info(f"Using entry_price as DCA entry price: {entry_price}")
         
-        # Validate entry price
-        if entry_price <= 0:
-            return {'success': False, 'error': 'Invalid entry price'}
+        # Validate entry price (should already be validated above, but double-check)
+        if entry_price is None or entry_price <= 0:
+            logger.warning(f"Invalid entry price after parsing: {entry_price}. Discarding request.")
+            return {'success': False, 'error': 'Invalid entry price (NA/null or <= 0)'}
         
         # Get symbol info for precision
         exchange_info = client.futures_exchange_info()
