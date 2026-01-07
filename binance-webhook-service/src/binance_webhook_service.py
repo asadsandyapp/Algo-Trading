@@ -110,25 +110,35 @@ def create_tp_if_needed(symbol, trade_info):
                         
                         position_side = position.get('positionSide', 'BOTH')
                         
-                        logger.info(f"🔄 Creating TP order for {symbol}: price={tp_price}, qty={abs(position_amt)}, side={tp_side}")
+                        # Use stored TP quantity (total of primary + DCA) or position amount as fallback
+                        tp_quantity = trade_info.get('tp_quantity', abs(position_amt))
+                        working_type = trade_info.get('tp_working_type', 'MARK_PRICE')
+                        
+                        logger.info(f"🔄 Creating TP order for {symbol}: price={tp_price}, qty={tp_quantity}, side={tp_side}, workingType={working_type}")
                         
                         tp_params = {
                             'symbol': symbol,
                             'side': tp_side,
                             'type': 'TAKE_PROFIT_MARKET',
                             'timeInForce': 'GTC',
-                            'quantity': abs(position_amt),
-                            'stopPrice': tp_price
+                            'quantity': tp_quantity,
+                            'stopPrice': tp_price,
+                            'workingType': working_type,  # Use mark price for trigger (like Binance UI)
+                            'reduceOnly': True  # TP should reduce position
                         }
                         if is_hedge_mode and position_side != 'BOTH':
                             tp_params['positionSide'] = position_side
                         
                         tp_order = client.futures_create_order(**tp_params)
                         trade_info['tp_order_id'] = tp_order.get('orderId')
-                        logger.info(f"✅ TP order created: Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol}")
-                        # Remove stored TP price since it's now created
+                        logger.info(f"✅ TP order created (like Binance UI): Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol} (qty: {tp_quantity})")
+                        # Remove stored TP details since it's now created
                         if 'tp_price' in trade_info:
                             del trade_info['tp_price']
+                        if 'tp_quantity' in trade_info:
+                            del trade_info['tp_quantity']
+                        if 'tp_working_type' in trade_info:
+                            del trade_info['tp_working_type']
                         return True
                 else:
                     # TP already exists, clean up stored price
@@ -202,29 +212,43 @@ def create_missing_tp_orders():
                                         
                                         position_side = position.get('positionSide', 'BOTH')
                                         
-                                        logger.info(f"🔄 Attempting to create TP order for {symbol}: price={tp_price}, qty={abs(position_amt)}, side={tp_side}")
+                                        # Use stored TP quantity (total of primary + DCA) or position amount as fallback
+                                        tp_quantity = trade_info.get('tp_quantity', abs(position_amt))
+                                        working_type = trade_info.get('tp_working_type', 'MARK_PRICE')
+                                        
+                                        logger.info(f"🔄 Attempting to create TP order for {symbol}: price={tp_price}, qty={tp_quantity}, side={tp_side}, workingType={working_type}")
                                         
                                         tp_params = {
                                             'symbol': symbol,
                                             'side': tp_side,
                                             'type': 'TAKE_PROFIT_MARKET',
                                             'timeInForce': 'GTC',
-                                            'quantity': abs(position_amt),
-                                            'stopPrice': tp_price
+                                            'quantity': tp_quantity,
+                                            'stopPrice': tp_price,
+                                            'workingType': working_type,  # Use mark price for trigger (like Binance UI)
+                                            'reduceOnly': True  # TP should reduce position
                                         }
                                         if is_hedge_mode and position_side != 'BOTH':
                                             tp_params['positionSide'] = position_side
                                         
                                         tp_order = client.futures_create_order(**tp_params)
                                         trade_info['tp_order_id'] = tp_order.get('orderId')
-                                        logger.info(f"✅ Auto-created TP order: Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol}")
-                                        # Remove stored TP price since it's now created
+                                        logger.info(f"✅ Auto-created TP order (like Binance UI): Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol} (qty: {tp_quantity})")
+                                        # Remove stored TP details since it's now created
                                         if 'tp_price' in trade_info:
                                             del trade_info['tp_price']
+                                        if 'tp_quantity' in trade_info:
+                                            del trade_info['tp_quantity']
+                                        if 'tp_working_type' in trade_info:
+                                            del trade_info['tp_working_type']
                                 else:
-                                    logger.info(f"TP order already exists for {symbol}, removing stored TP price")
+                                    logger.info(f"TP order already exists for {symbol}, removing stored TP details")
                                     if 'tp_price' in trade_info:
                                         del trade_info['tp_price']
+                                    if 'tp_quantity' in trade_info:
+                                        del trade_info['tp_quantity']
+                                    if 'tp_working_type' in trade_info:
+                                        del trade_info['tp_working_type']
                                 break
                         
                         if not position_found:
@@ -715,62 +739,19 @@ def create_limit_order(signal_data):
                 active_trades[symbol]['position_open'] = True
                 logger.info(f"✅ PRIMARY entry order created successfully: Order ID {primary_order_result.get('orderId')}")
                 
-                # Create TP order immediately after limit order (like Binance UI)
-                # Try with quantity first, if that fails, store for later
+                # Store TP order details immediately (like Binance UI - TP is "set" but pending until position exists)
+                # The background thread will create the TP order as soon as the limit order fills and position opens
                 if take_profit and take_profit > 0:
                     tp_side = 'SELL' if side == 'BUY' else 'BUY'
                     tp_price = round(take_profit / tick_size) * tick_size
                     total_qty = primary_quantity + (dca_quantity if dca_entry_price else 0)
                     
-                    # Try creating TP order with quantity (total of both entries)
-                    try:
-                        tp_params = {
-                            'symbol': symbol,
-                            'side': tp_side,
-                            'type': 'TAKE_PROFIT_MARKET',
-                            'timeInForce': 'GTC',
-                            'quantity': total_qty,
-                            'stopPrice': tp_price
-                        }
-                        if is_hedge_mode:
-                            tp_params['positionSide'] = position_side
-                        
-                        tp_order = client.futures_create_order(**tp_params)
-                        active_trades[symbol]['tp_order_id'] = tp_order.get('orderId')
-                        logger.info(f"✅ Take profit order created: Order ID {tp_order.get('orderId')} @ {tp_price}")
-                    except BinanceAPIException as e:
-                        if e.code == -4120:
-                            # Try with closePosition instead
-                            try:
-                                tp_params = {
-                                    'symbol': symbol,
-                                    'side': tp_side,
-                                    'type': 'TAKE_PROFIT_MARKET',
-                                    'timeInForce': 'GTC',
-                                    'stopPrice': tp_price,
-                                    'closePosition': True
-                                }
-                                if is_hedge_mode:
-                                    tp_params['positionSide'] = position_side
-                                
-                                tp_order = client.futures_create_order(**tp_params)
-                                active_trades[symbol]['tp_order_id'] = tp_order.get('orderId')
-                                logger.info(f"✅ Take profit order created (with closePosition): Order ID {tp_order.get('orderId')} @ {tp_price}")
-                            except Exception as e2:
-                                # Both methods failed - store for later creation
-                                active_trades[symbol]['tp_price'] = take_profit
-                                active_trades[symbol]['tp_side'] = tp_side
-                                logger.info(f"TP order will be created after position exists (stored: {take_profit}) - Error: {e2}")
-                        else:
-                            # Other error - store for later
-                            active_trades[symbol]['tp_price'] = take_profit
-                            active_trades[symbol]['tp_side'] = tp_side
-                            logger.warning(f"Could not create TP order: {e.message} (Code: {e.code}) - will retry later")
-                    except Exception as e:
-                        # Store for later creation
-                        active_trades[symbol]['tp_price'] = take_profit
-                        active_trades[symbol]['tp_side'] = tp_side
-                        logger.warning(f"Could not create TP order: {e} - will retry later")
+                    # Store TP details - will be created automatically when position exists
+                    active_trades[symbol]['tp_price'] = tp_price
+                    active_trades[symbol]['tp_side'] = tp_side
+                    active_trades[symbol]['tp_quantity'] = total_qty
+                    active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
+                    logger.info(f"📝 TP order configured (will auto-create when limit order fills): {tp_price} for {symbol} (qty: {total_qty})")
                         
             except BinanceAPIException as e:
                 logger.error(f"❌ Failed to create PRIMARY entry order: {e.message} (Code: {e.code})")
