@@ -461,6 +461,47 @@ def cleanup_closed_positions():
         logger.error(f"Error cleaning up closed positions: {e}")
 
 
+def format_quantity_precision(quantity, step_size):
+    """Format quantity to match step_size precision, removing floating point errors
+    
+    Handles all step_size formats:
+    - Large: 1.0, 10.0, 100.0 (0 decimal places)
+    - Medium: 0.1, 0.5 (1 decimal place)
+    - Small: 0.01, 0.001 (2-3 decimal places)
+    - Very small: 0.0001, 0.00001 (4-5 decimal places)
+    - Extremely small: 0.000001 (6+ decimal places)
+    """
+    # Calculate decimal places from step_size
+    # Convert step_size to string to count decimal places accurately
+    step_size_str = f"{step_size:.10f}".rstrip('0').rstrip('.')
+    
+    if '.' in step_size_str:
+        # Count decimal places after the decimal point
+        decimal_places = len(step_size_str.split('.')[1])
+    else:
+        # Step size is a whole number (1.0, 10.0, etc.)
+        decimal_places = 0
+    
+    # Round to step size: divide by step_size, round to nearest integer, multiply back
+    # This ensures quantity is a multiple of step_size
+    quantity = round(quantity / step_size) * step_size
+    
+    # Format to correct decimal places to eliminate floating point errors
+    # This converts values like 15.280000000000001 to 15.28
+    quantity = round(quantity, decimal_places)
+    
+    # Final safety check: convert to string and back to float to remove any remaining precision errors
+    # Format with the exact number of decimal places needed
+    if decimal_places > 0:
+        quantity_str = f"{quantity:.{decimal_places}f}"
+        quantity = float(quantity_str)
+    else:
+        # For whole numbers, ensure it's an integer
+        quantity = float(int(quantity))
+    
+    return quantity
+
+
 def calculate_quantity(entry_price, symbol_info):
     """Calculate quantity based on $10 per entry with 20X leverage"""
     # Position value = Entry size * Leverage = $10 * 20 = $200
@@ -469,19 +510,21 @@ def calculate_quantity(entry_price, symbol_info):
     # Quantity = Position value / Entry price
     quantity = position_value / entry_price
     
-    # Round quantity to step size
+    # Get step size and min quantity from symbol info
     lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
     step_size = float(lot_size_filter['stepSize']) if lot_size_filter else 0.001
     min_qty = float(lot_size_filter['minQty']) if lot_size_filter else 0.001
     
-    # Round to step size
-    quantity = round(quantity / step_size) * step_size
+    # Format quantity with proper precision
+    quantity = format_quantity_precision(quantity, step_size)
     
     # Ensure minimum quantity
     if quantity < min_qty:
         quantity = min_qty
+        # Re-format after setting to min_qty to ensure precision
+        quantity = format_quantity_precision(quantity, step_size)
     
-    logger.info(f"Calculated quantity: {quantity} (Position value: ${position_value} @ ${entry_price})")
+    logger.info(f"Calculated quantity: {quantity} (Position value: ${position_value} @ ${entry_price}, step_size: {step_size})")
     return quantity
 
 
