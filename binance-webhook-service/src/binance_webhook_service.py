@@ -100,7 +100,7 @@ def create_tp_if_needed(symbol, trade_info):
                     if symbol_info:
                         price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
                         tick_size = float(price_filter['tickSize']) if price_filter else 0.01
-                        tp_price = round(tp_price / tick_size) * tick_size
+                        tp_price = format_price_precision(tp_price, tick_size)
                         
                         # Detect position mode
                         try:
@@ -502,6 +502,47 @@ def format_quantity_precision(quantity, step_size):
     return quantity
 
 
+def format_price_precision(price, tick_size):
+    """Format price to match tick_size precision, removing floating point errors
+    
+    Handles all tick_size formats:
+    - Large: 1.0, 10.0, 100.0 (0 decimal places)
+    - Medium: 0.1, 0.5 (1 decimal place)
+    - Small: 0.01, 0.001 (2-3 decimal places)
+    - Very small: 0.0001, 0.00001 (4-5 decimal places)
+    - Extremely small: 0.000001 (6+ decimal places)
+    """
+    # Calculate decimal places from tick_size
+    # Convert tick_size to string to count decimal places accurately
+    tick_size_str = f"{tick_size:.10f}".rstrip('0').rstrip('.')
+    
+    if '.' in tick_size_str:
+        # Count decimal places after the decimal point
+        decimal_places = len(tick_size_str.split('.')[1])
+    else:
+        # Tick size is a whole number (1.0, 10.0, etc.)
+        decimal_places = 0
+    
+    # Round to tick size: divide by tick_size, round to nearest integer, multiply back
+    # This ensures price is a multiple of tick_size
+    price = round(price / tick_size) * tick_size
+    
+    # Format to correct decimal places to eliminate floating point errors
+    # This converts values like 0.7111000000000001 to 0.7111
+    price = round(price, decimal_places)
+    
+    # Final safety check: convert to string and back to float to remove any remaining precision errors
+    # Format with the exact number of decimal places needed
+    if decimal_places > 0:
+        price_str = f"{price:.{decimal_places}f}"
+        price = float(price_str)
+    else:
+        # For whole numbers, ensure it's an integer
+        price = float(int(price))
+    
+    return price
+
+
 def calculate_quantity(entry_price, symbol_info):
     """Calculate quantity based on $10 per entry with 20X leverage"""
     # Position value = Entry size * Leverage = $10 * 20 = $200
@@ -724,10 +765,10 @@ def create_limit_order(signal_data):
         price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
         tick_size = float(price_filter['tickSize']) if price_filter else 0.01
         
-        # Round prices to tick size
-        primary_entry_price = round(primary_entry_price / tick_size) * tick_size
+        # Format prices to tick size precision (removes floating point errors)
+        primary_entry_price = format_price_precision(primary_entry_price, tick_size)
         if dca_entry_price:
-            dca_entry_price = round(dca_entry_price / tick_size) * tick_size
+            dca_entry_price = format_price_precision(dca_entry_price, tick_size)
         
         # Calculate quantity based on $10 per entry with 20X leverage
         primary_quantity = calculate_quantity(primary_entry_price, symbol_info)
@@ -775,7 +816,7 @@ def create_limit_order(signal_data):
                 # The background thread will create the TP order as soon as the limit order fills and position opens
                 if take_profit and take_profit > 0:
                     tp_side = 'SELL' if side == 'BUY' else 'BUY'
-                    tp_price = round(take_profit / tick_size) * tick_size
+                    tp_price = format_price_precision(take_profit, tick_size)
                     total_qty = primary_quantity + (dca_quantity if dca_entry_price else 0)
                     
                     # Store TP details - will be created automatically when position exists
@@ -922,7 +963,7 @@ def create_limit_order(signal_data):
                     if current_position_qty > 0:
                         # Update TP with current position quantity
                         tp_side = 'SELL' if side == 'BUY' else 'BUY'
-                        tp_price = round(take_profit / tick_size) * tick_size
+                        tp_price = format_price_precision(take_profit, tick_size)
                         tp_params = {
                             'symbol': symbol,
                             'side': tp_side,
