@@ -11,6 +11,7 @@ import logging
 import hmac
 import hashlib
 import time
+import requests
 from datetime import datetime
 from flask import Flask, request, jsonify
 from binance.client import Client
@@ -36,6 +37,77 @@ BINANCE_API_KEY = os.getenv('BINANCE_API_KEY', '')
 BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET', '')
 BINANCE_TESTNET = os.getenv('BINANCE_TESTNET', 'false').lower() == 'true'
 BINANCE_SUB_ACCOUNT_EMAIL = os.getenv('BINANCE_SUB_ACCOUNT_EMAIL', '')  # For sub-account trading
+SLACK_WEBHOOK_URL = os.getenv('SLACK_WEBHOOK_URL', '')  # Slack webhook URL for error notifications
+
+def send_slack_alert(error_type, message, details=None, symbol=None, severity='ERROR'):
+    """
+    Send a beautiful error notification to Slack webhook
+    
+    Args:
+        error_type: Type of error (e.g., 'Binance API Error', 'Order Creation Failed')
+        message: Main error message
+        details: Additional details dict (optional)
+        symbol: Trading symbol if applicable (optional)
+        severity: ERROR, WARNING, or CRITICAL
+    """
+    if not SLACK_WEBHOOK_URL:
+        return  # Skip if webhook URL not configured
+    
+    try:
+        # Determine emoji based on severity
+        emoji_map = {
+            'ERROR': '🚨',
+            'WARNING': '⚠️',
+            'CRITICAL': '🔥'
+        }
+        emoji = emoji_map.get(severity, '🚨')
+        
+        # Build the message
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
+        environment = 'TESTNET' if BINANCE_TESTNET else 'PRODUCTION'
+        
+        # Format the message with beautiful structure
+        slack_message = f"""{emoji} *{severity}: {error_type}*
+
+*App:* Binance Trading Bot
+*Environment:* {environment}
+*Module:* Webhook Service
+*Time:* {timestamp}"""
+        
+        if symbol:
+            slack_message += f"\n*Symbol:* {symbol}"
+        
+        slack_message += f"\n*Message:* {message}"
+        
+        # Add additional details if provided
+        if details:
+            slack_message += "\n*Details:*"
+            for key, value in details.items():
+                if value is not None:
+                    slack_message += f"\n  • *{key}:* {value}"
+        
+        # Send to Slack (non-blocking in a thread)
+        def send_async():
+            try:
+                payload = {'text': slack_message}
+                response = requests.post(
+                    SLACK_WEBHOOK_URL,
+                    json=payload,
+                    headers={'Content-Type': 'application/json'},
+                    timeout=5
+                )
+                response.raise_for_status()
+            except Exception as e:
+                # Don't log Slack errors to avoid infinite loops
+                logger.debug(f"Failed to send Slack notification: {e}")
+        
+        # Send in background thread to avoid blocking
+        thread = threading.Thread(target=send_async, daemon=True)
+        thread.start()
+        
+    except Exception as e:
+        # Silently fail - don't break the service if Slack is down
+        logger.debug(f"Error preparing Slack notification: {e}")
 
 # Initialize Binance client
 try:
@@ -54,6 +126,12 @@ try:
         logger.info("Connected to Binance LIVE")
 except Exception as e:
     logger.error(f"Failed to initialize Binance client: {e}")
+    send_slack_alert(
+        error_type="Binance Client Initialization Failed",
+        message=str(e),
+        details={'API_Key_Configured': bool(BINANCE_API_KEY), 'Testnet': BINANCE_TESTNET},
+        severity='CRITICAL'
+    )
     client = None
 
 # Order tracking to prevent duplicates
@@ -142,6 +220,12 @@ def create_tp_if_needed(symbol, trade_info):
         symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
         if not symbol_info:
             logger.error(f"Symbol info not found for {symbol}")
+            send_slack_alert(
+                error_type="Symbol Info Not Found",
+                message=f"Symbol {symbol} not found in Binance exchange info",
+                symbol=symbol,
+                severity='ERROR'
+            )
             return False
             
         price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
@@ -197,9 +281,23 @@ def create_tp_if_needed(symbol, trade_info):
         
     except BinanceAPIException as e:
         logger.error(f"❌ Binance API error creating TP for {symbol}: {e.message} (Code: {e.code})")
+        send_slack_alert(
+            error_type="Take Profit Order Creation Failed",
+            message=f"{e.message} (Code: {e.code})",
+            details={'Error_Code': e.code, 'TP_Price': tp_price, 'TP_Quantity': tp_quantity},
+            symbol=symbol,
+            severity='ERROR'
+        )
         return False
     except Exception as e:
         logger.error(f"❌ Error creating TP for {symbol}: {e}", exc_info=True)
+        send_slack_alert(
+            error_type="Take Profit Order Creation Error",
+            message=str(e),
+            details={'TP_Price': tp_price, 'TP_Quantity': tp_quantity},
+            symbol=symbol,
+            severity='ERROR'
+        )
         return False
 
 
@@ -280,6 +378,13 @@ def create_missing_tp_orders():
                     
                     except Exception as e:
                         logger.error(f"Error processing position {symbol}: {e}", exc_info=True)
+                        send_slack_alert(
+                            error_type="Background TP Check Error",
+                            message=str(e),
+                            details={'Position_Amount': position_amt if 'position_amt' in locals() else 'Unknown'},
+                            symbol=symbol,
+                            severity='WARNING'
+                        )
                 
                 # Also clean up stored TP for symbols with no position and no orders
                 symbols_to_cleanup = []
@@ -309,9 +414,19 @@ def create_missing_tp_orders():
                             
             except Exception as e:
                 logger.error(f"Error getting positions in background thread: {e}", exc_info=True)
+                send_slack_alert(
+                    error_type="Background Thread Error",
+                    message=f"Error getting positions: {str(e)}",
+                    severity='ERROR'
+                )
                 
         except Exception as e:
             logger.error(f"Error in TP creation background thread: {e}", exc_info=True)
+            send_slack_alert(
+                error_type="TP Creation Background Thread Error",
+                message=str(e),
+                severity='ERROR'
+            )
 
 # Start background thread for TP creation (only if client is initialized)
 if client:
@@ -547,9 +662,23 @@ def close_position_at_market(symbol, signal_side, is_hedge_mode=False):
         
     except BinanceAPIException as e:
         logger.error(f"Binance API error closing position: {e}")
+        send_slack_alert(
+            error_type="Position Close Failed",
+            message=f"{e.message} (Code: {e.code})",
+            details={'Error_Code': e.code, 'Close_Side': close_side, 'Quantity': close_quantity},
+            symbol=symbol,
+            severity='ERROR'
+        )
         return {'success': False, 'error': f'Binance API error: {e.message}'}
     except Exception as e:
         logger.error(f"Error closing position: {e}", exc_info=True)
+        send_slack_alert(
+            error_type="Position Close Error",
+            message=str(e),
+            details={'Close_Side': close_side, 'Quantity': close_quantity},
+            symbol=symbol,
+            severity='ERROR'
+        )
         return {'success': False, 'error': str(e)}
 
 
@@ -813,12 +942,32 @@ def create_limit_order(signal_data):
                                     logger.error(f"❌ Failed to close position (retry without reduceOnly): {e2}", exc_info=True)
                             else:
                                 logger.error(f"❌ Failed to close position: {e}", exc_info=True)
+                                send_slack_alert(
+                                    error_type="Position Close Failed (EXIT)",
+                                    message=str(e),
+                                    details={'Position_Amount': position_amt, 'Close_Side': close_side},
+                                    symbol=symbol,
+                                    severity='ERROR'
+                                )
                         except Exception as e:
                             logger.error(f"❌ Failed to close position: {e}", exc_info=True)
+                            send_slack_alert(
+                                error_type="Position Close Error (EXIT)",
+                                message=str(e),
+                                details={'Position_Amount': position_amt},
+                                symbol=symbol,
+                                severity='ERROR'
+                            )
                 else:
                     logger.info(f"No open position found for {symbol} - position may already be closed or entry never filled")
             except Exception as e:
                 logger.error(f"Error checking/closing positions for {symbol}: {e}", exc_info=True)
+                send_slack_alert(
+                    error_type="EXIT Position Close Error",
+                    message=str(e),
+                    symbol=symbol,
+                    severity='ERROR'
+                )
             
             # Clean up tracking
             if symbol in active_trades:
@@ -1006,9 +1155,23 @@ def create_limit_order(signal_data):
                         
             except BinanceAPIException as e:
                 logger.error(f"❌ Failed to create PRIMARY entry order: {e.message} (Code: {e.code})")
+                send_slack_alert(
+                    error_type="Primary Entry Order Creation Failed",
+                    message=f"{e.message} (Code: {e.code})",
+                    details={'Error_Code': e.code, 'Entry_Price': entry_price, 'Quantity': qty, 'Side': side},
+                    symbol=symbol,
+                    severity='ERROR'
+                )
                 return {'success': False, 'error': f'Failed to create order: {e.message}'}
             except Exception as e:
                 logger.error(f"❌ Unexpected error creating PRIMARY entry order: {e}")
+                send_slack_alert(
+                    error_type="Primary Entry Order Creation Error",
+                    message=str(e),
+                    details={'Entry_Price': entry_price, 'Quantity': qty, 'Side': side},
+                    symbol=symbol,
+                    severity='ERROR'
+                )
                 return {'success': False, 'error': f'Unexpected error: {str(e)}'}
             
             # Track order
@@ -1037,9 +1200,23 @@ def create_limit_order(signal_data):
                     logger.info(f"✅ DCA entry order created successfully: Order ID {dca_order_result.get('orderId')}")
                 except BinanceAPIException as e:
                     logger.error(f"❌ Failed to create DCA entry order: {e.message} (Code: {e.code})")
+                    send_slack_alert(
+                        error_type="DCA Entry Order Creation Failed",
+                        message=f"{e.message} (Code: {e.code})",
+                        details={'Error_Code': e.code, 'DCA_Price': dca_price, 'Quantity': dca_qty, 'Side': side},
+                        symbol=symbol,
+                        severity='WARNING'
+                    )
                     # Continue with primary order even if DCA fails
                 except Exception as e:
                     logger.error(f"❌ Unexpected error creating DCA entry order: {e}")
+                    send_slack_alert(
+                        error_type="DCA Entry Order Creation Error",
+                        message=str(e),
+                        details={'DCA_Price': dca_price, 'Quantity': dca_qty, 'Side': side},
+                        symbol=symbol,
+                        severity='WARNING'
+                    )
                 
                 # Track order
                 order_key = f"{symbol}_{dca_entry_price}_{side}_DCA"
@@ -1087,9 +1264,23 @@ def create_limit_order(signal_data):
                 logger.info(f"✅ DCA entry order created successfully: Order ID {order_result.get('orderId')}")
             except BinanceAPIException as e:
                 logger.error(f"❌ Failed to create DCA entry order: {e.message} (Code: {e.code})")
+                send_slack_alert(
+                    error_type="DCA Entry Order Creation Failed",
+                    message=f"{e.message} (Code: {e.code})",
+                    details={'Error_Code': e.code, 'DCA_Price': dca_price, 'Quantity': dca_qty, 'Side': side},
+                    symbol=symbol,
+                    severity='ERROR'
+                )
                 return {'success': False, 'error': f'Failed to create DCA order: {e.message}'}
             except Exception as e:
                 logger.error(f"❌ Unexpected error creating DCA entry order: {e}")
+                send_slack_alert(
+                    error_type="DCA Entry Order Creation Error",
+                    message=str(e),
+                    details={'DCA_Price': dca_price, 'Quantity': dca_qty, 'Side': side},
+                    symbol=symbol,
+                    severity='ERROR'
+                )
                 return {'success': False, 'error': f'Unexpected error: {str(e)}'}
             
             # Track order
@@ -1165,6 +1356,13 @@ def create_limit_order(signal_data):
                         logger.info(f"Take profit order created for DCA entry: {tp_order}")
                 except Exception as e:
                     logger.error(f"Failed to create take profit order for DCA: {e}")
+                    send_slack_alert(
+                        error_type="DCA Take Profit Creation Failed",
+                        message=str(e),
+                        details={'DCA_Entry_Price': dca_entry_price if 'dca_entry_price' in locals() else 'Unknown'},
+                        symbol=symbol,
+                        severity='ERROR'
+                    )
             else:
                 logger.info(f"Take profit order already exists for {symbol}, skipping creation")
         
@@ -1182,12 +1380,34 @@ def create_limit_order(signal_data):
         
     except BinanceAPIException as e:
         logger.error(f"Binance API error: {e}")
+        # symbol is always defined by this point (extracted at function start)
+        send_slack_alert(
+            error_type="Binance API Error",
+            message=f"{e.message} (Code: {e.code})",
+            details={'Error_Code': e.code, 'Event': event if 'event' in locals() else 'UNKNOWN'},
+            symbol=symbol if 'symbol' in locals() else None,
+            severity='ERROR'
+        )
         return {'success': False, 'error': f'Binance API error: {e.message}'}
     except BinanceOrderException as e:
         logger.error(f"Binance order error: {e}")
+        send_slack_alert(
+            error_type="Binance Order Error",
+            message=f"{e.message} (Code: {e.code})",
+            details={'Error_Code': e.code, 'Event': event if 'event' in locals() else 'UNKNOWN'},
+            symbol=symbol if 'symbol' in locals() else None,
+            severity='ERROR'
+        )
         return {'success': False, 'error': f'Binance order error: {e.message}'}
     except Exception as e:
         logger.error(f"Unexpected error: {e}", exc_info=True)
+        send_slack_alert(
+            error_type="Unexpected Error",
+            message=str(e),
+            details={'Event': event if 'event' in locals() else 'UNKNOWN'},
+            symbol=symbol if 'symbol' in locals() else None,
+            severity='ERROR'
+        )
         return {'success': False, 'error': str(e)}
 
 
@@ -1218,6 +1438,12 @@ def webhook():
         
     except Exception as e:
         logger.error(f"Webhook error: {e}", exc_info=True)
+        send_slack_alert(
+            error_type="Webhook Processing Error",
+            message=str(e),
+            details={'Request_Method': request.method, 'Request_Path': request.path},
+            severity='ERROR'
+        )
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -1376,6 +1602,12 @@ if __name__ == '__main__':
     
     if not BINANCE_API_KEY or not BINANCE_API_SECRET:
         logger.error("BINANCE_API_KEY and BINANCE_API_SECRET must be set!")
+        send_slack_alert(
+            error_type="Configuration Error",
+            message="BINANCE_API_KEY and BINANCE_API_SECRET must be set!",
+            details={'API_Key_Set': bool(BINANCE_API_KEY), 'API_Secret_Set': bool(BINANCE_API_SECRET)},
+            severity='CRITICAL'
+        )
         exit(1)
     
     # Run Flask app
