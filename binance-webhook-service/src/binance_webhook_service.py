@@ -261,23 +261,57 @@ def create_tp_if_needed(symbol, trade_info):
             'quantity': tp_quantity,
             'stopPrice': tp_price,
             'workingType': working_type,  # Use mark price for trigger (like Binance UI)
-            'reduceOnly': True  # TP should reduce position
         }
         if is_hedge_mode and position_side != 'BOTH':
             tp_params['positionSide'] = position_side
         
-        tp_order = client.futures_create_order(**tp_params)
-        trade_info['tp_order_id'] = tp_order.get('orderId')
-        logger.info(f"✅ TP order created successfully: Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol} (qty: {tp_quantity})")
+        # Try with reduceOnly first (for safety), then without if it fails
+        tp_params_with_reduce = tp_params.copy()
+        tp_params_with_reduce['reduceOnly'] = True  # TP should reduce position
         
-        # Remove stored TP details since it's now created (but keep tp_order_id)
-        if 'tp_price' in trade_info:
-            del trade_info['tp_price']
-        if 'tp_quantity' in trade_info:
-            del trade_info['tp_quantity']
-        if 'tp_working_type' in trade_info:
-            del trade_info['tp_working_type']
-        return True
+        try:
+            tp_order = client.futures_create_order(**tp_params_with_reduce)
+            trade_info['tp_order_id'] = tp_order.get('orderId')
+            logger.info(f"✅ TP order created successfully: Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol} (qty: {tp_quantity})")
+            
+            # Remove stored TP details since it's now created (but keep tp_order_id)
+            if 'tp_price' in trade_info:
+                del trade_info['tp_price']
+            if 'tp_quantity' in trade_info:
+                del trade_info['tp_quantity']
+            if 'tp_working_type' in trade_info:
+                del trade_info['tp_working_type']
+            return True
+        except BinanceAPIException as e:
+            # If reduceOnly is not accepted, try without it
+            if e.code == -1106 or 'reduceonly' in str(e).lower():
+                logger.warning(f"reduceOnly not accepted for TP order on {symbol}, retrying without it: {e.message}")
+                try:
+                    tp_order = client.futures_create_order(**tp_params)
+                    trade_info['tp_order_id'] = tp_order.get('orderId')
+                    logger.info(f"✅ TP order created successfully (without reduceOnly): Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol} (qty: {tp_quantity})")
+                    
+                    # Remove stored TP details since it's now created (but keep tp_order_id)
+                    if 'tp_price' in trade_info:
+                        del trade_info['tp_price']
+                    if 'tp_quantity' in trade_info:
+                        del trade_info['tp_quantity']
+                    if 'tp_working_type' in trade_info:
+                        del trade_info['tp_working_type']
+                    return True
+                except Exception as e2:
+                    logger.error(f"❌ Failed to create TP order (retry without reduceOnly) for {symbol}: {e2}", exc_info=True)
+                    send_slack_alert(
+                        error_type="Take Profit Order Creation Failed (Retry)",
+                        message=str(e2),
+                        details={'Error_Code': getattr(e2, 'code', None), 'TP_Price': tp_price, 'TP_Quantity': tp_quantity},
+                        symbol=symbol,
+                        severity='ERROR'
+                    )
+                    return False
+            else:
+                # Other API error - raise to be caught by outer exception handler
+                raise
         
     except BinanceAPIException as e:
         logger.error(f"❌ Binance API error creating TP for {symbol}: {e.message} (Code: {e.code})")
@@ -1001,12 +1035,56 @@ def create_limit_order(signal_data):
         is_primary_entry = (order_subtype == 'primary_entry' or order_subtype not in ['dca_fill', 'second_entry'])
         is_dca_entry = (order_subtype == 'dca_fill' or order_subtype == 'second_entry')
         
-        # IMPORTANT: When new trade alert comes for any symbol, close old orders for that symbol first
-        logger.info(f"Checking for existing orders/positions for {symbol} - will close old ones if found")
+        # Check for existing position and orders BEFORE processing
         has_orders, open_orders = check_existing_orders(symbol)
         has_position, position_info = check_existing_position(symbol, signal_side)
         
-        # If position exists, close it first (new trade replaces old trade)
+        # IMPORTANT: Prevent duplicate alerts when position is already open and both orders are filled
+        # This handles the case where TradingView sends duplicate DCA alerts when price returns to DCA level
+        if has_position:
+            # Simple check: If position exists and there are no pending LIMIT orders (only TP/SL orders may exist),
+            # then both entry orders are already filled - this is a duplicate alert
+            pending_limit_orders = [o for o in open_orders if o.get('type') == 'LIMIT']
+            
+            if len(pending_limit_orders) == 0:
+                # No pending limit orders = both entry orders are filled
+                logger.warning(f"⚠️ Duplicate alert ignored: Position already open for {symbol} and no pending limit orders found. Both entry orders are already filled. This is likely a duplicate DCA alert from TradingView.")
+                return {
+                    'success': False, 
+                    'error': 'Duplicate alert ignored - position already open with both orders filled',
+                    'message': f'Position exists for {symbol} and both primary/DCA orders are already filled (no pending limit orders). Ignoring duplicate alert.'
+                }
+            
+            # Additional check: Verify by checking order status in active_trades
+            # This is a secondary verification method
+            if symbol in active_trades:
+                trade_info = active_trades[symbol]
+                primary_order_id = trade_info.get('primary_order_id')
+                dca_order_id = trade_info.get('dca_order_id')
+                
+                # Check if both orders exist and are filled
+                if primary_order_id and dca_order_id:
+                    try:
+                        primary_order = client.futures_get_order(symbol=symbol, orderId=primary_order_id)
+                        dca_order = client.futures_get_order(symbol=symbol, orderId=dca_order_id)
+                        
+                        if (primary_order.get('status') == 'FILLED' and 
+                            dca_order.get('status') == 'FILLED'):
+                            logger.warning(f"⚠️ Duplicate alert ignored: Both orders confirmed as FILLED on Binance for {symbol}. Ignoring duplicate alert.")
+                            return {
+                                'success': False, 
+                                'error': 'Duplicate alert ignored - both orders already filled',
+                                'message': f'Both primary and DCA orders are already FILLED for {symbol}. Ignoring duplicate alert.'
+                            }
+                    except Exception as e:
+                        logger.debug(f"Could not verify order status for duplicate check: {e}")
+                        # Continue processing if we can't verify (fallback to pending orders check above)
+        
+        # IMPORTANT: When new trade alert comes for any symbol, close old orders for that symbol first
+        # (Only if position doesn't exist or orders aren't filled)
+        logger.info(f"Checking for existing orders/positions for {symbol} - will close old ones if found")
+        
+        # If position exists but orders aren't both filled, close it (new trade replaces old trade)
         if has_position:
             logger.info(f"Existing position found for {symbol}. Closing it before creating new trade.")
             close_result = close_position_at_market(symbol, signal_side, is_hedge_mode)
