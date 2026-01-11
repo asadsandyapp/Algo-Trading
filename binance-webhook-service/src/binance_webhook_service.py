@@ -498,16 +498,17 @@ def close_position_at_market(symbol, signal_side, is_hedge_mode=False):
         symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
         if symbol_info:
             lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
-            step_size = float(lot_size_filter['stepSize']) if lot_size_filter else 0.001
-            close_quantity = round(close_quantity / step_size) * step_size
+            if lot_size_filter:
+                step_size = float(lot_size_filter['stepSize'])
+                close_quantity = format_quantity_precision(close_quantity, step_size)
         
         # Create market order to close position
+        # Try with reduceOnly first, then without if it fails (some accounts/modes don't accept it)
         close_params = {
             'symbol': symbol,
             'side': close_side,
             'type': 'MARKET',
             'quantity': close_quantity,
-            'reduceOnly': True
         }
         
         # Only include positionSide if in Hedge mode
@@ -515,9 +516,26 @@ def close_position_at_market(symbol, signal_side, is_hedge_mode=False):
             position_side_str = 'LONG' if position_amt > 0 else 'SHORT'
             close_params['positionSide'] = position_side_str
         
-        logger.info(f"Closing position at market for {symbol}: {close_params}")
-        result = client.futures_create_order(**close_params)
-        logger.info(f"Position closed successfully: {result}")
+        # Try with reduceOnly first (for safety)
+        close_params_with_reduce = close_params.copy()
+        close_params_with_reduce['reduceOnly'] = True
+        
+        logger.info(f"Closing position at market for {symbol}: {close_params_with_reduce}")
+        try:
+            result = client.futures_create_order(**close_params_with_reduce)
+            logger.info(f"Position closed successfully: {result}")
+        except BinanceAPIException as e:
+            # If reduceOnly is not accepted, try without it
+            if e.code == -1106 or 'reduceonly' in str(e).lower() or 'not required' in str(e).lower():
+                logger.warning(f"reduceOnly not accepted for {symbol}, retrying without it: {e}")
+                try:
+                    result = client.futures_create_order(**close_params)
+                    logger.info(f"Position closed successfully (without reduceOnly): {result}")
+                except Exception as e2:
+                    logger.error(f"Failed to close position even without reduceOnly: {e2}")
+                    raise e2  # Re-raise the retry error
+            else:
+                raise  # Re-raise if it's a different error
         
         return {
             'success': True,
@@ -764,22 +782,37 @@ def create_limit_order(signal_data):
                             close_quantity = format_quantity_precision(close_quantity, step_size)
                         
                         # Create market order to close position
+                        # Try with reduceOnly first, then without if it fails (some accounts/modes don't accept it)
                         close_params = {
                             'symbol': symbol,
                             'side': close_side,
                             'type': 'MARKET',
                             'quantity': close_quantity,
-                            'reduceOnly': True
                         }
                         
                         # Only include positionSide if in Hedge mode
                         if is_hedge_mode and position_side_binance != 'BOTH':
                             close_params['positionSide'] = position_side_binance
                         
-                        logger.info(f"Closing position at market for {symbol}: {close_params}")
+                        # Try with reduceOnly first (for safety)
+                        close_params_with_reduce = close_params.copy()
+                        close_params_with_reduce['reduceOnly'] = True
+                        
+                        logger.info(f"Closing position at market for {symbol}: {close_params_with_reduce}")
                         try:
-                            result = client.futures_create_order(**close_params)
+                            result = client.futures_create_order(**close_params_with_reduce)
                             logger.info(f"✅ Position closed successfully: {result}")
+                        except BinanceAPIException as e:
+                            # If reduceOnly is not accepted, try without it
+                            if e.code == -1106 or 'reduceonly' in str(e).lower():
+                                logger.warning(f"reduceOnly not accepted for {symbol}, retrying without it: {e}")
+                                try:
+                                    result = client.futures_create_order(**close_params)
+                                    logger.info(f"✅ Position closed successfully (without reduceOnly): {result}")
+                                except Exception as e2:
+                                    logger.error(f"❌ Failed to close position (retry without reduceOnly): {e2}", exc_info=True)
+                            else:
+                                logger.error(f"❌ Failed to close position: {e}", exc_info=True)
                         except Exception as e:
                             logger.error(f"❌ Failed to close position: {e}", exc_info=True)
                 else:
