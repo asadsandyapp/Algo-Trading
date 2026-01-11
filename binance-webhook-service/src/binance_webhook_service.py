@@ -75,145 +75,243 @@ recent_exits = {}  # {symbol: timestamp}
 EXIT_COOLDOWN = 30
 
 # Helper function to create TP order for a symbol (can be called from anywhere)
+def delayed_tp_creation(symbol, delay_seconds=5):
+    """Helper function to create TP order after a delay (allows Binance to update position)"""
+    def _create():
+        time.sleep(delay_seconds)
+        if symbol in active_trades and 'tp_price' in active_trades[symbol]:
+            logger.info(f"🔄 Delayed TP check for {symbol} (after {delay_seconds}s delay)")
+            create_tp_if_needed(symbol, active_trades[symbol])
+    
+    thread = threading.Thread(target=_create, daemon=True)
+    thread.start()
+
 def create_tp_if_needed(symbol, trade_info):
     """Create TP order if position exists and TP is stored but not created yet"""
-    if 'tp_price' not in trade_info or 'tp_order_id' in trade_info:
-        return False  # No TP to create or already created
+    if 'tp_price' not in trade_info:
+        return False  # No TP to create
+    
+    # If TP order ID exists, check if it's still valid
+    if 'tp_order_id' in trade_info:
+        try:
+            # Verify TP order still exists
+            open_orders = client.futures_get_open_orders(symbol=symbol)
+            existing_tp = [o for o in open_orders if o.get('orderId') == trade_info['tp_order_id']]
+            if existing_tp:
+                return True  # TP order exists and is valid
+            else:
+                # TP order was filled or canceled, remove the ID to allow recreation
+                logger.info(f"TP order {trade_info['tp_order_id']} no longer exists for {symbol}, will recreate if needed")
+                del trade_info['tp_order_id']
+        except Exception as e:
+            logger.warning(f"Error checking TP order status for {symbol}: {e}")
     
     try:
         # Check if position exists
         positions = client.futures_position_information(symbol=symbol)
+        position_to_use = None
+        
         for position in positions:
             position_amt = float(position.get('positionAmt', 0))
             if abs(position_amt) > 0:
-                # Position exists, check if TP already exists
-                has_orders, open_orders = check_existing_orders(symbol)
-                existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
-                
-                if not existing_tp:
-                    tp_price = trade_info['tp_price']
-                    tp_side = trade_info.get('tp_side', 'SELL')
-                    
-                    # Get symbol info
-                    exchange_info = client.futures_exchange_info()
-                    symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
-                    if symbol_info:
-                        price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
-                        tick_size = float(price_filter['tickSize']) if price_filter else 0.01
-                        tp_price = format_price_precision(tp_price, tick_size)
-                        
-                        # Detect position mode
-                        try:
-                            is_hedge_mode = get_position_mode(symbol)
-                        except:
-                            is_hedge_mode = False
-                        
-                        position_side = position.get('positionSide', 'BOTH')
-                        
-                        # Use stored TP quantity (total of primary + DCA) or position amount as fallback
-                        tp_quantity = trade_info.get('tp_quantity', abs(position_amt))
-                        working_type = trade_info.get('tp_working_type', 'MARK_PRICE')
-                        
-                        logger.info(f"🔄 Creating TP order for {symbol}: price={tp_price}, qty={tp_quantity}, side={tp_side}, workingType={working_type}")
-                        
-                        tp_params = {
-                            'symbol': symbol,
-                            'side': tp_side,
-                            'type': 'TAKE_PROFIT_MARKET',
-                            'timeInForce': 'GTC',
-                            'quantity': tp_quantity,
-                            'stopPrice': tp_price,
-                            'workingType': working_type,  # Use mark price for trigger (like Binance UI)
-                            'reduceOnly': True  # TP should reduce position
-                        }
-                        if is_hedge_mode and position_side != 'BOTH':
-                            tp_params['positionSide'] = position_side
-                        
-                        tp_order = client.futures_create_order(**tp_params)
-                        trade_info['tp_order_id'] = tp_order.get('orderId')
-                        logger.info(f"✅ TP order created (like Binance UI): Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol} (qty: {tp_quantity})")
-                        # Remove stored TP details since it's now created
-                        if 'tp_price' in trade_info:
-                            del trade_info['tp_price']
-                        if 'tp_quantity' in trade_info:
-                            del trade_info['tp_quantity']
-                        if 'tp_working_type' in trade_info:
-                            del trade_info['tp_working_type']
-                        return True
-                else:
-                    # TP already exists, clean up stored price
-                    if 'tp_price' in trade_info:
-                        del trade_info['tp_price']
-                    return True
+                position_to_use = position
+                break
+        
+        if not position_to_use:
+            return False  # No position exists yet
+        
+        # Position exists, check if TP already exists
+        has_orders, open_orders = check_existing_orders(symbol)
+        existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
+        
+        if existing_tp:
+            # TP already exists, store the order ID and clean up stored price
+            trade_info['tp_order_id'] = existing_tp[0].get('orderId')
+            logger.info(f"✅ TP order already exists for {symbol}: {trade_info['tp_order_id']}")
+            if 'tp_price' in trade_info:
+                del trade_info['tp_price']
+            return True
+        
+        # Create TP order
+        tp_price = trade_info['tp_price']
+        tp_side = trade_info.get('tp_side', 'SELL')
+        position_amt = float(position_to_use.get('positionAmt', 0))
+        
+        # Get symbol info
+        exchange_info = client.futures_exchange_info()
+        symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+        if not symbol_info:
+            logger.error(f"Symbol info not found for {symbol}")
+            return False
+            
+        price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+        tick_size = float(price_filter['tickSize']) if price_filter else 0.01
+        tp_price = format_price_precision(tp_price, tick_size)
+        
+        # Detect position mode
+        try:
+            is_hedge_mode = get_position_mode(symbol)
+        except:
+            is_hedge_mode = False
+        
+        position_side = position_to_use.get('positionSide', 'BOTH')
+        
+        # Use stored TP quantity (total of primary + DCA) or position amount as fallback
+        tp_quantity = trade_info.get('tp_quantity', abs(position_amt))
+        
+        # Format quantity precision
+        lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+        if lot_size_filter:
+            step_size = float(lot_size_filter['stepSize'])
+            tp_quantity = format_quantity_precision(tp_quantity, step_size)
+        
+        working_type = trade_info.get('tp_working_type', 'MARK_PRICE')
+        
+        logger.info(f"🔄 Creating TP order for {symbol}: price={tp_price}, qty={tp_quantity}, side={tp_side}, workingType={working_type}")
+        
+        tp_params = {
+            'symbol': symbol,
+            'side': tp_side,
+            'type': 'TAKE_PROFIT_MARKET',
+            'timeInForce': 'GTC',
+            'quantity': tp_quantity,
+            'stopPrice': tp_price,
+            'workingType': working_type,  # Use mark price for trigger (like Binance UI)
+            'reduceOnly': True  # TP should reduce position
+        }
+        if is_hedge_mode and position_side != 'BOTH':
+            tp_params['positionSide'] = position_side
+        
+        tp_order = client.futures_create_order(**tp_params)
+        trade_info['tp_order_id'] = tp_order.get('orderId')
+        logger.info(f"✅ TP order created successfully: Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol} (qty: {tp_quantity})")
+        
+        # Remove stored TP details since it's now created (but keep tp_order_id)
+        if 'tp_price' in trade_info:
+            del trade_info['tp_price']
+        if 'tp_quantity' in trade_info:
+            del trade_info['tp_quantity']
+        if 'tp_working_type' in trade_info:
+            del trade_info['tp_working_type']
+        return True
+        
+    except BinanceAPIException as e:
+        logger.error(f"❌ Binance API error creating TP for {symbol}: {e.message} (Code: {e.code})")
         return False
     except Exception as e:
-        logger.debug(f"Could not create TP for {symbol}: {e}")
+        logger.error(f"❌ Error creating TP for {symbol}: {e}", exc_info=True)
         return False
 
 
 # Background thread to create TP orders when positions exist
 # This mimics Binance UI behavior: TP is "set" when creating limit order, but placed when order fills
 def create_missing_tp_orders():
-    """Background function to create TP orders for positions that don't have them
-    This mimics Binance UI: TP is set when creating limit order, placed when order fills
-    Optimized: Only checks symbols with stored TP, uses 2 minute interval to avoid API rate limits
-    Works for multiple symbols - checks each one sequentially
-    Also cleans up stored TP if orders are canceled and no position exists"""
+    """Background function to automatically create TP orders for ALL open positions
+    This is fully automatic - checks ALL positions from Binance, not just stored symbols
+    Uses stored TP details from active_trades if available
+    Works even if service restarts (checks all positions every cycle)"""
+    check_count = 0
     while True:
         try:
-            time.sleep(120)  # Check every 2 minutes (reduces API calls, safe for rate limits)
+            # Use shorter interval for first 8 checks (2 minutes) to catch filled orders quickly
+            # Then switch to 2 minute interval to reduce API calls
+            if check_count < 8:
+                sleep_time = 15  # Check every 15 seconds for first 2 minutes
+            else:
+                sleep_time = 120  # Then check every 2 minutes
             
-            # Only check symbols that have stored TP prices (more efficient - avoids unnecessary API calls)
-            symbols_with_tp = [s for s, t in active_trades.items() 
-                              if 'tp_price' in t and 'tp_order_id' not in t]
+            time.sleep(sleep_time)
+            check_count += 1
             
-            if not symbols_with_tp:
-                continue  # No TP orders to create, skip all API calls
-            
-            logger.info(f"Background thread: Checking {len(symbols_with_tp)} symbol(s) for TP creation: {symbols_with_tp}")
-            
-            # Check each symbol with stored TP (works for multiple symbols)
-            for symbol in symbols_with_tp:
-                if symbol not in active_trades:
-                    continue
+            try:
+                # Get ALL open positions from Binance (fully automatic - doesn't rely on active_trades)
+                all_positions = client.futures_position_information()
+                positions_with_size = [p for p in all_positions if abs(float(p.get('positionAmt', 0))) > 0]
+                
+                if not positions_with_size:
+                    continue  # No open positions
+                
+                logger.info(f"Background thread: Checking {len(positions_with_size)} open position(s) for TP orders")
+                
+                # Check each position
+                for position in positions_with_size:
+                    symbol = position['symbol']
+                    position_amt = float(position.get('positionAmt', 0))
                     
-                trade_info = active_trades[symbol]
-                try:
-                    # First, check if position exists
-                    positions = client.futures_position_information(symbol=symbol)
-                    has_position = False
-                    for position in positions:
-                        position_amt = float(position.get('positionAmt', 0))
-                        if abs(position_amt) > 0:
-                            has_position = True
-                            break
+                    if abs(position_amt) == 0:
+                        continue
                     
-                    # Check if any orders exist
-                    has_orders, open_orders = check_existing_orders(symbol)
-                    
-                    # If no position AND no orders, clean up stored TP (order was canceled)
-                    if not has_position and not has_orders:
-                        logger.info(f"🧹 Background thread: No position and no orders for {symbol} - cleaning up stored TP (order was likely canceled)")
-                        if 'tp_price' in trade_info:
-                            del trade_info['tp_price']
-                        if 'tp_quantity' in trade_info:
-                            del trade_info['tp_quantity']
-                        if 'tp_working_type' in trade_info:
-                            del trade_info['tp_working_type']
-                        continue  # Skip to next symbol
-                    
-                    # If position exists, try to create TP
-                    if has_position:
-                        # Use helper function to create TP (it checks position and creates if needed)
-                        create_tp_if_needed(symbol, trade_info)
-                    else:
-                        # Position doesn't exist yet, but orders might still be pending
-                        logger.debug(f"Background thread: No position yet for {symbol} (orders pending or TP stored: {trade_info.get('tp_price')})")
+                    try:
+                        # Check if TP order already exists
+                        has_orders, open_orders = check_existing_orders(symbol)
+                        existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
                         
-                except Exception as e:
-                    logger.warning(f"Error checking TP for {symbol}: {e}")
+                        if existing_tp:
+                            # TP already exists, ensure it's tracked in active_trades
+                            if symbol in active_trades:
+                                active_trades[symbol]['tp_order_id'] = existing_tp[0].get('orderId')
+                            continue  # TP exists, skip
+                        
+                        # No TP order exists - check if we have stored TP details
+                        if symbol in active_trades and 'tp_price' in active_trades[symbol]:
+                            # We have stored TP details, create TP order
+                            trade_info = active_trades[symbol]
+                            logger.info(f"🔄 Background thread: Position exists for {symbol} with stored TP details - creating TP order")
+                            success = create_tp_if_needed(symbol, trade_info)
+                            if success:
+                                logger.info(f"✅ Background thread: TP order created successfully for {symbol}")
+                            else:
+                                logger.warning(f"⚠️ Background thread: Failed to create TP for {symbol} (check logs for details)")
+                        else:
+                            # Position exists but no stored TP details
+                            # This can happen if service restarted or TP details were lost
+                            # Initialize active_trades entry if it doesn't exist
+                            if symbol not in active_trades:
+                                active_trades[symbol] = {}
+                            
+                            # Log warning - we need TP details to create TP order
+                            logger.warning(f"⚠️ Background thread: Position exists for {symbol} but no stored TP details found. TP order cannot be created automatically. Please check if TP was configured when order was created.")
+                            
+                            # Check if there are any pending orders (entry might not be filled yet)
+                            has_orders, open_orders = check_existing_orders(symbol)
+                            if not has_orders:
+                                # No orders and no TP - position exists but no way to create TP
+                                logger.warning(f"⚠️ {symbol}: Position exists ({position_amt}) but no TP details stored and no pending orders. TP cannot be created automatically.")
+                    
+                    except Exception as e:
+                        logger.error(f"Error processing position {symbol}: {e}", exc_info=True)
+                
+                # Also clean up stored TP for symbols with no position and no orders
+                symbols_to_cleanup = []
+                for symbol, trade_info in list(active_trades.items()):
+                    if 'tp_price' in trade_info and 'tp_order_id' not in trade_info:
+                        try:
+                            # Check if position exists
+                            positions = client.futures_position_information(symbol=symbol)
+                            has_position = any(abs(float(p.get('positionAmt', 0))) > 0 for p in positions)
+                            has_orders, _ = check_existing_orders(symbol)
+                            
+                            if not has_position and not has_orders:
+                                symbols_to_cleanup.append(symbol)
+                        except:
+                            pass
+                
+                # Clean up stored TP for canceled orders
+                for symbol in symbols_to_cleanup:
+                    if symbol in active_trades:
+                        logger.info(f"🧹 Background thread: Cleaning up stored TP for {symbol} (no position and no orders)")
+                        if 'tp_price' in active_trades[symbol]:
+                            del active_trades[symbol]['tp_price']
+                        if 'tp_quantity' in active_trades[symbol]:
+                            del active_trades[symbol]['tp_quantity']
+                        if 'tp_working_type' in active_trades[symbol]:
+                            del active_trades[symbol]['tp_working_type']
+                            
+            except Exception as e:
+                logger.error(f"Error getting positions in background thread: {e}", exc_info=True)
+                
         except Exception as e:
-            logger.error(f"Error in TP creation background thread: {e}")
+            logger.error(f"Error in TP creation background thread: {e}", exc_info=True)
 
 # Start background thread for TP creation (only if client is initialized)
 if client:
@@ -630,20 +728,64 @@ def create_limit_order(signal_data):
             except Exception as e:
                 logger.warning(f"Error canceling TP/SL orders: {e}")
             
-            # Check if position actually exists before trying to close
-            has_position, position_info = check_existing_position(symbol, signal_side)
-            
-            if has_position:
-                # Position exists - close it at market price
-                logger.info(f"Closing position at market price for {symbol}")
-                close_result = close_position_at_market(symbol, signal_side, is_hedge_mode)
+            # Check for ANY open position (don't filter by signal_side - close all positions)
+            try:
+                positions = client.futures_position_information(symbol=symbol)
+                positions_to_close = []
                 
-                if close_result.get('success'):
-                    logger.info(f"Position closed successfully: {close_result}")
+                for position in positions:
+                    position_amt = float(position.get('positionAmt', 0))
+                    if abs(position_amt) > 0:  # Position exists
+                        positions_to_close.append(position)
+                        logger.info(f"Found open position for {symbol}: {position_amt} @ {position.get('entryPrice')} (side: {position.get('positionSide', 'BOTH')})")
+                
+                if positions_to_close:
+                    # Get symbol info for quantity precision (once, outside loop)
+                    exchange_info = client.futures_exchange_info()
+                    symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+                    step_size = None
+                    if symbol_info:
+                        lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+                        if lot_size_filter:
+                            step_size = float(lot_size_filter['stepSize'])
+                    
+                    # Close ALL positions for this symbol
+                    logger.info(f"Closing {len(positions_to_close)} position(s) at market price for {symbol}")
+                    for position in positions_to_close:
+                        position_amt = float(position.get('positionAmt', 0))
+                        position_side_binance = position.get('positionSide', 'BOTH')
+                        
+                        # Determine close side (opposite of position)
+                        close_side = 'SELL' if position_amt > 0 else 'BUY'
+                        close_quantity = abs(position_amt)
+                        
+                        # Format quantity precision if step_size available
+                        if step_size:
+                            close_quantity = format_quantity_precision(close_quantity, step_size)
+                        
+                        # Create market order to close position
+                        close_params = {
+                            'symbol': symbol,
+                            'side': close_side,
+                            'type': 'MARKET',
+                            'quantity': close_quantity,
+                            'reduceOnly': True
+                        }
+                        
+                        # Only include positionSide if in Hedge mode
+                        if is_hedge_mode and position_side_binance != 'BOTH':
+                            close_params['positionSide'] = position_side_binance
+                        
+                        logger.info(f"Closing position at market for {symbol}: {close_params}")
+                        try:
+                            result = client.futures_create_order(**close_params)
+                            logger.info(f"✅ Position closed successfully: {result}")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to close position: {e}", exc_info=True)
                 else:
-                    logger.error(f"Failed to close position: {close_result.get('error')}")
-            else:
-                logger.info(f"No open position found for {symbol} - position may already be closed or entry never filled")
+                    logger.info(f"No open position found for {symbol} - position may already be closed or entry never filled")
+            except Exception as e:
+                logger.error(f"Error checking/closing positions for {symbol}: {e}", exc_info=True)
             
             # Clean up tracking
             if symbol in active_trades:
@@ -819,12 +961,15 @@ def create_limit_order(signal_data):
                     tp_price = format_price_precision(take_profit, tick_size)
                     total_qty = primary_quantity + (dca_quantity if dca_entry_price else 0)
                     
-                    # Store TP details - will be created automatically when position exists
+                    # Store TP details in active_trades[symbol] - will be created automatically when position exists
+                    # TP is stored in memory: active_trades[symbol]['tp_price'], ['tp_side'], ['tp_quantity'], ['tp_working_type']
+                    # Background thread checks ALL positions every 15s (first 2 min) then every 2 min
                     active_trades[symbol]['tp_price'] = tp_price
                     active_trades[symbol]['tp_side'] = tp_side
                     active_trades[symbol]['tp_quantity'] = total_qty
                     active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
-                    logger.info(f"📝 TP order configured (will auto-create when limit order fills): {tp_price} for {symbol} (qty: {total_qty})")
+                    logger.info(f"📝 TP order configured and stored in active_trades[{symbol}]: price={tp_price}, side={tp_side}, qty={total_qty}, workingType=MARK_PRICE")
+                    logger.info(f"   → TP will be created automatically when position opens (background thread checks every 15s/2min)")
                         
             except BinanceAPIException as e:
                 logger.error(f"❌ Failed to create PRIMARY entry order: {e.message} (Code: {e.code})")
@@ -874,8 +1019,14 @@ def create_limit_order(signal_data):
             entry_type = "PRIMARY"
             
             # Check if position exists and create TP immediately (in case entry filled quickly)
+            # Also schedule a delayed retry in case Binance hasn't updated position yet
             if symbol in active_trades and 'tp_price' in active_trades[symbol]:
+                # Immediate check
                 create_tp_if_needed(symbol, active_trades[symbol])
+                # Delayed retry (5 seconds) in case position updates are delayed
+                delayed_tp_creation(symbol, delay_seconds=5)
+                # Another delayed retry (15 seconds) for slower fills
+                delayed_tp_creation(symbol, delay_seconds=15)
             
         else:
             # This is a DCA entry - create only DCA order
