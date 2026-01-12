@@ -629,6 +629,10 @@ def create_missing_tp_orders():
                                                     logger.info(f"✅ Background thread: TP order created successfully for {symbol} (calculated from position)")
                                                 else:
                                                     logger.warning(f"⚠️ Background thread: Failed to create calculated TP for {symbol} (check logs for details)")
+                                        except Exception as e:
+                                            logger.debug(f"Error getting symbol info or creating TP for {symbol}: {e}")
+                                    else:
+                                        logger.debug(f"Skipping TP calculation for {symbol}: invalid entry_price or position_amt")
                             except Exception as e:
                                 logger.debug(f"Error calculating TP for {symbol}: {e}")
                                 pass
