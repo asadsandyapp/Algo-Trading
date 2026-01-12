@@ -558,19 +558,79 @@ def create_missing_tp_orders():
                             severity='WARNING'
                         )
                 
-                # Also check for positions without stored TP details (but only log once per symbol)
+                # Also check for positions without stored TP details - calculate TP from position
                 for symbol, position in positions_dict.items():
                     if symbol not in symbols_to_check:
-                        # Position exists but no stored TP details
+                        # Position exists but no stored TP details - calculate TP from current position
                         if symbol not in symbols_without_tp_logged:
                             symbols_without_tp_logged.add(symbol)
                             # Check if there are pending orders (entry might not be filled yet)
                             try:
-                                has_orders, _ = check_existing_orders(symbol)
+                                has_orders, open_orders = check_existing_orders(symbol, log_result=False)
+                                existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
+                                
+                                if existing_tp:
+                                    # TP already exists, skip
+                                    continue
+                                
                                 if not has_orders:
-                                    # No orders and no TP - log warning once
-                                    logger.warning(f"⚠️ Background thread: Position exists for {symbol} but no stored TP details found. TP order cannot be created automatically. This warning will not repeat.")
-                            except:
+                                    # No pending orders and no TP - calculate TP from position
+                                    position_amt = float(position.get('positionAmt', 0))
+                                    entry_price = float(position.get('entryPrice', 0))
+                                    position_side = position.get('positionSide', 'BOTH')
+                                    
+                                    if entry_price > 0 and abs(position_amt) > 0:
+                                        # Calculate TP: 2% profit target (adjustable)
+                                        DEFAULT_TP_PERCENT = 0.02  # 2% profit
+                                        
+                                        if position_amt > 0:  # LONG position
+                                            tp_price = entry_price * (1 + DEFAULT_TP_PERCENT)
+                                            tp_side = 'SELL'
+                                        else:  # SHORT position
+                                            tp_price = entry_price * (1 - DEFAULT_TP_PERCENT)
+                                            tp_side = 'BUY'
+                                        
+                                        # Get symbol info for precision
+                                        try:
+                                            exchange_info = client.futures_exchange_info()
+                                            symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+                                            
+                                            if symbol_info:
+                                                # Format price precision
+                                                price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+                                                if price_filter:
+                                                    tick_size = float(price_filter['tickSize'])
+                                                    tp_price = format_price_precision(tp_price, tick_size)
+                                                
+                                                # Format quantity precision
+                                                lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+                                                if lot_size_filter:
+                                                    step_size = float(lot_size_filter['stepSize'])
+                                                    tp_quantity = format_quantity_precision(abs(position_amt), step_size)
+                                                else:
+                                                    tp_quantity = abs(position_amt)
+                                                
+                                                # Detect position mode
+                                                is_hedge_mode = get_position_mode(symbol)
+                                                
+                                                # Create temporary trade_info for TP creation
+                                                # Note: position_side will be retrieved from the position object by create_tp_if_needed
+                                                temp_trade_info = {
+                                                    'tp_price': tp_price,
+                                                    'tp_quantity': tp_quantity,
+                                                    'tp_side': tp_side,
+                                                    'tp_working_type': 'MARK_PRICE'
+                                                }
+                                                
+                                                logger.info(f"🔄 Background thread: Creating TP for {symbol} from position (calculated: {tp_price}, qty: {tp_quantity})")
+                                                success = create_tp_if_needed(symbol, temp_trade_info)
+                                                
+                                                if success:
+                                                    logger.info(f"✅ Background thread: TP order created successfully for {symbol} (calculated from position)")
+                                                else:
+                                                    logger.warning(f"⚠️ Background thread: Failed to create calculated TP for {symbol} (check logs for details)")
+                            except Exception as e:
+                                logger.debug(f"Error calculating TP for {symbol}: {e}")
                                 pass
                             
             except Exception as e:
@@ -676,15 +736,17 @@ def format_symbol(trading_symbol):
 def check_existing_position(symbol, signal_side):
     """Check if there's an existing open position for the symbol"""
     try:
-        # For sub-accounts, we need to use the sub-account's API keys directly
-        # If using sub-account API keys, this will work automatically
-        positions = client.futures_position_information(symbol=symbol)
-        for position in positions:
+        # Get ALL positions first, then filter by symbol (more reliable than filtering in API call)
+        all_positions = client.futures_position_information()
+        for position in all_positions:
+            position_symbol = position.get('symbol', '')
             position_amt = float(position.get('positionAmt', 0))
-            if abs(position_amt) > 0:  # Position exists
+            
+            # Match symbol (case-insensitive) and check if position exists
+            if position_symbol.upper() == symbol.upper() and abs(position_amt) > 0:
                 position_side = position.get('positionSide', 'BOTH')
-                # Check if position side matches
-                if position_side == 'BOTH' or position_side == signal_side.upper():
+                # Check if position side matches (or if it's BOTH mode)
+                if position_side == 'BOTH' or position_side == signal_side.upper() or signal_side.upper() == 'BOTH':
                     logger.info(f"Existing position found for {symbol}: {position_amt} @ {position.get('entryPrice')}")
                     return True, position
         return False, None
@@ -746,16 +808,19 @@ def cancel_all_limit_orders(symbol, side=None):
 def close_position_at_market(symbol, signal_side, is_hedge_mode=False):
     """Close position at market price"""
     try:
-        # Get current position
-        positions = client.futures_position_information(symbol=symbol)
+        # Get ALL positions first, then filter by symbol (more reliable than filtering in API call)
+        all_positions = client.futures_position_information()
         position_to_close = None
         
-        for position in positions:
+        for position in all_positions:
+            position_symbol = position.get('symbol', '')
             position_amt = float(position.get('positionAmt', 0))
-            if abs(position_amt) > 0:  # Position exists
+            
+            # Match symbol (case-insensitive) and check if position exists
+            if position_symbol.upper() == symbol.upper() and abs(position_amt) > 0:
                 position_side = position.get('positionSide', 'BOTH')
-                # Check if position side matches
-                if position_side == 'BOTH' or position_side == signal_side.upper():
+                # Check if position side matches (or if it's BOTH mode)
+                if position_side == 'BOTH' or position_side == signal_side.upper() or signal_side.upper() == 'BOTH':
                     position_to_close = position
                     break
         
@@ -1042,13 +1107,17 @@ def create_limit_order(signal_data):
                 logger.warning(f"Error canceling TP/SL orders: {e}")
             
             # Check for ANY open position (don't filter by signal_side - close all positions)
+            # Get ALL positions first, then filter by symbol (more reliable than filtering in API call)
             try:
-                positions = client.futures_position_information(symbol=symbol)
+                all_positions = client.futures_position_information()
                 positions_to_close = []
                 
-                for position in positions:
+                for position in all_positions:
+                    position_symbol = position.get('symbol', '')
                     position_amt = float(position.get('positionAmt', 0))
-                    if abs(position_amt) > 0:  # Position exists
+                    
+                    # Match symbol (case-insensitive)
+                    if position_symbol.upper() == symbol.upper() and abs(position_amt) > 0:
                         positions_to_close.append(position)
                         logger.info(f"Found open position for {symbol}: {position_amt} @ {position.get('entryPrice')} (side: {position.get('positionSide', 'BOTH')})")
                 
