@@ -251,9 +251,21 @@ def create_tp_if_needed(symbol, trade_info):
         
         working_type = trade_info.get('tp_working_type', 'MARK_PRICE')
         
-        logger.info(f"🔄 Creating TP order for {symbol}: price={tp_price}, qty={tp_quantity}, side={tp_side}, workingType={working_type}")
+        logger.info(f"🔄 Creating TP order for {symbol}: price={tp_price}, qty={tp_quantity}, side={tp_side}, workingType={working_type}, positionSide={position_side}, hedgeMode={is_hedge_mode}")
         
-        tp_params = {
+        # Try using closePosition first (recommended by Binance for conditional orders)
+        # If that fails, fall back to using quantity
+        tp_params_close = {
+            'symbol': symbol,
+            'side': tp_side,
+            'type': 'TAKE_PROFIT_MARKET',
+            'timeInForce': 'GTC',
+            'closePosition': True,  # Close entire position (recommended for conditional orders)
+            'stopPrice': tp_price,
+            'workingType': working_type,  # Use mark price for trigger (like Binance UI)
+        }
+        
+        tp_params_quantity = {
             'symbol': symbol,
             'side': tp_side,
             'type': 'TAKE_PROFIT_MARKET',
@@ -262,17 +274,22 @@ def create_tp_if_needed(symbol, trade_info):
             'stopPrice': tp_price,
             'workingType': working_type,  # Use mark price for trigger (like Binance UI)
         }
+        
+        # Add positionSide only if in hedge mode
         if is_hedge_mode and position_side != 'BOTH':
-            tp_params['positionSide'] = position_side
+            tp_params_close['positionSide'] = position_side
+            tp_params_quantity['positionSide'] = position_side
         
-        # Try with reduceOnly first (for safety), then without if it fails
-        tp_params_with_reduce = tp_params.copy()
-        tp_params_with_reduce['reduceOnly'] = True  # TP should reduce position
+        # Strategy: Try multiple approaches in order of preference
+        # 1. closePosition=True (recommended by Binance for conditional orders)
+        # 2. quantity with reduceOnly=True
+        # 3. quantity without reduceOnly
         
+        # Try 1: closePosition=True (no reduceOnly needed when using closePosition)
         try:
-            tp_order = client.futures_create_order(**tp_params_with_reduce)
+            tp_order = client.futures_create_order(**tp_params_close)
             trade_info['tp_order_id'] = tp_order.get('orderId')
-            logger.info(f"✅ TP order created successfully: Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol} (qty: {tp_quantity})")
+            logger.info(f"✅ TP order created successfully (using closePosition): Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol}")
             
             # Remove stored TP details since it's now created (but keep tp_order_id)
             if 'tp_price' in trade_info:
@@ -283,13 +300,16 @@ def create_tp_if_needed(symbol, trade_info):
                 del trade_info['tp_working_type']
             return True
         except BinanceAPIException as e:
-            # If reduceOnly is not accepted, try without it
-            if e.code == -1106 or 'reduceonly' in str(e).lower():
-                logger.warning(f"reduceOnly not accepted for TP order on {symbol}, retrying without it: {e.message}")
+            # If closePosition fails, try with quantity
+            if e.code == -4120 or 'order type not supported' in str(e).lower() or 'closePosition' in str(e).lower():
+                logger.info(f"closePosition approach failed for {symbol}, trying with quantity: {e.message}")
+                # Try 2: quantity with reduceOnly=True
                 try:
-                    tp_order = client.futures_create_order(**tp_params)
+                    tp_params_qty_reduce = tp_params_quantity.copy()
+                    tp_params_qty_reduce['reduceOnly'] = True
+                    tp_order = client.futures_create_order(**tp_params_qty_reduce)
                     trade_info['tp_order_id'] = tp_order.get('orderId')
-                    logger.info(f"✅ TP order created successfully (without reduceOnly): Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol} (qty: {tp_quantity})")
+                    logger.info(f"✅ TP order created successfully (using quantity with reduceOnly): Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol} (qty: {tp_quantity})")
                     
                     # Remove stored TP details since it's now created (but keep tp_order_id)
                     if 'tp_price' in trade_info:
@@ -299,30 +319,114 @@ def create_tp_if_needed(symbol, trade_info):
                     if 'tp_working_type' in trade_info:
                         del trade_info['tp_working_type']
                     return True
-                except Exception as e2:
-                    logger.error(f"❌ Failed to create TP order (retry without reduceOnly) for {symbol}: {e2}", exc_info=True)
-                    send_slack_alert(
-                        error_type="Take Profit Order Creation Failed (Retry)",
-                        message=str(e2),
-                        details={'Error_Code': getattr(e2, 'code', None), 'TP_Price': tp_price, 'TP_Quantity': tp_quantity},
-                        symbol=symbol,
-                        severity='ERROR'
-                    )
-                    return False
+                except BinanceAPIException as e2:
+                    # Try 3: quantity without reduceOnly
+                    if e2.code == -1106 or 'reduceonly' in str(e2).lower():
+                        logger.info(f"reduceOnly not accepted, trying without it: {e2.message}")
+                        try:
+                            tp_order = client.futures_create_order(**tp_params_quantity)
+                            trade_info['tp_order_id'] = tp_order.get('orderId')
+                            logger.info(f"✅ TP order created successfully (using quantity without reduceOnly): Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol} (qty: {tp_quantity})")
+                            
+                            # Remove stored TP details since it's now created (but keep tp_order_id)
+                            if 'tp_price' in trade_info:
+                                del trade_info['tp_price']
+                            if 'tp_quantity' in trade_info:
+                                del trade_info['tp_quantity']
+                            if 'tp_working_type' in trade_info:
+                                del trade_info['tp_working_type']
+                            return True
+                        except BinanceAPIException as e3:
+                            # All approaches failed
+                            if e3.code == -4120 or 'order type not supported' in str(e3).lower():
+                                logger.warning(f"⚠️ TAKE_PROFIT_MARKET orders not supported for {symbol} (Code: {e3.code}). All approaches failed. Cleaning up stored TP details.")
+                                send_slack_alert(
+                                    error_type="Take Profit Order Type Not Supported",
+                                    message=f"TAKE_PROFIT_MARKET orders are not supported for {symbol} after trying all approaches. You may need to set TP manually in Binance UI.",
+                                    details={'Error_Code': e3.code, 'TP_Price': tp_price, 'TP_Quantity': tp_quantity, 'Symbol': symbol, 'Attempts': 'closePosition, quantity+reduceOnly, quantity'},
+                                    symbol=symbol,
+                                    severity='WARNING'
+                                )
+                                # Clean up stored TP details to prevent repeated retries
+                                if 'tp_price' in trade_info:
+                                    del trade_info['tp_price']
+                                if 'tp_quantity' in trade_info:
+                                    del trade_info['tp_quantity']
+                                if 'tp_working_type' in trade_info:
+                                    del trade_info['tp_working_type']
+                                return False
+                            else:
+                                raise e3
+                    elif e2.code == -4120 or 'order type not supported' in str(e2).lower():
+                        # Try without reduceOnly
+                        try:
+                            tp_order = client.futures_create_order(**tp_params_quantity)
+                            trade_info['tp_order_id'] = tp_order.get('orderId')
+                            logger.info(f"✅ TP order created successfully (using quantity without reduceOnly): Order ID {tp_order.get('orderId')} @ {tp_price} for {symbol} (qty: {tp_quantity})")
+                            
+                            # Remove stored TP details since it's now created (but keep tp_order_id)
+                            if 'tp_price' in trade_info:
+                                del trade_info['tp_price']
+                            if 'tp_quantity' in trade_info:
+                                del trade_info['tp_quantity']
+                            if 'tp_working_type' in trade_info:
+                                del trade_info['tp_working_type']
+                            return True
+                        except BinanceAPIException as e3:
+                            if e3.code == -4120 or 'order type not supported' in str(e3).lower():
+                                logger.warning(f"⚠️ TAKE_PROFIT_MARKET orders not supported for {symbol} (Code: {e3.code}). All approaches failed. Cleaning up stored TP details.")
+                                send_slack_alert(
+                                    error_type="Take Profit Order Type Not Supported",
+                                    message=f"TAKE_PROFIT_MARKET orders are not supported for {symbol} after trying all approaches. You may need to set TP manually in Binance UI.",
+                                    details={'Error_Code': e3.code, 'TP_Price': tp_price, 'TP_Quantity': tp_quantity, 'Symbol': symbol, 'Attempts': 'closePosition, quantity+reduceOnly, quantity'},
+                                    symbol=symbol,
+                                    severity='WARNING'
+                                )
+                                # Clean up stored TP details to prevent repeated retries
+                                if 'tp_price' in trade_info:
+                                    del trade_info['tp_price']
+                                if 'tp_quantity' in trade_info:
+                                    del trade_info['tp_quantity']
+                                if 'tp_working_type' in trade_info:
+                                    del trade_info['tp_working_type']
+                                return False
+                            else:
+                                raise e3
+                    else:
+                        raise e2
             else:
-                # Other API error - raise to be caught by outer exception handler
+                # Other error from closePosition - raise to be caught by outer handler
                 raise
         
     except BinanceAPIException as e:
-        logger.error(f"❌ Binance API error creating TP for {symbol}: {e.message} (Code: {e.code})")
-        send_slack_alert(
-            error_type="Take Profit Order Creation Failed",
-            message=f"{e.message} (Code: {e.code})",
-            details={'Error_Code': e.code, 'TP_Price': tp_price, 'TP_Quantity': tp_quantity},
-            symbol=symbol,
-            severity='ERROR'
-        )
-        return False
+        # Check if order type is not supported (error -4120)
+        if e.code == -4120 or 'order type not supported' in str(e).lower():
+            logger.warning(f"⚠️ TAKE_PROFIT_MARKET orders not supported for {symbol} (Code: {e.code}). This symbol may not support conditional orders. Cleaning up stored TP details.")
+            send_slack_alert(
+                error_type="Take Profit Order Type Not Supported",
+                message=f"TAKE_PROFIT_MARKET orders are not supported for {symbol}. You may need to set TP manually in Binance UI.",
+                details={'Error_Code': e.code, 'TP_Price': tp_price, 'TP_Quantity': tp_quantity, 'Symbol': symbol},
+                symbol=symbol,
+                severity='WARNING'
+            )
+            # Clean up stored TP details to prevent repeated retries
+            if 'tp_price' in trade_info:
+                del trade_info['tp_price']
+            if 'tp_quantity' in trade_info:
+                del trade_info['tp_quantity']
+            if 'tp_working_type' in trade_info:
+                del trade_info['tp_working_type']
+            return False
+        else:
+            logger.error(f"❌ Binance API error creating TP for {symbol}: {e.message} (Code: {e.code})")
+            send_slack_alert(
+                error_type="Take Profit Order Creation Failed",
+                message=f"{e.message} (Code: {e.code})",
+                details={'Error_Code': e.code, 'TP_Price': tp_price, 'TP_Quantity': tp_quantity},
+                symbol=symbol,
+                severity='ERROR'
+            )
+            return False
     except Exception as e:
         logger.error(f"❌ Error creating TP for {symbol}: {e}", exc_info=True)
         send_slack_alert(
@@ -337,78 +441,112 @@ def create_tp_if_needed(symbol, trade_info):
 
 # Background thread to create TP orders when positions exist
 # This mimics Binance UI behavior: TP is "set" when creating limit order, but placed when order fills
+# Optimized to minimize API calls and stay within Binance rate limits
 def create_missing_tp_orders():
-    """Background function to automatically create TP orders for ALL open positions
-    This is fully automatic - checks ALL positions from Binance, not just stored symbols
-    Uses stored TP details from active_trades if available
-    Works even if service restarts (checks all positions every cycle)"""
+    """Background function to automatically create TP orders for positions with stored TP details
+    Optimized to reduce API calls:
+    - Only checks symbols with stored TP details (skips symbols without TP config)
+    - Uses longer intervals to stay well within Binance rate limits
+    - Caches results to avoid redundant checks"""
     check_count = 0
+    symbols_without_tp_logged = set()  # Track symbols we've already logged warnings for
+    
     while True:
         try:
-            # Use shorter interval for first 8 checks (2 minutes) to catch filled orders quickly
-            # Then switch to 2 minute interval to reduce API calls
-            if check_count < 8:
-                sleep_time = 15  # Check every 15 seconds for first 2 minutes
+            # Optimized intervals to reduce API calls while still being effective:
+            # - First 4 checks (1 minute): Every 15 seconds to catch newly filled orders quickly
+            # - Next 10 checks (5 minutes): Every 30 seconds for active monitoring
+            # - After that: Every 5 minutes for ongoing checks
+            if check_count < 4:
+                sleep_time = 15  # Check every 15 seconds for first minute
+            elif check_count < 14:
+                sleep_time = 30  # Check every 30 seconds for next 5 minutes
             else:
-                sleep_time = 120  # Then check every 2 minutes
+                sleep_time = 300  # Then check every 5 minutes (reduces API calls significantly)
             
             time.sleep(sleep_time)
             check_count += 1
             
             try:
-                # Get ALL open positions from Binance (fully automatic - doesn't rely on active_trades)
+                # Only check symbols that have stored TP details (optimization: skip symbols without TP config)
+                symbols_to_check = [s for s, info in active_trades.items() if 'tp_price' in info]
+                
+                if not symbols_to_check:
+                    # No symbols with stored TP details - skip API calls entirely
+                    continue
+                
+                # Get ALL open positions from Binance (single API call)
                 all_positions = client.futures_position_information()
-                positions_with_size = [p for p in all_positions if abs(float(p.get('positionAmt', 0))) > 0]
+                positions_dict = {p['symbol']: p for p in all_positions if abs(float(p.get('positionAmt', 0))) > 0}
                 
-                if not positions_with_size:
-                    continue  # No open positions
+                if not positions_dict:
+                    # No open positions - clean up stored TP details
+                    for symbol in list(symbols_to_check):
+                        if symbol in active_trades and 'tp_price' in active_trades[symbol]:
+                            logger.info(f"🧹 Background thread: Cleaning up stored TP for {symbol} (no open position)")
+                            if 'tp_price' in active_trades[symbol]:
+                                del active_trades[symbol]['tp_price']
+                            if 'tp_quantity' in active_trades[symbol]:
+                                del active_trades[symbol]['tp_quantity']
+                            if 'tp_working_type' in active_trades[symbol]:
+                                del active_trades[symbol]['tp_working_type']
+                    continue
                 
-                logger.info(f"Background thread: Checking {len(positions_with_size)} open position(s) for TP orders")
+                # Only log if we're actually checking symbols (reduce log spam)
+                if len(symbols_to_check) > 0:
+                    logger.debug(f"Background thread: Checking {len(symbols_to_check)} symbol(s) with stored TP details")
                 
-                # Check each position
-                for position in positions_with_size:
-                    symbol = position['symbol']
-                    position_amt = float(position.get('positionAmt', 0))
-                    
-                    if abs(position_amt) == 0:
+                # Only check symbols that have stored TP details AND have open positions
+                symbols_checked = 0
+                for symbol in symbols_to_check:
+                    if symbol not in positions_dict:
+                        # Symbol has stored TP but no position - might be filled or canceled
+                        # Check once and clean up if no orders exist
+                        try:
+                            has_orders, _ = check_existing_orders(symbol)
+                            if not has_orders:
+                                logger.info(f"🧹 Background thread: Cleaning up stored TP for {symbol} (no position and no orders)")
+                                if symbol in active_trades:
+                                    if 'tp_price' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp_price']
+                                    if 'tp_quantity' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp_quantity']
+                                    if 'tp_working_type' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp_working_type']
+                        except:
+                            pass
                         continue
                     
+                    symbols_checked += 1
+                    position = positions_dict[symbol]
+                    position_amt = float(position.get('positionAmt', 0))
+                    
                     try:
-                        # Check if TP order already exists
-                        has_orders, open_orders = check_existing_orders(symbol)
+                        # Check if TP order already exists (don't log every check to reduce spam)
+                        has_orders, open_orders = check_existing_orders(symbol, log_result=False)
                         existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
                         
                         if existing_tp:
                             # TP already exists, ensure it's tracked in active_trades
                             if symbol in active_trades:
                                 active_trades[symbol]['tp_order_id'] = existing_tp[0].get('orderId')
+                                # Clean up stored TP details since TP is now active
+                                if 'tp_price' in active_trades[symbol]:
+                                    del active_trades[symbol]['tp_price']
+                                if 'tp_quantity' in active_trades[symbol]:
+                                    del active_trades[symbol]['tp_quantity']
+                                if 'tp_working_type' in active_trades[symbol]:
+                                    del active_trades[symbol]['tp_working_type']
                             continue  # TP exists, skip
                         
-                        # No TP order exists - check if we have stored TP details
-                        if symbol in active_trades and 'tp_price' in active_trades[symbol]:
-                            # We have stored TP details, create TP order
-                            trade_info = active_trades[symbol]
-                            logger.info(f"🔄 Background thread: Position exists for {symbol} with stored TP details - creating TP order")
-                            success = create_tp_if_needed(symbol, trade_info)
-                            if success:
-                                logger.info(f"✅ Background thread: TP order created successfully for {symbol}")
-                            else:
-                                logger.warning(f"⚠️ Background thread: Failed to create TP for {symbol} (check logs for details)")
+                        # No TP order exists - we have stored TP details, create TP order
+                        trade_info = active_trades[symbol]
+                        logger.info(f"🔄 Background thread: Position exists for {symbol} with stored TP details - creating TP order")
+                        success = create_tp_if_needed(symbol, trade_info)
+                        if success:
+                            logger.info(f"✅ Background thread: TP order created successfully for {symbol}")
                         else:
-                            # Position exists but no stored TP details
-                            # This can happen if service restarted or TP details were lost
-                            # Initialize active_trades entry if it doesn't exist
-                            if symbol not in active_trades:
-                                active_trades[symbol] = {}
-                            
-                            # Log warning - we need TP details to create TP order
-                            logger.warning(f"⚠️ Background thread: Position exists for {symbol} but no stored TP details found. TP order cannot be created automatically. Please check if TP was configured when order was created.")
-                            
-                            # Check if there are any pending orders (entry might not be filled yet)
-                            has_orders, open_orders = check_existing_orders(symbol)
-                            if not has_orders:
-                                # No orders and no TP - position exists but no way to create TP
-                                logger.warning(f"⚠️ {symbol}: Position exists ({position_amt}) but no TP details stored and no pending orders. TP cannot be created automatically.")
+                            logger.warning(f"⚠️ Background thread: Failed to create TP for {symbol} (check logs for details)")
                     
                     except Exception as e:
                         logger.error(f"Error processing position {symbol}: {e}", exc_info=True)
@@ -420,31 +558,20 @@ def create_missing_tp_orders():
                             severity='WARNING'
                         )
                 
-                # Also clean up stored TP for symbols with no position and no orders
-                symbols_to_cleanup = []
-                for symbol, trade_info in list(active_trades.items()):
-                    if 'tp_price' in trade_info and 'tp_order_id' not in trade_info:
-                        try:
-                            # Check if position exists
-                            positions = client.futures_position_information(symbol=symbol)
-                            has_position = any(abs(float(p.get('positionAmt', 0))) > 0 for p in positions)
-                            has_orders, _ = check_existing_orders(symbol)
-                            
-                            if not has_position and not has_orders:
-                                symbols_to_cleanup.append(symbol)
-                        except:
-                            pass
-                
-                # Clean up stored TP for canceled orders
-                for symbol in symbols_to_cleanup:
-                    if symbol in active_trades:
-                        logger.info(f"🧹 Background thread: Cleaning up stored TP for {symbol} (no position and no orders)")
-                        if 'tp_price' in active_trades[symbol]:
-                            del active_trades[symbol]['tp_price']
-                        if 'tp_quantity' in active_trades[symbol]:
-                            del active_trades[symbol]['tp_quantity']
-                        if 'tp_working_type' in active_trades[symbol]:
-                            del active_trades[symbol]['tp_working_type']
+                # Also check for positions without stored TP details (but only log once per symbol)
+                for symbol, position in positions_dict.items():
+                    if symbol not in symbols_to_check:
+                        # Position exists but no stored TP details
+                        if symbol not in symbols_without_tp_logged:
+                            symbols_without_tp_logged.add(symbol)
+                            # Check if there are pending orders (entry might not be filled yet)
+                            try:
+                                has_orders, _ = check_existing_orders(symbol)
+                                if not has_orders:
+                                    # No orders and no TP - log warning once
+                                    logger.warning(f"⚠️ Background thread: Position exists for {symbol} but no stored TP details found. TP order cannot be created automatically. This warning will not repeat.")
+                            except:
+                                pass
                             
             except Exception as e:
                 logger.error(f"Error getting positions in background thread: {e}", exc_info=True)
@@ -566,12 +693,17 @@ def check_existing_position(symbol, signal_side):
         return False, None
 
 
-def check_existing_orders(symbol):
-    """Check for existing open orders (limit orders) for the symbol"""
+def check_existing_orders(symbol, log_result=False):
+    """Check for existing open orders (limit orders) for the symbol
+    Args:
+        symbol: Trading symbol to check
+        log_result: If True, log the result (default False to reduce log spam)
+    """
     try:
         open_orders = client.futures_get_open_orders(symbol=symbol)
         if open_orders:
-            logger.info(f"Found {len(open_orders)} open orders for {symbol}")
+            if log_result:
+                logger.info(f"Found {len(open_orders)} open orders for {symbol}")
             return True, open_orders
         return False, []
     except Exception as e:
@@ -1432,6 +1564,26 @@ def create_limit_order(signal_data):
                         if symbol in active_trades:
                             active_trades[symbol]['tp_order_id'] = tp_order.get('orderId')
                         logger.info(f"Take profit order created for DCA entry: {tp_order}")
+                except BinanceAPIException as e:
+                    # Check if order type is not supported (error -4120)
+                    if e.code == -4120 or 'order type not supported' in str(e).lower():
+                        logger.warning(f"⚠️ TAKE_PROFIT_MARKET orders not supported for {symbol} (Code: {e.code}). This symbol may not support conditional orders. You may need to set TP manually in Binance UI.")
+                        send_slack_alert(
+                            error_type="DCA Take Profit Order Type Not Supported",
+                            message=f"TAKE_PROFIT_MARKET orders are not supported for {symbol}. You may need to set TP manually in Binance UI.",
+                            details={'Error_Code': e.code, 'TP_Price': tp_price, 'Symbol': symbol, 'DCA_Entry_Price': dca_entry_price if 'dca_entry_price' in locals() else 'Unknown'},
+                            symbol=symbol,
+                            severity='WARNING'
+                        )
+                    else:
+                        logger.error(f"Failed to create take profit order for DCA: {e}")
+                        send_slack_alert(
+                            error_type="DCA Take Profit Creation Failed",
+                            message=str(e),
+                            details={'Error_Code': e.code, 'DCA_Entry_Price': dca_entry_price if 'dca_entry_price' in locals() else 'Unknown'},
+                            symbol=symbol,
+                            severity='ERROR'
+                        )
                 except Exception as e:
                     logger.error(f"Failed to create take profit order for DCA: {e}")
                     send_slack_alert(
