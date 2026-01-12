@@ -562,80 +562,87 @@ def create_missing_tp_orders():
                 for symbol, position in positions_dict.items():
                     if symbol not in symbols_to_check:
                         # Position exists but no stored TP details - calculate TP from current position
-                        if symbol not in symbols_without_tp_logged:
-                            symbols_without_tp_logged.add(symbol)
-                            # Check if there are pending orders (entry might not be filled yet)
-                            try:
-                                has_orders, open_orders = check_existing_orders(symbol, log_result=False)
-                                existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
+                        # Check if there are pending orders (entry might not be filled yet)
+                        try:
+                            has_orders, open_orders = check_existing_orders(symbol, log_result=False)
+                            existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
+                            
+                            if existing_tp:
+                                # TP already exists, mark as processed to avoid repeated checks
+                                if symbol not in symbols_without_tp_logged:
+                                    symbols_without_tp_logged.add(symbol)
+                                continue
+                            
+                            if not has_orders:
+                                # No pending orders and no TP - calculate TP from position
+                                position_amt = float(position.get('positionAmt', 0))
+                                entry_price = float(position.get('entryPrice', 0))
+                                position_side = position.get('positionSide', 'BOTH')
                                 
-                                if existing_tp:
-                                    # TP already exists, skip
-                                    continue
-                                
-                                if not has_orders:
-                                    # No pending orders and no TP - calculate TP from position
-                                    position_amt = float(position.get('positionAmt', 0))
-                                    entry_price = float(position.get('entryPrice', 0))
-                                    position_side = position.get('positionSide', 'BOTH')
+                                if entry_price > 0 and abs(position_amt) > 0:
+                                    # Calculate TP: 2.1% profit target (adjustable)
+                                    DEFAULT_TP_PERCENT = 0.021  # 2.1% profit
                                     
-                                    if entry_price > 0 and abs(position_amt) > 0:
-                                        # Calculate TP: 2% profit target (adjustable)
-                                        DEFAULT_TP_PERCENT = 0.02  # 2% profit
+                                    if position_amt > 0:  # LONG position
+                                        tp_price = entry_price * (1 + DEFAULT_TP_PERCENT)
+                                        tp_side = 'SELL'
+                                    else:  # SHORT position
+                                        tp_price = entry_price * (1 - DEFAULT_TP_PERCENT)
+                                        tp_side = 'BUY'
+                                    
+                                    # Get symbol info for precision
+                                    try:
+                                        exchange_info = client.futures_exchange_info()
+                                        symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
                                         
-                                        if position_amt > 0:  # LONG position
-                                            tp_price = entry_price * (1 + DEFAULT_TP_PERCENT)
-                                            tp_side = 'SELL'
-                                        else:  # SHORT position
-                                            tp_price = entry_price * (1 - DEFAULT_TP_PERCENT)
-                                            tp_side = 'BUY'
-                                        
-                                        # Get symbol info for precision
-                                        try:
-                                            exchange_info = client.futures_exchange_info()
-                                            symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+                                        if symbol_info:
+                                            # Format price precision
+                                            price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+                                            if price_filter:
+                                                tick_size = float(price_filter['tickSize'])
+                                                tp_price = format_price_precision(tp_price, tick_size)
                                             
-                                            if symbol_info:
-                                                # Format price precision
-                                                price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
-                                                if price_filter:
-                                                    tick_size = float(price_filter['tickSize'])
-                                                    tp_price = format_price_precision(tp_price, tick_size)
-                                                
-                                                # Format quantity precision
-                                                lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
-                                                if lot_size_filter:
-                                                    step_size = float(lot_size_filter['stepSize'])
-                                                    tp_quantity = format_quantity_precision(abs(position_amt), step_size)
-                                                else:
-                                                    tp_quantity = abs(position_amt)
-                                                
-                                                # Detect position mode
-                                                is_hedge_mode = get_position_mode(symbol)
-                                                
-                                                # Create temporary trade_info for TP creation
-                                                # Note: position_side will be retrieved from the position object by create_tp_if_needed
-                                                temp_trade_info = {
-                                                    'tp_price': tp_price,
-                                                    'tp_quantity': tp_quantity,
-                                                    'tp_side': tp_side,
-                                                    'tp_working_type': 'MARK_PRICE'
-                                                }
-                                                
-                                                logger.info(f"🔄 Background thread: Creating TP for {symbol} from position (calculated: {tp_price}, qty: {tp_quantity})")
-                                                success = create_tp_if_needed(symbol, temp_trade_info)
-                                                
-                                                if success:
-                                                    logger.info(f"✅ Background thread: TP order created successfully for {symbol} (calculated from position)")
-                                                else:
-                                                    logger.warning(f"⚠️ Background thread: Failed to create calculated TP for {symbol} (check logs for details)")
-                                        except Exception as e:
-                                            logger.debug(f"Error getting symbol info or creating TP for {symbol}: {e}")
-                                    else:
-                                        logger.debug(f"Skipping TP calculation for {symbol}: invalid entry_price or position_amt")
-                            except Exception as e:
-                                logger.debug(f"Error calculating TP for {symbol}: {e}")
-                                pass
+                                            # Format quantity precision
+                                            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+                                            if lot_size_filter:
+                                                step_size = float(lot_size_filter['stepSize'])
+                                                tp_quantity = format_quantity_precision(abs(position_amt), step_size)
+                                            else:
+                                                tp_quantity = abs(position_amt)
+                                            
+                                            # Detect position mode
+                                            is_hedge_mode = get_position_mode(symbol)
+                                            
+                                            # Create temporary trade_info for TP creation
+                                            # Note: position_side will be retrieved from the position object by create_tp_if_needed
+                                            temp_trade_info = {
+                                                'tp_price': tp_price,
+                                                'tp_quantity': tp_quantity,
+                                                'tp_side': tp_side,
+                                                'tp_working_type': 'MARK_PRICE'
+                                            }
+                                            
+                                            logger.info(f"🔄 Background thread: Creating TP for {symbol} from position (calculated: {tp_price}, qty: {tp_quantity})")
+                                            success = create_tp_if_needed(symbol, temp_trade_info)
+                                            
+                                            if success:
+                                                logger.info(f"✅ Background thread: TP order created successfully for {symbol} (calculated from position)")
+                                                # Only mark as processed if TP creation succeeded
+                                                if symbol not in symbols_without_tp_logged:
+                                                    symbols_without_tp_logged.add(symbol)
+                                            else:
+                                                logger.warning(f"⚠️ Background thread: Failed to create calculated TP for {symbol} (will retry on next cycle)")
+                                                # Don't add to symbols_without_tp_logged - allow retry on next cycle
+                                        else:
+                                            logger.debug(f"Symbol info not found for {symbol}")
+                                    except Exception as e:
+                                        logger.debug(f"Error getting symbol info or creating TP for {symbol}: {e}")
+                                        # Don't add to symbols_without_tp_logged - allow retry on next cycle
+                                else:
+                                    logger.debug(f"Skipping TP calculation for {symbol}: invalid entry_price or position_amt")
+                        except Exception as e:
+                            logger.debug(f"Error calculating TP for {symbol}: {e}")
+                            pass
                             
             except Exception as e:
                 logger.error(f"Error getting positions in background thread: {e}", exc_info=True)
@@ -1421,20 +1428,34 @@ def create_limit_order(signal_data):
                 
                 # Store TP order details immediately (like Binance UI - TP is "set" but pending until position exists)
                 # The background thread will create the TP order as soon as the limit order fills and position opens
+                DEFAULT_TP_PERCENT = 0.021  # 2.1% profit (used when TP not provided)
+                
                 if take_profit and take_profit > 0:
+                    # Use TP from webhook
                     tp_side = 'SELL' if side == 'BUY' else 'BUY'
                     tp_price = format_price_precision(take_profit, tick_size)
-                    total_qty = primary_quantity + (dca_quantity if dca_entry_price else 0)
-                    
-                    # Store TP details in active_trades[symbol] - will be created automatically when position exists
-                    # TP is stored in memory: active_trades[symbol]['tp_price'], ['tp_side'], ['tp_quantity'], ['tp_working_type']
-                    # Background thread checks ALL positions every 15s (first 2 min) then every 2 min
-                    active_trades[symbol]['tp_price'] = tp_price
-                    active_trades[symbol]['tp_side'] = tp_side
-                    active_trades[symbol]['tp_quantity'] = total_qty
-                    active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
-                    logger.info(f"📝 TP order configured and stored in active_trades[{symbol}]: price={tp_price}, side={tp_side}, qty={total_qty}, workingType=MARK_PRICE")
-                    logger.info(f"   → TP will be created automatically when position opens (background thread checks every 15s/2min)")
+                else:
+                    # Calculate TP with 2.1% profit when not provided
+                    if side == 'BUY':  # LONG position
+                        tp_price = entry_price * (1 + DEFAULT_TP_PERCENT)
+                        tp_side = 'SELL'
+                    else:  # SHORT position
+                        tp_price = entry_price * (1 - DEFAULT_TP_PERCENT)
+                        tp_side = 'BUY'
+                    tp_price = format_price_precision(tp_price, tick_size)
+                    logger.info(f"📊 TP not provided in webhook - calculating with {DEFAULT_TP_PERCENT*100}% profit: {tp_price}")
+                
+                total_qty = primary_quantity + (dca_quantity if dca_entry_price else 0)
+                
+                # Store TP details in active_trades[symbol] - will be created automatically when position exists
+                # TP is stored in memory: active_trades[symbol]['tp_price'], ['tp_side'], ['tp_quantity'], ['tp_working_type']
+                # Background thread checks ALL positions every 15s (first 2 min) then every 2 min
+                active_trades[symbol]['tp_price'] = tp_price
+                active_trades[symbol]['tp_side'] = tp_side
+                active_trades[symbol]['tp_quantity'] = total_qty
+                active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
+                logger.info(f"📝 TP order configured and stored in active_trades[{symbol}]: price={tp_price}, side={tp_side}, qty={total_qty}, workingType=MARK_PRICE")
+                logger.info(f"   → TP will be created automatically when position opens (background thread checks every 15s/2min)")
                         
             except BinanceAPIException as e:
                 logger.error(f"❌ Failed to create PRIMARY entry order: {e.message} (Code: {e.code})")
