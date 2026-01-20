@@ -1289,6 +1289,30 @@ def validate_signal_with_ai(signal_data):
             'risk_level': 'MEDIUM'
         }
     
+    # Pre-validation: Check entry price vs current market price (critical safety check)
+    try:
+        if client:
+            ticker = client.futures_symbol_ticker(symbol=symbol)
+            current_price = float(ticker.get('price', 0))
+            if current_price > 0:
+                price_diff_pct = abs((entry_price - current_price) / current_price) * 100
+                
+                # REJECT signals where entry price is more than 20% away from current price
+                # This catches stale signals, wrong prices, or data errors
+                if price_diff_pct > 20:
+                    logger.error(f"🚫 SIGNAL REJECTED: Entry price ${entry_price:,.2f} is {price_diff_pct:.1f}% away from current price ${current_price:,.2f}")
+                    return {
+                        'is_valid': False,
+                        'confidence_score': 0.0,
+                        'reasoning': f'Entry price ${entry_price:,.2f} is {price_diff_pct:.1f}% away from current market price ${current_price:,.2f}. This appears to be a stale signal or data error.',
+                        'risk_level': 'HIGH'
+                    }
+                elif price_diff_pct > 10:
+                    logger.warning(f"⚠️ Entry price ${entry_price:,.2f} is {price_diff_pct:.1f}% away from current price ${current_price:,.2f} - will be flagged in AI analysis")
+    except Exception as e:
+        logger.debug(f"Could not check current price for pre-validation: {e}")
+        # Continue with validation if we can't check price
+    
     # Calculate risk/reward ratio
     risk_reward_ratio = None
     if stop_loss and take_profit:
@@ -1439,8 +1463,15 @@ TRADINGVIEW INDICATOR VALUES (from your script):
         market_info = f"""
 REAL-TIME MARKET DATA (from Binance API):
 - Current Market Price: ${market_data['current_price']:,.8f}
+- Entry Price: ${entry_price:,.8f}
 - Entry Price vs Current: Entry is {market_data.get('entry_vs_current', 'N/A')} current price
-- Price Distance: {market_data.get('price_distance_pct', 0):.2f}% from current price"""
+- Price Distance: {market_data.get('price_distance_pct', 0):.2f}% from current price
+
+⚠️ CRITICAL VALIDATION CHECK:
+- If entry price is MORE THAN 10% away from current price, this is likely a STALE SIGNAL or DATA ERROR
+- LONG signals: Entry should be NEAR or BELOW current price (not way below - more than 15% is suspicious)
+- SHORT signals: Entry should be NEAR or ABOVE current price (not way above - more than 15% is suspicious)
+- REJECT signals where entry price differs by more than 15% from current price (high risk of stale data or error)"""
         
         if market_data.get('trend_direction'):
             market_info += f"""
@@ -1458,6 +1489,14 @@ IMPORTANT CONTEXT:
 - Your role is to catch OBVIOUSLY bad signals, not to be overly conservative
 - When in doubt, APPROVE the signal (fail-open design)
 - You now have REAL-TIME market data for proper technical analysis
+
+🚨 CRITICAL: ENTRY PRICE VALIDATION (MOST IMPORTANT CHECK):
+- ALWAYS compare entry price to current market price FIRST
+- If entry price is MORE THAN 15% away from current price, this is likely a STALE SIGNAL or DATA ERROR
+- LONG signals: Entry price should be NEAR or BELOW current price (not 20%+ below - that's suspicious)
+- SHORT signals: Entry price should be NEAR or ABOVE current price (not 20%+ above - that's suspicious)
+- REJECT signals where entry differs by more than 15% from current price (confidence_score: 0-30)
+- This is the #1 reason to reject signals - stale data or wrong prices
 
 Signal Details:
 - Symbol: {symbol}
@@ -1649,10 +1688,29 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
         
         api_thread = threading.Thread(target=call_api, daemon=True)
         api_thread.start()
-        api_thread.join(timeout=5)  # 5 second timeout
+        api_thread.join(timeout=120# 20 second timeout (increased for Gemini API)
         
         if api_thread.is_alive():
-            logger.warning(f"⏱️ AI validation timeout for {symbol} (5s), proceeding without validation (fail-open)")
+            logger.warning(f"⏱️ AI validation timeout for {symbol} (20s), checking price before fail-open...")
+            # Check if entry price is reasonable before approving on timeout
+            try:
+                if client:
+                    ticker = client.futures_symbol_ticker(symbol=symbol)
+                    current_price = float(ticker.get('price', 0))
+                    if current_price > 0:
+                        price_diff_pct = abs((entry_price - current_price) / current_price) * 100
+                        if price_diff_pct > 20:
+                            logger.error(f"🚫 TIMEOUT REJECTION: Entry price ${entry_price:,.2f} is {price_diff_pct:.1f}% away from current ${current_price:,.2f}")
+                            return {
+                                'is_valid': False,
+                                'confidence_score': 0.0,
+                                'reasoning': f'AI validation timeout, but entry price ${entry_price:,.2f} is {price_diff_pct:.1f}% away from current ${current_price:,.2f} - likely stale signal',
+                                'risk_level': 'HIGH'
+                            }
+            except Exception:
+                pass  # If we can't check, proceed with fail-open
+            
+            logger.warning(f"⏱️ Proceeding without validation (fail-open)")
             return {
                 'is_valid': True,
                 'confidence_score': 100.0,  # High score to pass threshold - fail-open design
