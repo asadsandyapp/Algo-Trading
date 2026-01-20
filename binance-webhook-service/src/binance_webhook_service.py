@@ -2211,7 +2211,17 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
         logger.info(f"   ✅ Valid: {validation_result.get('is_valid', True)}")
         logger.info(f"   📈 Confidence: {validation_result['confidence_score']:.1f}%")
         logger.info(f"   ⚠️  Risk Level: {validation_result.get('risk_level', 'MEDIUM')}")
-        logger.info(f"   💭 Reasoning: {validation_result.get('reasoning', 'N/A')[:200]}...")
+        # Log full reasoning (split into multiple lines if very long for readability)
+        reasoning = validation_result.get('reasoning', 'N/A')
+        if len(reasoning) > 500:
+            # Split long reasoning into multiple log lines
+            logger.info(f"   💭 Reasoning (full):")
+            # Split by sentences or chunks of 500 chars
+            chunks = [reasoning[i:i+500] for i in range(0, len(reasoning), 500)]
+            for i, chunk in enumerate(chunks, 1):
+                logger.info(f"      [{i}/{len(chunks)}] {chunk}")
+        else:
+            logger.info(f"   💭 Reasoning: {reasoning}")
         
         # Extract price suggestions and apply smart optimization
         optimized_prices = {
@@ -2393,7 +2403,7 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
         logger.info(f"✅ AI Validation Result for {symbol}: Valid={validation_result['is_valid']}, "
                    f"Confidence={validation_result['confidence_score']:.1f}%, "
                    f"Risk={validation_result['risk_level']}, "
-                   f"Reasoning={validation_result['reasoning'][:100]}...")
+                   f"Reasoning={validation_result['reasoning']}")
         
         return validation_result
         
@@ -2466,7 +2476,7 @@ def create_limit_order(signal_data):
             # Log successful validation
             logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}%, "
                        f"Risk={validation_result.get('risk_level', 'UNKNOWN')}, "
-                       f"Reasoning={validation_result.get('reasoning', 'No reasoning')[:150]}...")
+                       f"Reasoning={validation_result.get('reasoning', 'No reasoning')}")
             
             # Apply optimized prices if available
             if 'optimized_prices' in validation_result:
