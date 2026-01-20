@@ -1601,6 +1601,7 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
         result_container = {'response': None, 'error': None}
         
         def call_api():
+            global gemini_client, gemini_model_name
             try:
                 # Try current model first
                 response = gemini_client.generate_content(prompt)
@@ -1620,7 +1621,6 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
                             result_container['response'] = response.text
                             logger.info(f"Successfully used alternative model: {alt_model_name}")
                             # Update global client for future use
-                            global gemini_client, gemini_model_name
                             gemini_client = alt_client
                             gemini_model_name = alt_model_name
                             return
