@@ -1514,8 +1514,8 @@ TREND ANALYSIS (Multiple Timeframes):
 - Overall Trend ({timeframe}): {market_data.get('trend_direction', 'N/A')} ({market_data.get('recent_trend_pct', 0):+.2f}%)
 
 MOVING AVERAGES:
-- SMA 20: ${market_data.get('sma_20', 0):,.8f if market_data.get('sma_20') else 'N/A'}
-- SMA 50: ${market_data.get('sma_50', 0):,.8f if market_data.get('sma_50') else 'N/A'}
+- SMA 20: ${(f"{market_data.get('sma_20'):,.8f}" if market_data.get('sma_20') is not None else 'N/A')}
+- SMA 50: ${(f"{market_data.get('sma_50'):,.8f}" if market_data.get('sma_50') is not None else 'N/A')}
 - Price vs SMA 20: {'ABOVE' if market_data.get('sma_20') and market_data['current_price'] > market_data['sma_20'] else 'BELOW' if market_data.get('sma_20') else 'N/A'}
 - Price vs SMA 50: {'ABOVE' if market_data.get('sma_50') and market_data['current_price'] > market_data['sma_50'] else 'BELOW' if market_data.get('sma_50') else 'N/A'}
 
