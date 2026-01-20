@@ -99,6 +99,7 @@ gemini_client = None
 gemini_model_name = None
 # Free tier models (in order of preference - higher limits first)
 # Priority: Models with higher daily limits (RPD) first
+# Based on actual available models from Google AI Studio
 GEMINI_MODEL_NAMES = [
     # High limit models (1,500 RPD, 15 RPM) - BEST for free tier
     'gemini-1.5-flash-latest',  # Free tier - 1,500 RPD, 15 RPM - RECOMMENDED
@@ -110,9 +111,13 @@ GEMINI_MODEL_NAMES = [
     'gemini-1.5-pro-latest',    # Free tier - 50 RPD, 2 RPM - more capable but slower
     'gemini-1.5-pro',           # Alternative naming - 50 RPD, 2 RPM
     
-    # Low limit models (20 RPD, 5 RPM) - Last resort only
-    'gemini-2.5-flash',         # Free tier - 20 RPD, 5 RPM - very low limits
-    'gemini-2.5-flash-latest', # Alternative naming - 20 RPD, 5 RPM
+    # Alternative flash models (20 RPD, 5-10 RPM) - Different quota pools
+    'gemini-2.5-flash-lite',    # Free tier - 20 RPD, 10 RPM - DIFFERENT quota from gemini-2.5-flash
+    'gemini-3-flash',           # Free tier - 20 RPD, 5 RPM - DIFFERENT quota pool
+    
+    # Low limit models (20 RPD, 5 RPM) - Last resort only (same quota as gemini-2.5-flash)
+    'gemini-2.5-flash',         # Free tier - 20 RPD, 5 RPM - very low limits (AVOID if quota exceeded)
+    'gemini-2.5-flash-latest', # Alternative naming - 20 RPD, 5 RPM (AVOID if quota exceeded)
 ]
 
 if GEMINI_AVAILABLE and GEMINI_API_KEY and ENABLE_AI_VALIDATION:
@@ -123,8 +128,11 @@ if GEMINI_AVAILABLE and GEMINI_API_KEY and ENABLE_AI_VALIDATION:
         available_models = []
         try:
             models = genai.list_models()
-            available_models = [m.name.split('/')[-1] for m in models if 'generateContent' in m.supported_generation_methods]
-            logger.info(f"Found {len(available_models)} available Gemini models: {', '.join(available_models[:5])}...")
+            all_models = [m.name.split('/')[-1] for m in models if 'generateContent' in m.supported_generation_methods]
+            # FILTER OUT paid models (gemini-2.5-pro, gemini-2.0-pro, ultra, etc.) - only keep FREE TIER models
+            paid_model_keywords = ['2.5-pro', '2.0-pro', 'ultra', '2.5-pro-exp']  # Models that require billing
+            available_models = [m for m in all_models if not any(paid in m.lower() for paid in paid_model_keywords)]
+            logger.info(f"Found {len(available_models)} FREE TIER Gemini models (excluded {len(all_models) - len(available_models)} paid models): {', '.join(available_models[:5])}...")
         except Exception as e:
             logger.debug(f"Could not list available models: {e}. Will try common model names.")
         
@@ -133,14 +141,30 @@ if GEMINI_AVAILABLE and GEMINI_API_KEY and ENABLE_AI_VALIDATION:
         if user_model:
             model_names = [user_model]
         elif available_models:
-            # Prefer free tier models with HIGHER limits (avoid gemini-2.5-flash which has only 20 RPD)
-            # Prioritize models with 1,500 RPD over those with 20-50 RPD
-            high_limit_models = [m for m in available_models if ('1.5-flash' in m.lower() or '1.0-pro' in m.lower()) and '2.5' not in m.lower()]
-            medium_limit_models = [m for m in available_models if '1.5-pro' in m.lower() and m not in high_limit_models]
-            low_limit_models = [m for m in available_models if '2.5-flash' in m.lower()]  # Last resort
-            other_models = [m for m in available_models if m not in high_limit_models and m not in medium_limit_models and m not in low_limit_models]
-            # Prioritize: High limit (1,500 RPD) > Medium (50 RPD) > Others > Low limit (20 RPD)
-            model_names = (high_limit_models[:3] + medium_limit_models[:2] + other_models[:2] + low_limit_models[:1])[:8]
+            # EXCLUDE paid models (gemini-2.5-pro, etc.) - only use FREE TIER models
+            # Free tier models: gemini-1.5-flash, gemini-1.5-pro, gemini-1.0-pro, gemini-2.5-flash (low limits)
+            # EXCLUDE: gemini-2.5-pro (requires billing, not free tier)
+            paid_models = ['2.5-pro', '2.0-pro', 'ultra']  # Models that require billing
+            free_tier_models = [m for m in available_models if not any(paid in m.lower() for paid in paid_models)]
+            
+            if not free_tier_models:
+                logger.warning("⚠️ No free tier models found in available models. Using fallback list.")
+                model_names = GEMINI_MODEL_NAMES
+            else:
+                # Prefer free tier models with HIGHER limits (avoid gemini-2.5-flash which has only 20 RPD)
+                # Prioritize models with 1,500 RPD over those with 20-50 RPD
+                # IMPORTANT: gemini-2.5-flash-lite and gemini-3-flash have SEPARATE quotas from gemini-2.5-flash
+                high_limit_models = [m for m in free_tier_models if ('1.5-flash' in m.lower() or '1.0-pro' in m.lower()) and '2.5' not in m.lower() and '3' not in m.lower()]
+                medium_limit_models = [m for m in free_tier_models if '1.5-pro' in m.lower() and m not in high_limit_models]
+                # Separate quota models (different from gemini-2.5-flash quota pool) - these have their own 20 RPD limit
+                separate_quota_models = [m for m in free_tier_models if ('2.5-flash-lite' in m.lower() or '3-flash' in m.lower())]
+                low_limit_models = [m for m in free_tier_models if '2.5-flash' in m.lower() and 'lite' not in m.lower()]  # Last resort (shared quota)
+                other_free_models = [m for m in free_tier_models if m not in high_limit_models and m not in medium_limit_models and m not in low_limit_models and m not in separate_quota_models]
+                # Prioritize: High limit (1,500 RPD) > Medium (50 RPD) > Separate quota models > Others > Low limit (20 RPD, shared quota)
+                model_names = (high_limit_models[:3] + medium_limit_models[:2] + separate_quota_models[:2] + other_free_models[:2] + low_limit_models[:1])[:10]
+                logger.info(f"✅ Selected {len(model_names)} free tier models (excluded paid models like gemini-2.5-pro)")
+                if separate_quota_models:
+                    logger.info(f"   📊 Models with SEPARATE quotas (can use even if gemini-2.5-flash quota exceeded): {', '.join(separate_quota_models[:2])}")
         else:
             model_names = GEMINI_MODEL_NAMES
         
@@ -1979,34 +2003,59 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
                 
                 # Check if we should try alternative models
                 should_try_alternatives = False
+                # Check if model requires billing (limit: 0 means not available in free tier)
+                is_paid_model = 'limit: 0' in error_msg.lower() or '2.5-pro' in gemini_model_name.lower()
+                
                 if 'not found' in error_msg.lower() or 'not supported' in error_msg.lower():
-                    logger.warning(f"🔄 Model {gemini_model_name} not available, trying alternative models...")
+                    logger.warning(f"🔄 Model {gemini_model_name} not available, trying alternative FREE TIER models...")
+                    should_try_alternatives = True
+                elif is_paid_model:
+                    logger.warning(f"🔄 Model {gemini_model_name} requires billing (not free tier), trying alternative FREE TIER models...")
                     should_try_alternatives = True
                 elif '429' in error_msg or 'quota' in error_msg.lower() or 'rate limit' in error_msg.lower():
-                    logger.warning(f"🔄 Model {gemini_model_name} quota exceeded, trying alternative models with different limits...")
+                    logger.warning(f"🔄 Model {gemini_model_name} quota exceeded, trying alternative FREE TIER models with different limits...")
                     should_try_alternatives = True
                 
                 # Try alternative models if applicable
                 if should_try_alternatives:
-                    # Try other models in order of preference (skip current model)
+                    # Try other FREE TIER models in order of preference (skip current model and paid models)
+                    paid_models_to_skip = ['2.5-pro', '2.0-pro', 'ultra']
                     for alt_model_name in GEMINI_MODEL_NAMES:
                         if alt_model_name == gemini_model_name:
                             continue
+                        # Skip paid models
+                        if any(paid in alt_model_name.lower() for paid in paid_models_to_skip):
+                            logger.debug(f"⏭️ Skipping paid model: {alt_model_name}")
+                            continue
                         try:
-                            logger.info(f"🔄 Trying alternative model: {alt_model_name}")
+                            logger.info(f"🔄 Trying alternative FREE TIER model: {alt_model_name}")
                             alt_client = genai.GenerativeModel(alt_model_name)
                             response = alt_client.generate_content(prompt)
                             result_container['response'] = response.text
-                            logger.info(f"✅ Successfully used alternative model: {alt_model_name}")
+                            logger.info(f"✅ Successfully used alternative FREE TIER model: {alt_model_name}")
                             # Update global client for future use
                             gemini_client = alt_client
                             gemini_model_name = alt_model_name
                             return
                         except Exception as alt_e:
                             alt_error = str(alt_e)
-                            # If quota error, try next model; if other error, log and continue
+                            # Check if this is a paid model error (limit: 0)
+                            if 'limit: 0' in alt_error.lower():
+                                logger.debug(f"⏭️ Model {alt_model_name} requires billing, skipping...")
+                                continue
+                            # Check if quota error - but only skip if it's the SAME model family (they share quota)
+                            # Different model families have SEPARATE quotas (e.g., gemini-2.5-flash vs gemini-2.5-flash-lite)
                             if '429' in alt_error or 'quota' in alt_error.lower():
-                                logger.debug(f"⚠️ Alternative model {alt_model_name} also has quota issues, trying next...")
+                                # Check if it's the same model family (they share quota pool)
+                                current_model_family = gemini_model_name.split('-')[1] if '-' in gemini_model_name else ''
+                                alt_model_family = alt_model_name.split('-')[1] if '-' in alt_model_name else ''
+                                # If same family (e.g., both 2.5-flash), skip (same quota pool)
+                                # If different family (e.g., 2.5-flash vs 2.5-flash-lite), try it (different quota)
+                                if current_model_family == alt_model_family and 'lite' not in alt_model_name.lower() and '3-flash' not in alt_model_name.lower():
+                                    logger.debug(f"⚠️ Model {alt_model_name} shares quota pool with {gemini_model_name}, skipping...")
+                                else:
+                                    logger.debug(f"⚠️ Model {alt_model_name} has quota issues but different quota pool, will try anyway...")
+                                    # Don't skip - different quota pools might work
                             else:
                                 logger.debug(f"❌ Alternative model {alt_model_name} also failed: {alt_error}")
                             continue
