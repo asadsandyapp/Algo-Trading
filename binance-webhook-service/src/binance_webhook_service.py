@@ -11,6 +11,7 @@ import logging
 import hmac
 import hashlib
 import time
+import math
 import requests
 from datetime import datetime
 from flask import Flask, request, jsonify
@@ -1194,7 +1195,6 @@ def calculate_quantity(entry_price, symbol_info):
     actual_notional = quantity * entry_price
     if actual_notional < min_notional:
         # Adjust quantity to meet minimum notional - round UP to ensure we exceed minimum
-        import math
         required_quantity = min_notional / entry_price
         # Round UP to next step_size increment (always round up, never down)
         quantity = math.ceil(required_quantity / step_size) * step_size
@@ -1688,7 +1688,7 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
         
         api_thread = threading.Thread(target=call_api, daemon=True)
         api_thread.start()
-        api_thread.join(timeout=120# 20 second timeout (increased for Gemini API)
+        api_thread.join(timeout=120) # 20 second timeout (increased for Gemini API)
         
         if api_thread.is_alive():
             logger.warning(f"⏱️ AI validation timeout for {symbol} (20s), checking price before fail-open...")
