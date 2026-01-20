@@ -312,8 +312,8 @@ ORDER_COOLDOWN = 60  # seconds
 # PRODUCTION: Change back to $10 after testing
 ENTRY_SIZE_USD = float(os.getenv('ENTRY_SIZE_USD', '10.0'))  # Default: $10 per entry
 # Leverage (can be overridden via LEVERAGE environment variable)
-# Default: 10X leverage
-LEVERAGE = int(os.getenv('LEVERAGE', '10'))  # Default: 10X leverage
+# Default: 20X leverage
+LEVERAGE = int(os.getenv('LEVERAGE', '20'))  # Default: 20X leverage
 TOTAL_ENTRIES = 2  # Primary entry + DCA entry
 
 # Track active trades per symbol
@@ -1246,7 +1246,7 @@ def format_price_precision(price, tick_size):
 
 def calculate_quantity(entry_price, symbol_info):
     """Calculate quantity based on entry size and leverage"""
-    # Position value = Entry size * Leverage (e.g., $10 * 10X = $100)
+    # Position value = Entry size * Leverage (e.g., $10 * 20X = $200)
     position_value = ENTRY_SIZE_USD * LEVERAGE
     
     # Quantity = Position value / Entry price
@@ -3400,7 +3400,8 @@ if __name__ == '__main__':
     logger.info(f"   Leverage: {LEVERAGE}X")
     logger.info(f"   Position Value: ${ENTRY_SIZE_USD * LEVERAGE} per entry (${ENTRY_SIZE_USD * LEVERAGE * 2} total for both entries)")
     is_testing = ENTRY_SIZE_USD == 5.0 and LEVERAGE == 5
-    logger.info(f"   Mode: {'TESTING ($5, 5X)' if is_testing else 'PRODUCTION/CUSTOM'}")
+    is_production = ENTRY_SIZE_USD == 10.0 and LEVERAGE == 20
+    logger.info(f"   Mode: {'TESTING ($5, 5X)' if is_testing else 'PRODUCTION ($10, 20X)' if is_production else 'CUSTOM'}")
     logger.info(f"   To change: Set ENTRY_SIZE_USD and LEVERAGE environment variables")
     logger.info(f"   Example: ENTRY_SIZE_USD=10.0 LEVERAGE=20 for production")
     
