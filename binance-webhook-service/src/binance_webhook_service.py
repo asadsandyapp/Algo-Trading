@@ -655,16 +655,30 @@ def create_missing_tp_orders():
                 positions_dict = {p['symbol']: p for p in all_positions if abs(float(p.get('positionAmt', 0))) > 0}
                 
                 if not positions_dict:
-                    # No open positions - clean up stored TP details
+                    # No open positions - but check if there are pending orders before cleaning up TP
+                    # If orders are pending, keep TP details and wait for order to fill
                     for symbol in list(symbols_to_check):
                         if symbol in active_trades and 'tp_price' in active_trades[symbol]:
-                            logger.info(f"🧹 Background thread: Cleaning up stored TP for {symbol} (no open position)")
-                            if 'tp_price' in active_trades[symbol]:
-                                del active_trades[symbol]['tp_price']
-                            if 'tp_quantity' in active_trades[symbol]:
-                                del active_trades[symbol]['tp_quantity']
-                            if 'tp_working_type' in active_trades[symbol]:
-                                del active_trades[symbol]['tp_working_type']
+                            # Check if there are pending orders for this symbol
+                            try:
+                                has_orders, open_orders = check_existing_orders(symbol, log_result=False)
+                                if has_orders:
+                                    # There are pending orders - keep TP details and wait for order to fill
+                                    logger.debug(f"⏳ Background thread: Keeping TP for {symbol} (pending orders, waiting for fill)")
+                                    continue  # Don't clean up - order might fill soon
+                                else:
+                                    # No orders and no position - clean up TP details
+                                    logger.info(f"🧹 Background thread: Cleaning up stored TP for {symbol} (no position and no pending orders)")
+                                    if 'tp_price' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp_price']
+                                    if 'tp_quantity' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp_quantity']
+                                    if 'tp_working_type' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp_working_type']
+                            except Exception as e:
+                                logger.debug(f"Error checking orders for {symbol}: {e}")
+                                # On error, keep TP details (safer to keep than delete)
+                                continue
                     continue
                 
                 # Only log if we're actually checking symbols (reduce log spam)
@@ -675,12 +689,35 @@ def create_missing_tp_orders():
                 symbols_checked = 0
                 for symbol in symbols_to_check:
                     if symbol not in positions_dict:
-                        # Symbol has stored TP but no position - might be filled or canceled
-                        # Check once and clean up if no orders exist
+                        # Symbol has stored TP but no position - check if orders are pending
+                        # Keep TP details if orders exist (waiting for fill), only clean up if no orders
                         try:
-                            has_orders, _ = check_existing_orders(symbol)
-                            if not has_orders:
-                                logger.info(f"🧹 Background thread: Cleaning up stored TP for {symbol} (no position and no orders)")
+                            has_orders, open_orders = check_existing_orders(symbol, log_result=False)
+                            
+                            # Also check if we have tracked order IDs for this symbol
+                            has_tracked_orders = False
+                            if symbol in active_trades:
+                                # Check if we have primary or DCA order IDs tracked
+                                if 'primary_order_id' in active_trades[symbol] or 'dca_order_id' in active_trades[symbol]:
+                                    # Verify these specific orders still exist
+                                    tracked_order_ids = []
+                                    if 'primary_order_id' in active_trades[symbol]:
+                                        tracked_order_ids.append(active_trades[symbol]['primary_order_id'])
+                                    if 'dca_order_id' in active_trades[symbol]:
+                                        tracked_order_ids.append(active_trades[symbol]['dca_order_id'])
+                                    
+                                    # Check if any tracked orders still exist
+                                    if tracked_order_ids:
+                                        existing_order_ids = [o.get('orderId') for o in open_orders]
+                                        has_tracked_orders = any(oid in existing_order_ids for oid in tracked_order_ids)
+                            
+                            if has_orders or has_tracked_orders:
+                                # There are pending orders - keep TP details and wait for order to fill
+                                logger.debug(f"⏳ Background thread: Keeping TP for {symbol} (pending orders, waiting for fill)")
+                                continue  # Don't clean up - order might fill soon
+                            else:
+                                # No orders and no position - clean up TP details
+                                logger.info(f"🧹 Background thread: Cleaning up stored TP for {symbol} (no position and no pending orders)")
                                 if symbol in active_trades:
                                     if 'tp_price' in active_trades[symbol]:
                                         del active_trades[symbol]['tp_price']
@@ -688,8 +725,10 @@ def create_missing_tp_orders():
                                         del active_trades[symbol]['tp_quantity']
                                     if 'tp_working_type' in active_trades[symbol]:
                                         del active_trades[symbol]['tp_working_type']
-                        except:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Error checking orders for {symbol}: {e}")
+                            # On error, keep TP details (safer to keep than delete)
+                            continue
                         continue
                     
                     symbols_checked += 1
