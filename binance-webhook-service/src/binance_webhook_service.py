@@ -24,7 +24,11 @@ try:
     from dotenv import load_dotenv
     # Load .env from service root directory (parent of src/)
     env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
-    load_dotenv(env_path)
+    try:
+        load_dotenv(env_path)
+    except (PermissionError, IOError, FileNotFoundError):
+        # .env file not readable or doesn't exist - systemd will load via EnvironmentFile
+        pass
 except ImportError:
     # python-dotenv not installed, skip (systemd will load via EnvironmentFile)
     pass
