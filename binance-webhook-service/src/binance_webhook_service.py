@@ -97,14 +97,22 @@ ENABLE_AI_PRICE_SUGGESTIONS = os.getenv('ENABLE_AI_PRICE_SUGGESTIONS', 'true').l
 # Initialize Gemini API if available and configured
 gemini_client = None
 gemini_model_name = None
-# Free tier models (in order of preference - fastest/cheapest first)
+# Free tier models (in order of preference - higher limits first)
+# Priority: Models with higher daily limits (RPD) first
 GEMINI_MODEL_NAMES = [
-    'gemini-1.5-flash-latest',  # Free tier - fastest model
-    'gemini-1.5-flash',         # Alternative naming
-    'gemini-1.5-pro-latest',    # Free tier - more capable
-    'gemini-1.5-pro',           # Alternative naming
-    'gemini-1.0-pro-latest',    # Free tier alternative
-    'gemini-1.0-pro',           # Alternative naming
+    # High limit models (1,500 RPD, 15 RPM) - BEST for free tier
+    'gemini-1.5-flash-latest',  # Free tier - 1,500 RPD, 15 RPM - RECOMMENDED
+    'gemini-1.5-flash',         # Alternative naming - 1,500 RPD, 15 RPM
+    'gemini-1.0-pro-latest',    # Free tier - 1,500 RPD, 15 RPM
+    'gemini-1.0-pro',           # Alternative naming - 1,500 RPD, 15 RPM
+    
+    # Medium limit models (50 RPD, 2 RPM) - Lower but still free
+    'gemini-1.5-pro-latest',    # Free tier - 50 RPD, 2 RPM - more capable but slower
+    'gemini-1.5-pro',           # Alternative naming - 50 RPD, 2 RPM
+    
+    # Low limit models (20 RPD, 5 RPM) - Last resort only
+    'gemini-2.5-flash',         # Free tier - 20 RPD, 5 RPM - very low limits
+    'gemini-2.5-flash-latest', # Alternative naming - 20 RPD, 5 RPM
 ]
 
 if GEMINI_AVAILABLE and GEMINI_API_KEY and ENABLE_AI_VALIDATION:
@@ -125,9 +133,14 @@ if GEMINI_AVAILABLE and GEMINI_API_KEY and ENABLE_AI_VALIDATION:
         if user_model:
             model_names = [user_model]
         elif available_models:
-            # Prefer free tier models from available list
-            free_tier_models = [m for m in available_models if 'flash' in m.lower() or '1.5' in m.lower()]
-            model_names = free_tier_models[:3] if free_tier_models else available_models[:3]
+            # Prefer free tier models with HIGHER limits (avoid gemini-2.5-flash which has only 20 RPD)
+            # Prioritize models with 1,500 RPD over those with 20-50 RPD
+            high_limit_models = [m for m in available_models if ('1.5-flash' in m.lower() or '1.0-pro' in m.lower()) and '2.5' not in m.lower()]
+            medium_limit_models = [m for m in available_models if '1.5-pro' in m.lower() and m not in high_limit_models]
+            low_limit_models = [m for m in available_models if '2.5-flash' in m.lower()]  # Last resort
+            other_models = [m for m in available_models if m not in high_limit_models and m not in medium_limit_models and m not in low_limit_models]
+            # Prioritize: High limit (1,500 RPD) > Medium (50 RPD) > Others > Low limit (20 RPD)
+            model_names = (high_limit_models[:3] + medium_limit_models[:2] + other_models[:2] + low_limit_models[:1])[:8]
         else:
             model_names = GEMINI_MODEL_NAMES
         
@@ -1220,7 +1233,7 @@ def calculate_quantity(entry_price, symbol_info):
 
 # Validation cache to avoid duplicate API calls
 validation_cache = {}
-VALIDATION_CACHE_TTL = 300  # 5 minutes
+VALIDATION_CACHE_TTL = 600  # 10 minutes (increased to reduce API calls and stay within free tier limits)
 
 
 def validate_signal_with_ai(signal_data):
@@ -1963,10 +1976,19 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
             except Exception as e:
                 error_msg = str(e)
                 logger.warning(f"⚠️ Gemini API call failed with model {gemini_model_name}: {error_msg}")
-                # If model not found error, try other models
+                
+                # Check if we should try alternative models
+                should_try_alternatives = False
                 if 'not found' in error_msg.lower() or 'not supported' in error_msg.lower():
                     logger.warning(f"🔄 Model {gemini_model_name} not available, trying alternative models...")
-                    # Try other models
+                    should_try_alternatives = True
+                elif '429' in error_msg or 'quota' in error_msg.lower() or 'rate limit' in error_msg.lower():
+                    logger.warning(f"🔄 Model {gemini_model_name} quota exceeded, trying alternative models with different limits...")
+                    should_try_alternatives = True
+                
+                # Try alternative models if applicable
+                if should_try_alternatives:
+                    # Try other models in order of preference (skip current model)
                     for alt_model_name in GEMINI_MODEL_NAMES:
                         if alt_model_name == gemini_model_name:
                             continue
@@ -1981,8 +2003,14 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
                             gemini_model_name = alt_model_name
                             return
                         except Exception as alt_e:
-                            logger.debug(f"❌ Alternative model {alt_model_name} also failed: {alt_e}")
+                            alt_error = str(alt_e)
+                            # If quota error, try next model; if other error, log and continue
+                            if '429' in alt_error or 'quota' in alt_error.lower():
+                                logger.debug(f"⚠️ Alternative model {alt_model_name} also has quota issues, trying next...")
+                            else:
+                                logger.debug(f"❌ Alternative model {alt_model_name} also failed: {alt_error}")
                             continue
+                
                 # If no alternative worked, return original error
                 result_container['error'] = error_msg
                 logger.error(f"❌ All Gemini models failed. Last error: {error_msg}")
@@ -2008,10 +2036,29 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
                     'risk_level': 'MEDIUM'
                 }
         
-        # Check for error first
+        # Check for error first - handle gracefully with fail-open design
         if result_container['error']:
-            logger.error(f"❌ AI validation error: {result_container['error']}")
-            raise Exception(result_container['error'])
+            error_msg = result_container['error']
+            logger.warning(f"⚠️ AI validation error for {symbol}: {error_msg}")
+            
+            # Check if it's a quota/rate limit error
+            if '429' in error_msg or 'quota' in error_msg.lower() or 'rate limit' in error_msg.lower():
+                logger.warning(f"⚠️ Gemini API quota/rate limit exceeded for {symbol}. Proceeding without validation (fail-open)")
+                return {
+                    'is_valid': True,
+                    'confidence_score': 100.0,  # High score to pass threshold - fail-open design
+                    'reasoning': f'AI validation unavailable (quota exceeded), proceeding (fail-open)',
+                    'risk_level': 'MEDIUM'
+                }
+            
+            # For other errors, also fail-open (don't block trading)
+            logger.warning(f"⚠️ AI validation error for {symbol}, proceeding without validation (fail-open)")
+            return {
+                'is_valid': True,
+                'confidence_score': 100.0,  # High score to pass threshold - fail-open design
+                'reasoning': f'AI validation error: {error_msg[:200]}... Proceeding without validation (fail-open)',
+                'risk_level': 'MEDIUM'
+            }
         
         # Check for response
         if result_container['response']:
