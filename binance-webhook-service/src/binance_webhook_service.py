@@ -25,14 +25,36 @@ try:
 except ImportError:
     GEMINI_AVAILABLE = False
 
-#Configure logging
+# Configure logging
+# Get log directory from environment or use logs directory relative to service root
+LOG_DIR = os.getenv('LOG_DIR', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs'))
+LOG_FILE = os.path.join(LOG_DIR, 'webhook_service.log')
+
+# Ensure log directory exists
+try:
+    os.makedirs(LOG_DIR, exist_ok=True)
+except Exception:
+    # If we can't create directory, try current directory
+    try:
+        LOG_DIR = os.path.dirname(os.path.abspath(__file__))
+        LOG_FILE = os.path.join(LOG_DIR, 'webhook_service.log')
+        os.makedirs(LOG_DIR, exist_ok=True)
+    except Exception:
+        LOG_FILE = None  # Will use StreamHandler only
+
+# Try to create file handler, fallback to StreamHandler only if it fails
+handlers = [logging.StreamHandler()]
+if LOG_FILE:
+    try:
+        handlers.append(logging.FileHandler(LOG_FILE))
+    except Exception:
+        # If file logging fails, continue with StreamHandler only
+        pass
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('webhook_service.log'),
-        logging.StreamHandler()
-    ]
+    handlers=handlers
 )
 logger = logging.getLogger(__name__)
 
