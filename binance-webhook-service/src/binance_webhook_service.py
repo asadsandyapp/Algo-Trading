@@ -1634,8 +1634,8 @@ As an institutional guru-level trader, you MUST validate ALL prices:
    - If entry is poorly positioned, suggest better entry price
 
 2. ENTRY 2 (DCA/Second Entry):
-   - LONG: Should be 3-7% BELOW Entry 1 (for averaging down)
-   - SHORT: Should be 3-7% ABOVE Entry 1 (for averaging up)
+   - LONG: Should be 3-5% BELOW Entry 1 (for averaging down)
+   - SHORT: Should be 3-5% ABOVE Entry 1 (for averaging up)
    - Ensure proper spacing for DCA strategy
    - If Entry 2 is missing or poorly positioned, calculate optimal Entry 2
 
@@ -1708,9 +1708,9 @@ Signal Details:
 - Direction: {signal_side}
 - Timeframe: {timeframe}
 - Entry Price (Entry 1): ${entry_price:,.8f}
-- Entry Price 2 (DCA): ${second_entry_price:,.8f if second_entry_price else 'N/A (not provided)'}
-- Stop Loss: ${stop_loss:,.8f if stop_loss else 'N/A (not provided)'}
-- Take Profit: ${take_profit:,.8f if take_profit else 'N/A (not provided)'}
+- Entry Price 2 (DCA): ${(f'{second_entry_price:,.8f}' if second_entry_price is not None and second_entry_price > 0 else 'N/A (not provided)')}
+- Stop Loss: ${(f'{stop_loss:,.8f}' if stop_loss is not None and stop_loss > 0 else 'N/A (not provided)')}
+- Take Profit: ${(f'{take_profit:,.8f}' if take_profit is not None and take_profit > 0 else 'N/A (not provided)')}
 - Risk/Reward Ratio: {(f'{risk_reward_ratio:.2f}' if risk_reward_ratio is not None else 'N/A')}{market_info}{indicator_info}
 
 ═══════════════════════════════════════════════════════════════
@@ -1915,10 +1915,10 @@ OPTIMIZATION RULES (only suggest if BETTER than original):
 
 4. ENTRY 2 (DCA/Second Entry) VALIDATION:
    - VALIDATE Entry 2 if provided in signal
-   - LONG: Entry 2 should be LOWER than Entry 1 (typical 3-7% below for DCA)
-   - SHORT: Entry 2 should be HIGHER than Entry 1 (typical 3-7% above for DCA)
+   - LONG: Entry 2 should be LOWER than Entry 1 (typical 3-5% below for DCA)
+   - SHORT: Entry 2 should be HIGHER than Entry 1 (typical 3-5% above for DCA)
    - If Entry 2 is missing or poorly positioned, calculate optimal Entry 2
-   - If Entry 1 is optimized, calculate Entry 2 based on optimal distance (maintain 3-7% spacing)
+   - If Entry 1 is optimized, calculate Entry 2 based on optimal distance (maintain 3-5% spacing)
    - Ensure good spacing between Entry 1 and Entry 2 for proper DCA strategy
 
 CALCULATION METHOD:
