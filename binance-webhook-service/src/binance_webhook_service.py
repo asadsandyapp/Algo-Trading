@@ -1595,6 +1595,18 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
         # Call Gemini API with timeout
         logger.info(f"🤖 [AI VALIDATION] Starting validation for NEW ENTRY signal: {symbol} ({signal_side}) @ ${entry_price:,.8f}")
         logger.info(f"🤖 [AI VALIDATION] This validation ONLY runs for new ENTRY signals, NOT for order tracking or TP creation")
+        
+        # Check if gemini_client is available
+        if not gemini_client:
+            logger.warning("⚠️ Gemini client is None - AI validation will be skipped (fail-open)")
+            return {
+                'is_valid': True,
+                'confidence_score': 100.0,
+                'reasoning': 'Gemini client not initialized, proceeding (fail-open)',
+                'risk_level': 'MEDIUM'
+            }
+        
+        logger.info(f"📡 Using Gemini model: {gemini_model_name}")
         start_time = time.time()
         
         # Use threading to implement timeout
@@ -1604,38 +1616,43 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
             global gemini_client, gemini_model_name
             try:
                 # Try current model first
+                logger.info(f"📡 Calling Gemini API with model: {gemini_model_name}")
                 response = gemini_client.generate_content(prompt)
                 result_container['response'] = response.text
+                logger.info(f"✅ Gemini API call successful, received response (length: {len(response.text)} chars)")
             except Exception as e:
                 error_msg = str(e)
+                logger.warning(f"⚠️ Gemini API call failed with model {gemini_model_name}: {error_msg}")
                 # If model not found error, try other models
                 if 'not found' in error_msg.lower() or 'not supported' in error_msg.lower():
-                    logger.warning(f"Model {gemini_model_name} failed, trying alternative models...")
+                    logger.warning(f"🔄 Model {gemini_model_name} not available, trying alternative models...")
                     # Try other models
                     for alt_model_name in GEMINI_MODEL_NAMES:
                         if alt_model_name == gemini_model_name:
                             continue
                         try:
+                            logger.info(f"🔄 Trying alternative model: {alt_model_name}")
                             alt_client = genai.GenerativeModel(alt_model_name)
                             response = alt_client.generate_content(prompt)
                             result_container['response'] = response.text
-                            logger.info(f"Successfully used alternative model: {alt_model_name}")
+                            logger.info(f"✅ Successfully used alternative model: {alt_model_name}")
                             # Update global client for future use
                             gemini_client = alt_client
                             gemini_model_name = alt_model_name
                             return
                         except Exception as alt_e:
-                            logger.debug(f"Alternative model {alt_model_name} also failed: {alt_e}")
+                            logger.debug(f"❌ Alternative model {alt_model_name} also failed: {alt_e}")
                             continue
                 # If no alternative worked, return original error
                 result_container['error'] = error_msg
+                logger.error(f"❌ All Gemini models failed. Last error: {error_msg}")
         
         api_thread = threading.Thread(target=call_api, daemon=True)
         api_thread.start()
         api_thread.join(timeout=5)  # 5 second timeout
         
         if api_thread.is_alive():
-            logger.warning(f"AI validation timeout for {symbol}, proceeding without validation (fail-open)")
+            logger.warning(f"⏱️ AI validation timeout for {symbol} (5s), proceeding without validation (fail-open)")
             return {
                 'is_valid': True,
                 'confidence_score': 100.0,  # High score to pass threshold - fail-open design
@@ -1644,13 +1661,15 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
             }
         
         if result_container['error']:
+            logger.error(f"❌ AI validation error: {result_container['error']}")
             raise Exception(result_container['error'])
         
         if not result_container['response']:
+            logger.error("❌ No response from AI")
             raise Exception("No response from AI")
         
         elapsed_time = time.time() - start_time
-        logger.debug(f"AI validation completed in {elapsed_time:.2f}s")
+        logger.info(f"✅ AI validation API call completed in {elapsed_time:.2f}s")
         
         # Parse response
         response_text = result_container['response'].strip()
@@ -1668,9 +1687,12 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
                 response_text = json_match.group(0)
         
         # Parse JSON response
+        logger.info(f"📝 Parsing AI response (length: {len(response_text)} chars)")
         try:
             validation_result = json.loads(response_text)
-        except json.JSONDecodeError:
+            logger.info(f"✅ Successfully parsed AI response JSON")
+        except json.JSONDecodeError as e:
+            logger.warning(f"⚠️ Failed to parse AI response as JSON: {e}")
             # Try to extract values manually if JSON parsing fails
             logger.warning(f"Failed to parse AI response as JSON, attempting manual extraction")
             is_valid = 'true' in response_text.lower() or '"is_valid": true' in response_text.lower()
@@ -1726,6 +1748,13 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
         
         # Ensure confidence_score is within valid range
         validation_result['confidence_score'] = max(0, min(100, float(validation_result['confidence_score'])))
+        
+        # Log validation result
+        logger.info(f"📊 AI Validation Result:")
+        logger.info(f"   ✅ Valid: {validation_result.get('is_valid', True)}")
+        logger.info(f"   📈 Confidence: {validation_result['confidence_score']:.1f}%")
+        logger.info(f"   ⚠️  Risk Level: {validation_result.get('risk_level', 'MEDIUM')}")
+        logger.info(f"   💭 Reasoning: {validation_result.get('reasoning', 'N/A')[:200]}...")
         
         # Extract price suggestions and apply smart optimization
         optimized_prices = {
