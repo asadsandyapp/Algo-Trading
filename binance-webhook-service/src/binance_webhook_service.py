@@ -1415,8 +1415,13 @@ Respond in JSON format ONLY with this exact structure:
     "is_valid": true/false,
     "confidence_score": 0-100,
     "reasoning": "Brief explanation (1-2 sentences)",
-    "risk_level": "LOW" or "MEDIUM" or "HIGH"{", "suggested_entry_price": <number> or null, "suggested_stop_loss": <number> or null, "suggested_take_profit": <number> or null, "price_suggestion_reasoning": "Why these prices are suggested (if different from original)" if you want to suggest price optimizations, otherwise omit these fields}
+    "risk_level": "LOW" or "MEDIUM" or "HIGH",
+    "suggested_entry_price": <number> or null,
+    "suggested_stop_loss": <number> or null,
+    "suggested_take_profit": <number> or null,
+    "price_suggestion_reasoning": "Why these prices are suggested (if different from original)"
 }}
+Note: If you want to suggest price optimizations, include the suggested_* fields. Otherwise, you may omit them or set them to null.
 
 Confidence Score Guidelines:
 - 80-100: Excellent signal, strong R/R, clear setup
