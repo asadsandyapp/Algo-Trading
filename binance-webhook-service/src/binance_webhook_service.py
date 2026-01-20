@@ -98,10 +98,27 @@ gemini_client = None
 if GEMINI_AVAILABLE and GEMINI_API_KEY and ENABLE_AI_VALIDATION:
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        gemini_client = genai.GenerativeModel('gemini-pro')
-        logger.info("Gemini API initialized successfully for signal validation")
+        # Try gemini-1.5-flash first (faster, cheaper), fallback to gemini-1.5-pro
+        # gemini-pro is deprecated and no longer available
+        model_name = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
+        try:
+            gemini_client = genai.GenerativeModel(model_name)
+            logger.info(f"Gemini API initialized successfully for signal validation (using {model_name})")
+        except Exception as e1:
+            # Fallback to gemini-1.5-pro if flash fails
+            if model_name != 'gemini-1.5-pro':
+                logger.warning(f"Failed to initialize {model_name}, trying gemini-1.5-pro: {e1}")
+                try:
+                    gemini_client = genai.GenerativeModel('gemini-1.5-pro')
+                    logger.info("Gemini API initialized successfully (using gemini-1.5-pro)")
+                except Exception as e2:
+                    logger.warning(f"Failed to initialize gemini-1.5-pro: {e2}. AI validation will be disabled.")
+                    gemini_client = None
+            else:
+                logger.warning(f"Failed to initialize Gemini API: {e1}. AI validation will be disabled.")
+                gemini_client = None
     except Exception as e:
-        logger.warning(f"Failed to initialize Gemini API: {e}. AI validation will be disabled.")
+        logger.warning(f"Failed to configure Gemini API: {e}. AI validation will be disabled.")
         gemini_client = None
 elif ENABLE_AI_VALIDATION and not GEMINI_API_KEY:
     logger.warning("ENABLE_AI_VALIDATION is true but GEMINI_API_KEY is not set. AI validation will be disabled.")
