@@ -1327,35 +1327,70 @@ def validate_signal_with_ai(signal_data):
             interval = timeframe_map.get(timeframe.lower(), '1h')  # Default to 1h
             
             try:
-                klines = client.futures_klines(symbol=symbol, interval=interval, limit=50)
+                klines = client.futures_klines(symbol=symbol, interval=interval, limit=100)  # Increased to 100 for better analysis
                 if klines:
                     # Extract OHLCV data
-                    closes = [float(k[4]) for k in klines]
+                    opens = [float(k[1]) for k in klines]
                     highs = [float(k[2]) for k in klines]
                     lows = [float(k[3]) for k in klines]
+                    closes = [float(k[4]) for k in klines]
                     volumes = [float(k[5]) for k in klines]
                     
-                    # Calculate technical indicators
-                    # Trend analysis
-                    recent_closes = closes[-20:]  # Last 20 candles
-                    if len(recent_closes) >= 2:
-                        price_change = ((recent_closes[-1] - recent_closes[0]) / recent_closes[0]) * 100
-                        market_data['recent_trend_pct'] = price_change
-                        market_data['trend_direction'] = 'UP' if price_change > 0.5 else 'DOWN' if price_change < -0.5 else 'SIDEWAYS'
+                    # Store raw candle data for AI analysis
+                    market_data['candle_count'] = len(klines)
+                    market_data['recent_candles'] = {
+                        'last_10_closes': closes[-10:] if len(closes) >= 10 else closes,
+                        'last_10_highs': highs[-10:] if len(highs) >= 10 else highs,
+                        'last_10_lows': lows[-10:] if len(lows) >= 10 else lows,
+                        'last_10_volumes': volumes[-10:] if len(volumes) >= 10 else volumes
+                    }
                     
-                    # Support/Resistance levels
-                    market_data['recent_high'] = max(highs[-20:]) if len(highs) >= 20 else max(highs)
-                    market_data['recent_low'] = min(lows[-20:]) if len(lows) >= 20 else min(lows)
+                    # Calculate technical indicators for AI's own analysis
+                    # Trend analysis (multiple timeframes)
+                    if len(closes) >= 5:
+                        short_trend = ((closes[-1] - closes[-5]) / closes[-5]) * 100  # Last 5 candles
+                        market_data['short_term_trend_pct'] = short_trend
+                        market_data['short_term_direction'] = 'UP' if short_trend > 0.3 else 'DOWN' if short_trend < -0.3 else 'SIDEWAYS'
                     
-                    # Volume analysis
-                    avg_volume = sum(volumes[-20:]) / len(volumes[-20:]) if len(volumes) >= 20 else sum(volumes) / len(volumes)
-                    current_volume = volumes[-1] if volumes else 0
-                    market_data['volume_ratio'] = current_volume / avg_volume if avg_volume > 0 else 1.0
-                    market_data['volume_status'] = 'HIGH' if market_data['volume_ratio'] > 1.5 else 'NORMAL' if market_data['volume_ratio'] > 0.5 else 'LOW'
+                    if len(closes) >= 20:
+                        medium_trend = ((closes[-1] - closes[-20]) / closes[-20]) * 100  # Last 20 candles
+                        market_data['medium_term_trend_pct'] = medium_trend
+                        market_data['medium_term_direction'] = 'UP' if medium_trend > 0.5 else 'DOWN' if medium_trend < -0.5 else 'SIDEWAYS'
+                    
+                    if len(closes) >= 50:
+                        long_trend = ((closes[-1] - closes[-50]) / closes[-50]) * 100  # Last 50 candles
+                        market_data['long_term_trend_pct'] = long_trend
+                        market_data['long_term_direction'] = 'UP' if long_trend > 1 else 'DOWN' if long_trend < -1 else 'SIDEWAYS'
+                    
+                    # Moving averages (for AI's own trend analysis)
+                    if len(closes) >= 20:
+                        market_data['sma_20'] = sum(closes[-20:]) / 20
+                    if len(closes) >= 50:
+                        market_data['sma_50'] = sum(closes[-50:]) / 50
+                    
+                    # Support/Resistance levels (multiple levels)
+                    if len(highs) >= 20:
+                        recent_highs = highs[-20:]
+                        recent_lows = lows[-20:]
+                        market_data['resistance_level'] = max(recent_highs)
+                        market_data['support_level'] = min(recent_lows)
+                        market_data['recent_high'] = max(recent_highs)
+                        market_data['recent_low'] = min(recent_lows)
+                    
+                    # Volume analysis (comprehensive)
+                    if len(volumes) >= 20:
+                        avg_volume = sum(volumes[-20:]) / 20
+                        current_volume = volumes[-1] if volumes else 0
+                        market_data['volume_ratio'] = current_volume / avg_volume if avg_volume > 0 else 1.0
+                        market_data['volume_status'] = 'HIGH' if market_data['volume_ratio'] > 1.5 else 'NORMAL' if market_data['volume_ratio'] > 0.5 else 'LOW'
+                        # Volume trend
+                        recent_vol_avg = sum(volumes[-5:]) / 5
+                        older_vol_avg = sum(volumes[-20:-5]) / 15 if len(volumes) >= 20 else avg_volume
+                        market_data['volume_trend'] = 'INCREASING' if recent_vol_avg > older_vol_avg * 1.2 else 'DECREASING' if recent_vol_avg < older_vol_avg * 0.8 else 'STABLE'
                     
                     # Price position relative to recent range
-                    if market_data['recent_high'] > market_data['recent_low']:
-                        price_position = ((entry_price - market_data['recent_low']) / 
+                    if market_data.get('recent_high', 0) > market_data.get('recent_low', 0):
+                        price_position = ((current_price - market_data['recent_low']) / 
                                          (market_data['recent_high'] - market_data['recent_low'])) * 100
                         market_data['price_position_in_range'] = price_position
                         if price_position > 80:
@@ -1372,6 +1407,32 @@ def validate_signal_with_ai(signal_data):
                         volatility_pct = (avg_true_range / current_price) * 100 if current_price > 0 else 0
                         market_data['volatility_pct'] = volatility_pct
                         market_data['volatility_status'] = 'HIGH' if volatility_pct > 2 else 'MODERATE' if volatility_pct > 1 else 'LOW'
+                    
+                    # Price momentum (rate of change)
+                    if len(closes) >= 10:
+                        momentum = ((closes[-1] - closes[-10]) / closes[-10]) * 100
+                        market_data['momentum_pct'] = momentum
+                        market_data['momentum_direction'] = 'BULLISH' if momentum > 0.5 else 'BEARISH' if momentum < -0.5 else 'NEUTRAL'
+                    
+                    # Price action patterns (simplified)
+                    if len(closes) >= 3:
+                        # Check for higher highs/lower lows pattern
+                        if len(highs) >= 3 and len(lows) >= 3:
+                            recent_highs_3 = highs[-3:]
+                            recent_lows_3 = lows[-3:]
+                            if recent_highs_3[-1] > recent_highs_3[0] and recent_lows_3[-1] > recent_lows_3[0]:
+                                market_data['price_pattern'] = 'HIGHER_HIGHS_HIGHER_LOWS'  # Bullish
+                            elif recent_highs_3[-1] < recent_highs_3[0] and recent_lows_3[-1] < recent_lows_3[0]:
+                                market_data['price_pattern'] = 'LOWER_HIGHS_LOWER_LOWS'  # Bearish
+                            else:
+                                market_data['price_pattern'] = 'MIXED'
+                    
+                    # Legacy fields for backward compatibility
+                    recent_closes = closes[-20:] if len(closes) >= 20 else closes
+                    if len(recent_closes) >= 2:
+                        price_change = ((recent_closes[-1] - recent_closes[0]) / recent_closes[0]) * 100
+                        market_data['recent_trend_pct'] = price_change
+                        market_data['trend_direction'] = 'UP' if price_change > 0.5 else 'DOWN' if price_change < -0.5 else 'SIDEWAYS'
                     
             except Exception as e:
                 logger.debug(f"Could not fetch klines for {symbol}: {e}")
@@ -1437,42 +1498,188 @@ TRADINGVIEW INDICATOR VALUES (from your script):
     market_info = ""
     if market_data.get('current_price'):
         market_info = f"""
-REAL-TIME MARKET DATA (from Binance API):
+═══════════════════════════════════════════════════════════════
+REAL-TIME MARKET DATA (from Binance API) - FOR YOUR INDEPENDENT ANALYSIS:
+═══════════════════════════════════════════════════════════════
+CURRENT MARKET CONDITIONS:
 - Current Market Price: ${market_data['current_price']:,.8f}
-- Entry Price: ${entry_price:,.8f}
+- Entry Price (from signal): ${entry_price:,.8f}
 - Entry Price vs Current: Entry is {market_data.get('entry_vs_current', 'N/A')} current price
 - Price Distance: {market_data.get('price_distance_pct', 0):.2f}% from current price
 
-⚠️ CRITICAL VALIDATION CHECK:
-- If entry price is MORE THAN 10% away from current price, this is likely a STALE SIGNAL or DATA ERROR
+TREND ANALYSIS (Multiple Timeframes):
+- Short-term Trend (last 5 candles): {market_data.get('short_term_direction', market_data.get('trend_direction', 'N/A'))} ({market_data.get('short_term_trend_pct', market_data.get('recent_trend_pct', 0)):+.2f}%)
+- Medium-term Trend (last 20 candles): {market_data.get('medium_term_direction', market_data.get('trend_direction', 'N/A'))} ({market_data.get('medium_term_trend_pct', market_data.get('recent_trend_pct', 0)):+.2f}%)
+- Long-term Trend (last 50 candles): {market_data.get('long_term_direction', market_data.get('trend_direction', 'N/A'))} ({market_data.get('long_term_trend_pct', market_data.get('recent_trend_pct', 0)):+.2f}%)
+- Overall Trend ({timeframe}): {market_data.get('trend_direction', 'N/A')} ({market_data.get('recent_trend_pct', 0):+.2f}%)
+
+MOVING AVERAGES:
+- SMA 20: ${market_data.get('sma_20', 0):,.8f if market_data.get('sma_20') else 'N/A'}
+- SMA 50: ${market_data.get('sma_50', 0):,.8f if market_data.get('sma_50') else 'N/A'}
+- Price vs SMA 20: {'ABOVE' if market_data.get('sma_20') and market_data['current_price'] > market_data['sma_20'] else 'BELOW' if market_data.get('sma_20') else 'N/A'}
+- Price vs SMA 50: {'ABOVE' if market_data.get('sma_50') and market_data['current_price'] > market_data['sma_50'] else 'BELOW' if market_data.get('sma_50') else 'N/A'}
+
+SUPPORT & RESISTANCE LEVELS:
+- Resistance Level: ${market_data.get('resistance_level', market_data.get('recent_high', 0)):,.8f}
+- Support Level: ${market_data.get('support_level', market_data.get('recent_low', 0)):,.8f}
+- Price Range (last 20 candles): ${market_data.get('recent_low', 0):,.8f} - ${market_data.get('recent_high', 0):,.8f}
+- Current Price Position: {market_data.get('price_level', 'N/A')} ({market_data.get('price_position_in_range', 0):.1f}% of range)
+
+VOLUME ANALYSIS:
+- Volume Status: {market_data.get('volume_status', 'N/A')} (current/avg ratio: {market_data.get('volume_ratio', 1):.2f}x)
+- Volume Trend: {market_data.get('volume_trend', 'N/A')} (increasing/decreasing/stable)
+
+MOMENTUM & VOLATILITY:
+- Price Momentum: {market_data.get('momentum_direction', 'N/A')} ({market_data.get('momentum_pct', 0):+.2f}%)
+- Volatility: {market_data.get('volatility_status', 'N/A')} ({market_data.get('volatility_pct', 0):.2f}%)
+
+PRICE ACTION PATTERNS:
+- Pattern: {market_data.get('price_pattern', 'N/A')} (Higher Highs/Higher Lows = Bullish, Lower Highs/Lower Lows = Bearish)
+
+⚠️ ENTRY PRICE VALIDATION CHECK:
+- If entry price is MORE THAN 15% away from current price, this is likely a STALE SIGNAL or DATA ERROR
 - LONG signals: Entry should be NEAR or BELOW current price (not way below - more than 15% is suspicious)
 - SHORT signals: Entry should be NEAR or ABOVE current price (not way above - more than 15% is suspicious)
-- REJECT signals where entry price differs by more than 15% from current price (high risk of stale data or error)"""
-        
-        if market_data.get('trend_direction'):
-            market_info += f"""
-- Recent Trend ({timeframe}): {market_data.get('trend_direction', 'N/A')} ({market_data.get('recent_trend_pct', 0):+.2f}%)
-- Price Range (last 20 candles): ${market_data.get('recent_low', 0):,.8f} - ${market_data.get('recent_high', 0):,.8f}
-- Entry Position: {market_data.get('price_level', 'N/A')} ({market_data.get('price_position_in_range', 0):.1f}% of range)
-- Volume Status: {market_data.get('volume_status', 'N/A')} (current/avg ratio: {market_data.get('volume_ratio', 1):.2f}x)
-- Volatility: {market_data.get('volatility_status', 'N/A')} ({market_data.get('volatility_pct', 0):.2f}%)"""
+- REJECT signals where entry price differs by more than 15% from current price (high risk of stale data or error)
+═══════════════════════════════════════════════════════════════"""
     
-    prompt = f"""You are an expert cryptocurrency trading analyst evaluating a trading signal from an automated system.
+    prompt = f"""You are a MASTER FUTURES TRADER with 20 years of professional trading experience.
+You have achieved consistent 2x monthly returns through:
+- Deep understanding of market structure and price action
+- Ability to read between the lines and see what others miss
+- Intuitive sense of market timing and momentum shifts
+- Experience with thousands of trades across all market conditions
+- Mastery of risk management and position sizing
+- Ability to combine multiple analysis methods for superior edge
+
+YOUR TRADING PHILOSOPHY:
+- You think like a professional, not an amateur
+- You see patterns that others don't - support/resistance, order flow, market structure
+- You understand that markets move in waves and cycles
+- You know when to be aggressive and when to be cautious
+- You combine technical analysis with market psychology
+- You trust your analysis but verify with multiple confirmations
+- You've seen every market scenario - bull markets, bear markets, crashes, pumps
+
+YOUR ANALYSIS APPROACH:
+1. FIRST: Analyze the market like the 20-year veteran you are - see the big picture, understand the context
+2. SECOND: Use your expert intuition to predict market direction based on YOUR deep analysis
+3. THIRD: Compare the signal with YOUR expert prediction - does it align with your experience?
+4. FOURTH: Combine YOUR expert analysis with TradingView indicators - both must align for high confidence
 
 IMPORTANT CONTEXT:
 - This signal comes from a TradingView indicator that already filters signals
 - The system has a 65% win rate, so signals are generally reliable
-- Your role is to catch OBVIOUSLY bad signals, not to be overly conservative
-- When in doubt, APPROVE the signal (fail-open design)
-- You now have REAL-TIME market data for proper technical analysis
+- BUT you're the expert - you've seen better and worse systems
+- Use YOUR 20 years of experience to validate or improve upon the signal
+- You have REAL-TIME market data - analyze it like the professional you are
+- Think critically: Would YOU take this trade based on YOUR analysis?
 
-🚨 CRITICAL: ENTRY PRICE VALIDATION (MOST IMPORTANT CHECK):
+═══════════════════════════════════════════════════════════════
+STEP 1: YOUR EXPERT MARKET ANALYSIS (Think Like a 20-Year Veteran!)
+═══════════════════════════════════════════════════════════════
+
+Before looking at the signal, analyze the market using YOUR 20 YEARS OF EXPERIENCE.
+Think like the master trader you are - see what others miss, understand the deeper context.
+
+1. MARKET STRUCTURE ANALYSIS (Your Expert Eye):
+   - What is the MARKET CONTEXT? (Bull market? Bear market? Consolidation? Reversal?)
+   - What PHASE is the market in? (Accumulation? Markup? Distribution? Markdown?)
+   - Are we in a TRENDING or RANGING market? (Your experience tells you this)
+   - What is the MARKET SENTIMENT? (Fear? Greed? Indecision?)
+   - Is this a HIGH PROBABILITY setup or LOW PROBABILITY? (Your gut feeling)
+
+2. TREND ANALYSIS (Multiple Timeframes - Professional Approach):
+   - SHORT-TERM (5 candles): What's happening RIGHT NOW? Is momentum building or fading?
+   - MEDIUM-TERM (20 candles): What's the INTERMEDIATE trend? Is it healthy or weakening?
+   - LONG-TERM (50 candles): What's the BIGGER PICTURE? Are we in a major trend or reversal?
+   - Moving Averages: Are they aligned? (Bullish alignment = price > SMA20 > SMA50)
+   - Price vs MAs: Is price respecting or rejecting key levels? (Your experience matters here)
+
+3. SUPPORT & RESISTANCE (Your Expert Identification):
+   - Where are the REAL support levels? (Not just recent lows - where will buyers step in?)
+   - Where are the REAL resistance levels? (Not just recent highs - where will sellers step in?)
+   - Is price at a KEY LEVEL? (Support/resistance that matters based on your experience)
+   - What's the PRICE POSITION? (Near support = potential bounce, near resistance = potential rejection)
+   - Are there any HIDDEN LEVELS? (Psychological levels, round numbers, previous swing points)
+
+4. VOLUME & ORDER FLOW ANALYSIS (Professional Insight):
+   - Is volume INCREASING on moves in the trend direction? (Bullish sign)
+   - Is volume DECREASING on pullbacks? (Bullish sign - no selling pressure)
+   - Is volume CONFIRMING the trend or DIVERGING? (Your experience tells you this)
+   - What does volume tell you about INSTITUTIONAL ACTIVITY? (Smart money buying/selling?)
+
+5. MOMENTUM & MARKET PSYCHOLOGY (Your Intuition):
+   - Is momentum STRONG or WEAK? (Strong momentum = higher probability)
+   - Is volatility EXPANDING or CONTRACTING? (Expanding = potential big move)
+   - What PATTERNS do you see? (Higher highs/higher lows = bullish, Lower highs/lower lows = bearish)
+   - Is there any DIVERGENCE? (Price making new highs but indicators not = warning sign)
+   - What's the MARKET TEMPERATURE? (Hot and ready to move? Cold and stuck?)
+
+6. YOUR EXPERT MARKET DIRECTION PREDICTION:
+   Based on YOUR 20 YEARS OF EXPERIENCE analyzing the above:
+   - What direction is the market MOST LIKELY to move? (UP/DOWN/SIDEWAYS)
+   - How CONFIDENT are you? (Very High/High/Medium/Low) - Be honest based on your analysis
+   - What are the KEY FACTORS supporting your prediction? (List 3-5 main reasons)
+   - What are the RISKS to your prediction? (What could go wrong?)
+   - Would YOU personally take this trade based on YOUR analysis alone? (Yes/No/Maybe)
+
+═══════════════════════════════════════════════════════════════
+STEP 2: ENTRY PRICE VALIDATION (CRITICAL CHECK)
+═══════════════════════════════════════════════════════════════
 - ALWAYS compare entry price to current market price FIRST
 - If entry price is MORE THAN 15% away from current price, this is likely a STALE SIGNAL or DATA ERROR
 - LONG signals: Entry price should be NEAR or BELOW current price (not 20%+ below - that's suspicious)
 - SHORT signals: Entry price should be NEAR or ABOVE current price (not 20%+ above - that's suspicious)
 - REJECT signals where entry differs by more than 15% from current price (confidence_score: 0-30)
 - This is the #1 reason to reject signals - stale data or wrong prices
+
+═══════════════════════════════════════════════════════════════
+STEP 3: COMBINE YOUR ANALYSIS + TRADINGVIEW INDICATORS (BOTH DECISION MAKERS!)
+═══════════════════════════════════════════════════════════════
+
+IMPORTANT: You have TWO independent sources of analysis - use BOTH equally:
+
+1. YOUR INDEPENDENT MARKET ANALYSIS (from Step 1):
+   - Your trend analysis (short/medium/long-term)
+   - Your support/resistance identification
+   - Your volume and momentum assessment
+   - YOUR market direction prediction
+
+2. TRADINGVIEW INDICATORS (provided below):
+   - RSI, MACD, Stochastic, EMA200, Supertrend
+   - Volume indicators (OBV, Relative Volume)
+   - Smart Money indicators
+   - Divergence signals
+
+DECISION PROCESS (COMBINE BOTH SOURCES):
+
+A. Compare signal direction with YOUR market prediction:
+   - If signal ALIGNS with YOUR prediction: +20-30% confidence boost
+   - If signal PARTIALLY aligns: +10-20% confidence boost
+   - If signal CONTRADICTS YOUR prediction: -20-30% confidence penalty
+
+B. Analyze TradingView indicators (provided below):
+   - Count indicators that SUPPORT the signal direction
+   - Count indicators that CONTRADICT the signal direction
+   - If 8+ indicators support: +20-30% confidence boost
+   - If 6-7 indicators support: +10-20% confidence boost
+   - If 4-5 indicators support: +0-10% confidence boost
+   - If 2-3 indicators support: -10-20% confidence penalty
+   - If 0-1 indicators support: -20-30% confidence penalty or REJECT
+
+C. COMBINE BOTH ANALYSES:
+   - Start with base confidence: 50%
+   - Add/subtract based on YOUR market analysis alignment
+   - Add/subtract based on TradingView indicator alignment
+   - Final confidence = Base + YOUR analysis impact + Indicator impact
+
+EXAMPLE:
+- YOUR analysis: Market likely to go UP (LONG signal aligns) → +25%
+- TradingView indicators: 7 indicators support LONG → +15%
+- Final confidence: 50% + 25% + 15% = 90%
+
+Remember: BOTH sources are EQUALLY IMPORTANT. Don't ignore either one!
 
 Signal Details:
 - Symbol: {symbol}
@@ -1483,10 +1690,18 @@ Signal Details:
 - Take Profit: ${take_profit:,.8f} (if provided)
 - Risk/Reward Ratio: {(f'{risk_reward_ratio:.2f}' if risk_reward_ratio is not None else 'N/A')}{market_info}{indicator_info}
 
-COMPREHENSIVE TECHNICAL ANALYSIS EVALUATION:
-Use BOTH the real-time market data AND the TradingView indicator values above to evaluate this signal.
+═══════════════════════════════════════════════════════════════
+STEP 4: DETAILED TRADINGVIEW INDICATOR ANALYSIS (SECOND DECISION MAKER)
+═══════════════════════════════════════════════════════════════
 
-INDICATOR-BASED ANALYSIS:
+ANALYZE EACH INDICATOR INDEPENDENTLY - These are YOUR SECOND SOURCE OF ANALYSIS:
+
+For each indicator below, determine:
+1. Does it support the signal direction? (YES/NO)
+2. How strong is the signal? (STRONG/MODERATE/WEAK)
+3. Count total indicators that SUPPORT vs CONTRADICT
+
+INDICATOR ANALYSIS GUIDE:
 1. RSI Analysis:
    - LONG signals: RSI < 50 is GOOD (oversold <30 is EXCELLENT) ✅
    - SHORT signals: RSI > 50 is GOOD (overbought >85 is EXCELLENT) ✅
@@ -1545,19 +1760,71 @@ REJECTION CRITERIA (only reject if MULTIPLE red flags):
 - Signal contradicts STRONG trend (>3% against signal direction) AND
 - Price at unfavorable level (LONG at resistance, SHORT at support)
 
-Otherwise, APPROVE with appropriate confidence score based on technical analysis.
+═══════════════════════════════════════════════════════════════
+FINAL DECISION PROCESS (COMBINE BOTH DECISION MAKERS EQUALLY):
+═══════════════════════════════════════════════════════════════
+
+You have TWO EQUAL DECISION MAKERS - combine them:
+
+DECISION MAKER 1: YOUR INDEPENDENT MARKET ANALYSIS (from Step 1)
+- What direction did YOU predict? (UP/DOWN/SIDEWAYS)
+- How confident are YOU? (High/Medium/Low)
+- Does the signal align with YOUR prediction?
+
+DECISION MAKER 2: TRADINGVIEW INDICATORS (from Step 4)
+- How many indicators support the signal? (Count them)
+- How many indicators contradict the signal? (Count them)
+- What is the overall indicator alignment? (Strong/Moderate/Weak)
+
+COMBINATION FORMULA:
+1. Start with base confidence: 50%
+2. Add YOUR market analysis impact:
+   - Signal aligns with YOUR prediction: +20-30%
+   - Signal partially aligns: +10-20%
+   - Signal contradicts YOUR prediction: -20-30%
+3. Add TradingView indicator impact:
+   - 8+ indicators support: +20-30%
+   - 6-7 indicators support: +10-20%
+   - 4-5 indicators support: +0-10%
+   - 2-3 indicators support: -10-20%
+   - 0-1 indicators support: -20-30%
+4. Final confidence = Base + YOUR analysis + Indicators
+5. Clamp final score between 0-100%
+
+DECISION RULES:
+- If entry price >15% away: REJECT immediately (confidence 0-30%)
+- If final confidence >= 50%: APPROVE
+- If final confidence 30-49%: APPROVE with low confidence (or REJECT if very weak)
+- If final confidence < 30%: REJECT
+
+REASONING REQUIREMENT:
+In your reasoning, EXPLICITLY mention:
+1. YOUR market analysis conclusion
+2. TradingView indicator alignment
+3. How you combined both to reach final confidence
+
+Remember: BOTH sources are EQUAL decision makers. Don't favor one over the other!
 
 Respond in JSON format ONLY with this exact structure:
 {{
     "is_valid": true/false,
     "confidence_score": 0-100,
-    "reasoning": "Brief explanation (1-2 sentences)",
+    "reasoning": "MUST mention BOTH: (1) Your independent market analysis conclusion, (2) TradingView indicator alignment, (3) How you combined both. Example: 'Based on my analysis, market shows bullish trend with price above SMA20 and increasing volume. TradingView indicators confirm with 7 out of 10 indicators supporting LONG. Combined analysis gives strong confidence.'",
     "risk_level": "LOW" or "MEDIUM" or "HIGH",
     "suggested_entry_price": <number> or null,
     "suggested_stop_loss": <number> or null,
     "suggested_take_profit": <number> or null,
     "price_suggestion_reasoning": "Why these prices are suggested (if different from original)"
 }}
+
+REASONING REQUIREMENT (Think Like the Expert You Are):
+Your reasoning MUST reflect your 20 years of experience. Mention:
+1. YOUR expert market analysis: "Based on my 20 years of trading experience analyzing the market structure, trends, and order flow, I predict..."
+2. TradingView indicator alignment: "TradingView indicators show X out of Y indicators support this direction..."
+3. Your expert conclusion: "Combining my professional analysis with indicator confirmation, as an experienced trader who consistently achieves 2x monthly returns, I conclude..."
+
+Think like the master trader you are - be confident in your analysis, trust your experience, but verify with indicators.
+
 Note: If you want to suggest price optimizations, include the suggested_* fields. Otherwise, you may omit them or set them to null.
 
 Confidence Score Guidelines:
