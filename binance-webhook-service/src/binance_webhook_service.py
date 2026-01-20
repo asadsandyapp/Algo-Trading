@@ -1289,19 +1289,6 @@ def validate_signal_with_ai(signal_data):
             'risk_level': 'MEDIUM'
         }
     
-    # Pre-check: Log price difference for AI analysis (but let AI decide)
-    try:
-        if client:
-            ticker = client.futures_symbol_ticker(symbol=symbol)
-            current_price = float(ticker.get('price', 0))
-            if current_price > 0:
-                price_diff_pct = abs((entry_price - current_price) / current_price) * 100
-                if price_diff_pct > 10:
-                    logger.warning(f"⚠️ Price discrepancy detected: Entry price ${entry_price:,.2f} is {price_diff_pct:.1f}% away from current price ${current_price:,.2f} - AI will analyze this")
-    except Exception as e:
-        logger.debug(f"Could not check current price: {e}")
-        # Continue with validation if we can't check price
-    
     # Calculate risk/reward ratio
     risk_reward_ratio = None
     if stop_loss and take_profit:
@@ -1677,24 +1664,42 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
         
         api_thread = threading.Thread(target=call_api, daemon=True)
         api_thread.start()
-        api_thread.join(timeout=20)  # 20 second timeout (increased for Gemini API)
         
-        if api_thread.is_alive():
-            logger.warning(f"⏱️ AI validation timeout for {symbol} (20s), proceeding without validation (fail-open)")
-            return {
-                'is_valid': True,
-                'confidence_score': 100.0,  # High score to pass threshold - fail-open design
-                'reasoning': 'AI validation timeout, proceeding (fail-open)',
-                'risk_level': 'MEDIUM'
-            }
+        # Wait for response or error (with safety timeout to prevent infinite hangs)
+        # Using 60s safety timeout - should be enough even for slow free tier
+        api_thread.join(timeout=60)
         
+        # Wait until we get a response or error (or safety timeout)
+        while api_thread.is_alive() and not result_container['response'] and not result_container['error']:
+            time.sleep(0.1)  # Small sleep to avoid busy-waiting
+            # Check if we've exceeded safety timeout (60s)
+            elapsed = time.time() - start_time
+            if elapsed > 60:
+                logger.warning(f"⏱️ AI validation safety timeout for {symbol} (60s), proceeding without validation (fail-open)")
+                return {
+                    'is_valid': True,
+                    'confidence_score': 100.0,  # High score to pass threshold - fail-open design
+                    'reasoning': 'AI validation safety timeout, proceeding (fail-open)',
+                    'risk_level': 'MEDIUM'
+                }
+        
+        # Check for error first
         if result_container['error']:
             logger.error(f"❌ AI validation error: {result_container['error']}")
             raise Exception(result_container['error'])
         
-        if not result_container['response']:
-            logger.error("❌ No response from AI")
-            raise Exception("No response from AI")
+        # Check for response
+        if result_container['response']:
+            logger.info(f"✅ Received AI response after {time.time() - start_time:.2f}s")
+        else:
+            # No response and no error - should not happen, but fail-open
+            logger.warning(f"⚠️ No response or error from AI validation for {symbol}, proceeding (fail-open)")
+            return {
+                'is_valid': True,
+                'confidence_score': 100.0,
+                'reasoning': 'No response from AI, proceeding (fail-open)',
+                'risk_level': 'MEDIUM'
+            }
         
         elapsed_time = time.time() - start_time
         logger.info(f"✅ AI validation API call completed in {elapsed_time:.2f}s")
