@@ -1289,28 +1289,17 @@ def validate_signal_with_ai(signal_data):
             'risk_level': 'MEDIUM'
         }
     
-    # Pre-validation: Check entry price vs current market price (critical safety check)
+    # Pre-check: Log price difference for AI analysis (but let AI decide)
     try:
         if client:
             ticker = client.futures_symbol_ticker(symbol=symbol)
             current_price = float(ticker.get('price', 0))
             if current_price > 0:
                 price_diff_pct = abs((entry_price - current_price) / current_price) * 100
-                
-                # REJECT signals where entry price is more than 20% away from current price
-                # This catches stale signals, wrong prices, or data errors
-                if price_diff_pct > 20:
-                    logger.error(f"🚫 SIGNAL REJECTED: Entry price ${entry_price:,.2f} is {price_diff_pct:.1f}% away from current price ${current_price:,.2f}")
-                    return {
-                        'is_valid': False,
-                        'confidence_score': 0.0,
-                        'reasoning': f'Entry price ${entry_price:,.2f} is {price_diff_pct:.1f}% away from current market price ${current_price:,.2f}. This appears to be a stale signal or data error.',
-                        'risk_level': 'HIGH'
-                    }
-                elif price_diff_pct > 10:
-                    logger.warning(f"⚠️ Entry price ${entry_price:,.2f} is {price_diff_pct:.1f}% away from current price ${current_price:,.2f} - will be flagged in AI analysis")
+                if price_diff_pct > 10:
+                    logger.warning(f"⚠️ Price discrepancy detected: Entry price ${entry_price:,.2f} is {price_diff_pct:.1f}% away from current price ${current_price:,.2f} - AI will analyze this")
     except Exception as e:
-        logger.debug(f"Could not check current price for pre-validation: {e}")
+        logger.debug(f"Could not check current price: {e}")
         # Continue with validation if we can't check price
     
     # Calculate risk/reward ratio
@@ -1688,29 +1677,10 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
         
         api_thread = threading.Thread(target=call_api, daemon=True)
         api_thread.start()
-        api_thread.join(timeout=120) # 20 second timeout (increased for Gemini API)
+        api_thread.join(timeout=20)  # 20 second timeout (increased for Gemini API)
         
         if api_thread.is_alive():
-            logger.warning(f"⏱️ AI validation timeout for {symbol} (20s), checking price before fail-open...")
-            # Check if entry price is reasonable before approving on timeout
-            try:
-                if client:
-                    ticker = client.futures_symbol_ticker(symbol=symbol)
-                    current_price = float(ticker.get('price', 0))
-                    if current_price > 0:
-                        price_diff_pct = abs((entry_price - current_price) / current_price) * 100
-                        if price_diff_pct > 20:
-                            logger.error(f"🚫 TIMEOUT REJECTION: Entry price ${entry_price:,.2f} is {price_diff_pct:.1f}% away from current ${current_price:,.2f}")
-                            return {
-                                'is_valid': False,
-                                'confidence_score': 0.0,
-                                'reasoning': f'AI validation timeout, but entry price ${entry_price:,.2f} is {price_diff_pct:.1f}% away from current ${current_price:,.2f} - likely stale signal',
-                                'risk_level': 'HIGH'
-                            }
-            except Exception:
-                pass  # If we can't check, proceed with fail-open
-            
-            logger.warning(f"⏱️ Proceeding without validation (fail-open)")
+            logger.warning(f"⏱️ AI validation timeout for {symbol} (20s), proceeding without validation (fail-open)")
             return {
                 'is_valid': True,
                 'confidence_score': 100.0,  # High score to pass threshold - fail-open design
