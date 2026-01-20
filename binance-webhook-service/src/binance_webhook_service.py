@@ -1263,6 +1263,7 @@ def validate_signal_with_ai(signal_data):
     symbol = format_symbol(signal_data.get('symbol', ''))
     signal_side = signal_data.get('signal_side', '').upper()
     entry_price = safe_float(signal_data.get('entry_price'), default=None)
+    second_entry_price = safe_float(signal_data.get('second_entry_price'), default=None)
     stop_loss = safe_float(signal_data.get('stop_loss'), default=None)
     take_profit = safe_float(signal_data.get('take_profit'), default=None)
     timeframe = signal_data.get('timeframe', 'Unknown')
@@ -1536,21 +1537,17 @@ MOMENTUM & VOLATILITY:
 PRICE ACTION PATTERNS:
 - Pattern: {market_data.get('price_pattern', 'N/A')} (Higher Highs/Higher Lows = Bullish, Lower Highs/Lower Lows = Bearish)
 
-⚠️ ENTRY PRICE VALIDATION CHECK:
-- If entry price is MORE THAN 15% away from current price, this is likely a STALE SIGNAL or DATA ERROR
-- LONG signals: Entry should be NEAR or BELOW current price (not way below - more than 15% is suspicious)
-- SHORT signals: Entry should be NEAR or ABOVE current price (not way above - more than 15% is suspicious)
-- REJECT signals where entry price differs by more than 15% from current price (high risk of stale data or error)
 ═══════════════════════════════════════════════════════════════"""
     
-    prompt = f"""You are a MASTER FUTURES TRADER with 20 years of professional trading experience.
-You have achieved consistent 2x monthly returns through:
-- Deep understanding of market structure and price action
-- Ability to read between the lines and see what others miss
-- Intuitive sense of market timing and momentum shifts
-- Experience with thousands of trades across all market conditions
-- Mastery of risk management and position sizing
-- Ability to combine multiple analysis methods for superior edge
+    prompt = f"""You are an INSTITUTIONAL GURU-LEVEL FUTURES TRADER with 20 years of elite professional trading experience.
+You have achieved consistent 200% monthly returns (2x per month) through:
+- Deep understanding of market structure, order flow, and institutional behavior
+- Ability to read between the lines and see what others miss - you spot patterns before they form
+- Intuitive sense of market timing and momentum shifts - you know when to enter and exit
+- Experience with thousands of trades across all market conditions - bull markets, bear markets, crashes, pumps
+- Mastery of risk management and position sizing - you protect capital while maximizing returns
+- Ability to combine multiple analysis methods for superior edge - technical, fundamental, and psychological
+- Institutional-level understanding of market manipulation, smart money flow, and retail vs. professional behavior
 
 YOUR TRADING PHILOSOPHY:
 - You think like a professional, not an amateur
@@ -1625,14 +1622,39 @@ Think like the master trader you are - see what others miss, understand the deep
    - Would YOU personally take this trade based on YOUR analysis alone? (Yes/No/Maybe)
 
 ═══════════════════════════════════════════════════════════════
-STEP 2: ENTRY PRICE VALIDATION (CRITICAL CHECK)
+STEP 2: VALIDATE ENTRY, ENTRY2, AND TAKE PROFIT PRICES (CRITICAL CHECK)
 ═══════════════════════════════════════════════════════════════
-- ALWAYS compare entry price to current market price FIRST
-- If entry price is MORE THAN 15% away from current price, this is likely a STALE SIGNAL or DATA ERROR
-- LONG signals: Entry price should be NEAR or BELOW current price (not 20%+ below - that's suspicious)
-- SHORT signals: Entry price should be NEAR or ABOVE current price (not 20%+ above - that's suspicious)
-- REJECT signals where entry differs by more than 15% from current price (confidence_score: 0-30)
-- This is the #1 reason to reject signals - stale data or wrong prices
+As an institutional guru-level trader, you MUST validate ALL prices:
+
+1. ENTRY PRICE (Entry 1):
+   - Compare to current market price (live signals are typically 1-2% away - this is NORMAL)
+   - LONG: Entry should be at or below current price (within 1-2% is normal for limit orders)
+   - SHORT: Entry should be at or above current price (within 1-2% is normal for limit orders)
+   - Evaluate if entry is at optimal support/resistance level based on YOUR analysis
+   - If entry is poorly positioned, suggest better entry price
+
+2. ENTRY 2 (DCA/Second Entry):
+   - LONG: Should be 3-7% BELOW Entry 1 (for averaging down)
+   - SHORT: Should be 3-7% ABOVE Entry 1 (for averaging up)
+   - Ensure proper spacing for DCA strategy
+   - If Entry 2 is missing or poorly positioned, calculate optimal Entry 2
+
+3. STOP LOSS:
+   - LONG: Must be BELOW Entry 1 (typically 1.5-2.5x ATR below entry)
+   - SHORT: Must be ABOVE Entry 1 (typically 1.5-2.5x ATR above entry)
+   - Evaluate if SL is too tight (will get stopped out) or too wide (poor R/R)
+   - Suggest optimal SL based on support/resistance and ATR
+
+4. TAKE PROFIT:
+   - LONG: Must be ABOVE Entry 1 (aim for 1.5:1 or better R/R ratio)
+   - SHORT: Must be BELOW Entry 1 (aim for 1.5:1 or better R/R ratio)
+   - Evaluate if TP is realistic based on resistance/support levels
+   - If TP is too aggressive (won't hit) or too conservative (leaves profit on table), suggest better TP
+
+PRICE VALIDATION RULES:
+- If prices are OPTIMAL: Keep original prices (set suggested_* to null)
+- If prices can be IMPROVED: Suggest better prices with reasoning
+- If prices are INVALID: Reject signal (confidence 0-30%) with clear explanation
 
 ═══════════════════════════════════════════════════════════════
 STEP 3: COMBINE YOUR ANALYSIS + TRADINGVIEW INDICATORS (BOTH DECISION MAKERS!)
@@ -1685,67 +1707,101 @@ Signal Details:
 - Symbol: {symbol}
 - Direction: {signal_side}
 - Timeframe: {timeframe}
-- Entry Price: ${entry_price:,.8f}
-- Stop Loss: ${stop_loss:,.8f} (if provided)
-- Take Profit: ${take_profit:,.8f} (if provided)
+- Entry Price (Entry 1): ${entry_price:,.8f}
+- Entry Price 2 (DCA): ${second_entry_price:,.8f if second_entry_price else 'N/A (not provided)'}
+- Stop Loss: ${stop_loss:,.8f if stop_loss else 'N/A (not provided)'}
+- Take Profit: ${take_profit:,.8f if take_profit else 'N/A (not provided)'}
 - Risk/Reward Ratio: {(f'{risk_reward_ratio:.2f}' if risk_reward_ratio is not None else 'N/A')}{market_info}{indicator_info}
 
 ═══════════════════════════════════════════════════════════════
 STEP 4: DETAILED TRADINGVIEW INDICATOR ANALYSIS (SECOND DECISION MAKER)
 ═══════════════════════════════════════════════════════════════
 
+CRITICAL: You MUST analyze EACH indicator value INDIVIDUALLY from the TradingView script.
+These are REAL-TIME indicator values calculated by the Pine Script - analyze them like an institutional trader.
+
 ANALYZE EACH INDICATOR INDEPENDENTLY - These are YOUR SECOND SOURCE OF ANALYSIS:
 
-For each indicator below, determine:
-1. Does it support the signal direction? (YES/NO)
-2. How strong is the signal? (STRONG/MODERATE/WEAK)
-3. Count total indicators that SUPPORT vs CONTRADICT
+For EACH indicator value provided below, you MUST:
+1. Read the ACTUAL VALUE (not just whether it exists)
+2. Determine if it supports the signal direction? (YES/NO)
+3. Assess how strong is the signal? (STRONG/MODERATE/WEAK)
+4. Count total indicators that SUPPORT vs CONTRADICT
+5. Consider the COMBINATION of indicators - are they aligned or conflicting?
 
-INDICATOR ANALYSIS GUIDE:
-1. RSI Analysis:
+INDICATOR ANALYSIS GUIDE (Analyze Each Value Individually):
+1. RSI Analysis (Check the ACTUAL RSI value):
+   - Read the RSI value from TradingView indicators
    - LONG signals: RSI < 50 is GOOD (oversold <30 is EXCELLENT) ✅
    - SHORT signals: RSI > 50 is GOOD (overbought >85 is EXCELLENT) ✅
    - RSI divergence (bullish/bearish) = STRONG confirmation ✅
+   - If RSI contradicts signal direction, note it as a CONTRADICTING indicator
 
-2. MACD Analysis:
+2. MACD Analysis (Check ALL MACD values: Line, Signal, Histogram):
+   - Read MACD Line, Signal Line, and Histogram values from TradingView
    - MACD Line > Signal Line = Bullish momentum ✅
    - MACD Histogram positive = Bullish momentum ✅
-   - LONG: MACD bullish = GOOD ✅
-   - SHORT: MACD bearish = GOOD ✅
+   - LONG: MACD bullish (Line > Signal AND Histogram > 0) = GOOD ✅
+   - SHORT: MACD bearish (Line < Signal AND Histogram < 0) = GOOD ✅
+   - If MACD contradicts signal direction, note it as a CONTRADICTING indicator
 
-3. Stochastic Analysis:
+3. Stochastic Analysis (Check BOTH Stoch K and Stoch D):
+   - Read Stochastic K and D values from TradingView
    - LONG: Stoch K/D < 50 (oversold <20 is EXCELLENT) ✅
    - SHORT: Stoch K/D > 50 (overbought >80 is EXCELLENT) ✅
+   - If Stochastic contradicts signal direction, note it as a CONTRADICTING indicator
 
-4. Trend Filters (EMA 200 & Supertrend):
+4. Trend Filters (EMA 200 & Supertrend - Check BOTH):
+   - Read EMA200 value and Supertrend value/bullish status from TradingView
    - LONG: Price above EMA200 AND Supertrend bullish = STRONG trend ✅
    - SHORT: Price below EMA200 AND Supertrend bearish = STRONG trend ✅
    - Contradicting trend = Evaluate carefully but APPROVE if other factors good
+   - If both EMA200 and Supertrend contradict signal, note as CONTRADICTING
 
-5. Volume Analysis:
+5. Volume Analysis (Check ALL volume indicators):
+   - Read Relative Volume Percentile, Volume Ratio, OBV, and Smart Money indicators
    - High Relative Volume (>70%) = Strong confirmation ✅
    - Volume Ratio > 1.5x = Strong confirmation ✅
    - OBV rising = Buying pressure ✅
    - Smart Money Buying = Institutional accumulation ✅
+   - If volume indicators contradict signal, note as CONTRADICTING
 
-6. Bollinger Bands:
+6. Bollinger Bands (Check ALL BB values: Upper, Basis, Lower):
+   - Read BB Upper, Basis, and Lower values from TradingView
+   - Compare current price to BB levels (provided in market data)
    - LONG near lower band = Good entry zone ✅
    - SHORT near upper band = Good entry zone ✅
    - Price at bands = Potential reversal ✅
 
-7. Divergence & Reversal Signals:
+7. Divergence & Reversal Signals (Check boolean flags):
+   - Read Bullish Divergence, Bearish Divergence, At Bottom, At Top flags
    - Bullish Divergence + At Bottom = EXCELLENT LONG setup ✅
    - Bearish Divergence + At Top = EXCELLENT SHORT setup ✅
+   - These are STRONG reversal signals - weight them heavily
 
-8. Market Data Analysis:
+8. MFI (Money Flow Index) Analysis:
+   - Read MFI value from TradingView
+   - LONG: MFI < 50 (oversold <20 is EXCELLENT) ✅
+   - SHORT: MFI > 50 (overbought >80 is EXCELLENT) ✅
+   - If MFI contradicts signal direction, note it as a CONTRADICTING indicator
+
+9. Market Data Analysis (Combine with Indicators):
    - Trend Alignment: Use both market trend AND indicator trends (EMA200, Supertrend)
    - Price Position: Combine market support/resistance with Bollinger Bands levels
    - Volume: Use both Relative Volume Percentile AND Volume Ratio for confirmation
 
-9. Risk/Reward: 
+10. Risk/Reward: 
    - APPROVE if R/R >= 1.0 (even 1:1 is acceptable for good setups)
    - Only REJECT if R/R < 0.5 AND multiple indicators are bearish
    - R/R between 0.5-1.0: Evaluate based on indicator alignment above
+
+INDICATOR COUNTING METHOD:
+- Go through EACH indicator value provided above
+- For each indicator, determine: SUPPORT, CONTRADICT, or NEUTRAL
+- Count total: SUPPORT count vs CONTRADICT count
+- If SUPPORT count > CONTRADICT count by 3+: Strong alignment ✅
+- If SUPPORT count = CONTRADICT count: Mixed signals (evaluate carefully)
+- If CONTRADICT count > SUPPORT count by 3+: Weak alignment (may reject) ❌
 
 SIGNAL QUALITY SCORING:
 - EXCELLENT (80-100%): Multiple indicators aligned + good R/R + volume confirmation + divergence/reversal signals
@@ -1756,9 +1812,9 @@ SIGNAL QUALITY SCORING:
 
 REJECTION CRITERIA (only reject if MULTIPLE red flags):
 - Risk/Reward < 0.5 AND
-- Entry price >5% away from current market price AND
 - Signal contradicts STRONG trend (>3% against signal direction) AND
-- Price at unfavorable level (LONG at resistance, SHORT at support)
+- Price at unfavorable level (LONG at resistance, SHORT at support) AND
+- Multiple indicators contradict signal (6+ indicators against signal direction)
 
 ═══════════════════════════════════════════════════════════════
 FINAL DECISION PROCESS (COMBINE BOTH DECISION MAKERS EQUALLY):
@@ -1792,7 +1848,6 @@ COMBINATION FORMULA:
 5. Clamp final score between 0-100%
 
 DECISION RULES:
-- If entry price >15% away: REJECT immediately (confidence 0-30%)
 - If final confidence >= 50%: APPROVE
 - If final confidence 30-49%: APPROVE with low confidence (or REJECT if very weak)
 - If final confidence < 30%: REJECT
@@ -1817,13 +1872,13 @@ Respond in JSON format ONLY with this exact structure:
     "price_suggestion_reasoning": "Why these prices are suggested (if different from original)"
 }}
 
-REASONING REQUIREMENT (Think Like the Expert You Are):
-Your reasoning MUST reflect your 20 years of experience. Mention:
-1. YOUR expert market analysis: "Based on my 20 years of trading experience analyzing the market structure, trends, and order flow, I predict..."
-2. TradingView indicator alignment: "TradingView indicators show X out of Y indicators support this direction..."
-3. Your expert conclusion: "Combining my professional analysis with indicator confirmation, as an experienced trader who consistently achieves 2x monthly returns, I conclude..."
+REASONING REQUIREMENT (Think Like the Institutional Guru You Are):
+Your reasoning MUST reflect your institutional guru-level expertise. Mention:
+1. YOUR expert market analysis: "Based on my 20 years of elite trading experience analyzing market structure, order flow, and institutional behavior, I predict..."
+2. TradingView indicator alignment: "TradingView indicators show X out of Y indicators support this direction. Specifically, I analyzed each indicator value: RSI at [value] indicates..., MACD shows..., etc."
+3. Your expert conclusion: "Combining my professional institutional-level analysis with indicator confirmation, as a trader who consistently achieves 200% monthly returns, I conclude..."
 
-Think like the master trader you are - be confident in your analysis, trust your experience, but verify with indicators.
+Think like the institutional guru trader you are - be confident in your analysis, trust your experience, but verify with indicators. Analyze each indicator value individually, not just their presence.
 
 Note: If you want to suggest price optimizations, include the suggested_* fields. Otherwise, you may omit them or set them to null.
 
@@ -1858,11 +1913,13 @@ OPTIMIZATION RULES (only suggest if BETTER than original):
    - Suggest LOWER TP for SHORT (more profit potential at support)
    - Consider R/R ratio - aim for at least 1.5:1 or better
 
-4. ENTRY 2 (DCA) DISTANCE:
-   - If Entry 1 is optimized, calculate Entry 2 based on optimal distance
-   - LONG: Entry 2 should be LOWER than Entry 1 (typical 3-7% below)
-   - SHORT: Entry 2 should be HIGHER than Entry 1 (typical 3-7% above)
-   - Ensure good spacing between Entry 1 and Entry 2
+4. ENTRY 2 (DCA/Second Entry) VALIDATION:
+   - VALIDATE Entry 2 if provided in signal
+   - LONG: Entry 2 should be LOWER than Entry 1 (typical 3-7% below for DCA)
+   - SHORT: Entry 2 should be HIGHER than Entry 1 (typical 3-7% above for DCA)
+   - If Entry 2 is missing or poorly positioned, calculate optimal Entry 2
+   - If Entry 1 is optimized, calculate Entry 2 based on optimal distance (maintain 3-7% spacing)
+   - Ensure good spacing between Entry 1 and Entry 2 for proper DCA strategy
 
 CALCULATION METHOD:
 - Use current market price, recent high/low, ATR, Bollinger Bands, support/resistance levels
@@ -1889,7 +1946,7 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
             }
         
         logger.info(f"📡 Using Gemini model: {gemini_model_name}")
-        logger.info(f"📤 AI PROMPT (full):\n{prompt}")
+        logger.debug(f"📤 AI PROMPT (full):\n{prompt}")  # Only log at DEBUG level to reduce log size
         start_time = time.time()
         
         # Use threading to implement timeout
@@ -1976,7 +2033,7 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
         response_text = result_container['response'].strip()
         
         # Log full response for debugging
-        logger.info(f"📥 AI RESPONSE (full):\n{response_text}")
+        logger.debug(f"📥 AI RESPONSE (full):\n{response_text}")  # Only log at DEBUG level to reduce log size
         
         # Try to extract JSON from response (AI might wrap it in markdown or text)
         import re
