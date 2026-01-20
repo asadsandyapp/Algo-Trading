@@ -233,11 +233,10 @@ ORDER_COOLDOWN = 60  # seconds
 # Entry size per trade (can be overridden via ENTRY_SIZE_USD environment variable)
 # TESTING MODE: Set to $5 for small timeframe testing (10-15 min charts)
 # PRODUCTION: Change back to $10 after testing
-ENTRY_SIZE_USD = float(os.getenv('ENTRY_SIZE_USD', '5.0'))  # Default: $5 for testing, change to 10.0 for production
+ENTRY_SIZE_USD = float(os.getenv('ENTRY_SIZE_USD', '10.0'))  # Default: $10 per entry
 # Leverage (can be overridden via LEVERAGE environment variable)
-# TESTING MODE: Set to 5X for safer testing
-# PRODUCTION: Change back to 20X after testing
-LEVERAGE = int(os.getenv('LEVERAGE', '5'))  # Default: 5X for testing, change to 20 for production
+# Default: 10X leverage
+LEVERAGE = int(os.getenv('LEVERAGE', '10'))  # Default: 10X leverage
 TOTAL_ENTRIES = 2  # Primary entry + DCA entry
 
 # Track active trades per symbol
@@ -1130,8 +1129,8 @@ def format_price_precision(price, tick_size):
 
 
 def calculate_quantity(entry_price, symbol_info):
-    """Calculate quantity based on $10 per entry with 20X leverage"""
-    # Position value = Entry size * Leverage = $10 * 20 = $200
+    """Calculate quantity based on entry size and leverage"""
+    # Position value = Entry size * Leverage (e.g., $10 * 10X = $100)
     position_value = ENTRY_SIZE_USD * LEVERAGE
     
     # Quantity = Position value / Entry price
@@ -1151,7 +1150,20 @@ def calculate_quantity(entry_price, symbol_info):
         # Re-format after setting to min_qty to ensure precision
         quantity = format_quantity_precision(quantity, step_size)
     
-    logger.info(f"Calculated quantity: {quantity} (Position value: ${position_value} @ ${entry_price}, step_size: {step_size})")
+    # Binance requires minimum notional of $100 (quantity * price >= 100)
+    min_notional = 100.0
+    actual_notional = quantity * entry_price
+    if actual_notional < min_notional:
+        # Adjust quantity to meet minimum notional
+        quantity = min_notional / entry_price
+        quantity = format_quantity_precision(quantity, step_size)
+        # Ensure still meets min_qty
+        if quantity < min_qty:
+            quantity = min_qty
+            quantity = format_quantity_precision(quantity, step_size)
+        logger.warning(f"Adjusted quantity to meet minimum notional: ${actual_notional:.2f} -> ${quantity * entry_price:.2f}")
+    
+    logger.info(f"Calculated quantity: {quantity} (Position value: ${position_value} @ ${entry_price}, Notional: ${quantity * entry_price:.2f}, step_size: {step_size})")
     return quantity
 
 
@@ -1839,7 +1851,7 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
 
 
 def create_limit_order(signal_data):
-    """Create a Binance Futures limit order with $10 per entry and 20X leverage"""
+    """Create a Binance Futures limit order with configurable entry size and leverage"""
     try:
         # Extract signal data
         token = signal_data.get('token')
@@ -2217,7 +2229,7 @@ def create_limit_order(signal_data):
         if not symbol_info:
             return {'success': False, 'error': f'Symbol {symbol} not found'}
         
-        # Set leverage to 20X
+        # Set leverage
         try:
             client.futures_change_leverage(symbol=symbol, leverage=LEVERAGE)
             logger.info(f"Set leverage to {LEVERAGE}X for {symbol}")
@@ -2233,7 +2245,7 @@ def create_limit_order(signal_data):
         if dca_entry_price:
             dca_entry_price = format_price_precision(dca_entry_price, tick_size)
         
-        # Calculate quantity based on $10 per entry with 20X leverage
+        # Calculate quantity based on entry size and leverage
         primary_quantity = calculate_quantity(primary_entry_price, symbol_info)
         dca_quantity = calculate_quantity(dca_entry_price, symbol_info) if dca_entry_price else primary_quantity
         
@@ -2311,7 +2323,7 @@ def create_limit_order(signal_data):
                 send_slack_alert(
                     error_type="Primary Entry Order Creation Failed",
                     message=f"{e.message} (Code: {e.code})",
-                    details={'Error_Code': e.code, 'Entry_Price': entry_price, 'Quantity': qty, 'Side': side},
+                    details={'Error_Code': e.code, 'Entry_Price': entry_price, 'Quantity': primary_quantity, 'Side': side},
                     symbol=symbol,
                     severity='ERROR'
                 )
@@ -2321,7 +2333,7 @@ def create_limit_order(signal_data):
                 send_slack_alert(
                     error_type="Primary Entry Order Creation Error",
                     message=str(e),
-                    details={'Entry_Price': entry_price, 'Quantity': qty, 'Side': side},
+                    details={'Entry_Price': entry_price, 'Quantity': primary_quantity, 'Side': side},
                     symbol=symbol,
                     severity='ERROR'
                 )
@@ -2356,7 +2368,7 @@ def create_limit_order(signal_data):
                     send_slack_alert(
                         error_type="DCA Entry Order Creation Failed",
                         message=f"{e.message} (Code: {e.code})",
-                        details={'Error_Code': e.code, 'DCA_Price': dca_price, 'Quantity': dca_qty, 'Side': side},
+                        details={'Error_Code': e.code, 'DCA_Price': dca_entry_price, 'Quantity': dca_quantity, 'Side': side},
                         symbol=symbol,
                         severity='WARNING'
                     )
@@ -2366,7 +2378,7 @@ def create_limit_order(signal_data):
                     send_slack_alert(
                         error_type="DCA Entry Order Creation Error",
                         message=str(e),
-                        details={'DCA_Price': dca_price, 'Quantity': dca_qty, 'Side': side},
+                        details={'DCA_Price': dca_entry_price, 'Quantity': dca_quantity, 'Side': side},
                         symbol=symbol,
                         severity='WARNING'
                     )
