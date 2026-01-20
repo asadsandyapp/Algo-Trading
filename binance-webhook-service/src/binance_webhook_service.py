@@ -18,6 +18,17 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 import threading
 
+# Load environment variables from .env file (if present)
+# This allows manual testing; systemd service uses EnvironmentFile which takes precedence
+try:
+    from dotenv import load_dotenv
+    # Load .env from service root directory (parent of src/)
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+    load_dotenv(env_path)
+except ImportError:
+    # python-dotenv not installed, skip (systemd will load via EnvironmentFile)
+    pass
+
 # Try to import Gemini API
 try:
     import google.generativeai as genai
