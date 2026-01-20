@@ -95,32 +95,71 @@ ENABLE_AI_PRICE_SUGGESTIONS = os.getenv('ENABLE_AI_PRICE_SUGGESTIONS', 'true').l
 
 # Initialize Gemini API if available and configured
 gemini_client = None
+gemini_model_name = None
+# Free tier models (in order of preference - fastest/cheapest first)
+GEMINI_MODEL_NAMES = [
+    'gemini-1.5-flash-latest',  # Free tier - fastest model
+    'gemini-1.5-flash',         # Alternative naming
+    'gemini-1.5-pro-latest',    # Free tier - more capable
+    'gemini-1.5-pro',           # Alternative naming
+    'gemini-1.0-pro-latest',    # Free tier alternative
+    'gemini-1.0-pro',           # Alternative naming
+]
+
 if GEMINI_AVAILABLE and GEMINI_API_KEY and ENABLE_AI_VALIDATION:
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        # Try different model names - API version and model names vary by region/account
-        # Common model names: gemini-pro, gemini-1.5-pro, gemini-1.5-flash, gemini-1.0-pro
-        model_names = [
-            os.getenv('GEMINI_MODEL', 'gemini-pro'),  # Try user-specified or default
-            'gemini-pro',  # Original model name (still works for some accounts)
-            'gemini-1.0-pro',  # Alternative naming
-            'gemini-1.5-pro',  # Newer model
-            'gemini-1.5-flash'  # Fastest model
-        ]
         
-        gemini_client = None
+        # First, try to get list of available models from API
+        available_models = []
+        try:
+            models = genai.list_models()
+            available_models = [m.name.split('/')[-1] for m in models if 'generateContent' in m.supported_generation_methods]
+            logger.info(f"Found {len(available_models)} available Gemini models: {', '.join(available_models[:5])}...")
+        except Exception as e:
+            logger.debug(f"Could not list available models: {e}. Will try common model names.")
+        
+        # Use user-specified model first, then available models, then fallback list
+        user_model = os.getenv('GEMINI_MODEL', None)
+        if user_model:
+            model_names = [user_model]
+        elif available_models:
+            # Prefer free tier models from available list
+            free_tier_models = [m for m in available_models if 'flash' in m.lower() or '1.5' in m.lower()]
+            model_names = free_tier_models[:3] if free_tier_models else available_models[:3]
+        else:
+            model_names = GEMINI_MODEL_NAMES
+        
+        # Try to initialize with available models
         for model_name in model_names:
+            if not model_name:
+                continue
             try:
                 gemini_client = genai.GenerativeModel(model_name)
-                # Test if model works by checking if it's accessible
-                logger.info(f"Gemini API initialized successfully for signal validation (using {model_name})")
+                gemini_model_name = model_name
+                logger.info(f"✅ Gemini API initialized successfully (using {model_name})")
                 break
             except Exception as e:
                 logger.debug(f"Failed to initialize {model_name}: {e}")
                 continue
         
+        # If still no client, try fallback models
         if not gemini_client:
-            logger.warning(f"Failed to initialize any Gemini model. Tried: {', '.join(model_names)}. AI validation will be disabled.")
+            logger.info("Trying fallback model names...")
+            for model_name in GEMINI_MODEL_NAMES:
+                if model_name in model_names:  # Skip if already tried
+                    continue
+                try:
+                    gemini_client = genai.GenerativeModel(model_name)
+                    gemini_model_name = model_name
+                    logger.info(f"✅ Gemini API initialized successfully (using fallback {model_name})")
+                    break
+                except Exception as e:
+                    logger.debug(f"Failed to initialize {model_name}: {e}")
+                    continue
+        
+        if not gemini_client:
+            logger.warning(f"Failed to initialize any Gemini model. Tried: {', '.join([m for m in model_names if m])}")
             logger.warning("Tip: Check your API key and available models at https://aistudio.google.com/app/apikey")
     except Exception as e:
         logger.warning(f"Failed to configure Gemini API: {e}. AI validation will be disabled.")
@@ -1154,14 +1193,26 @@ def calculate_quantity(entry_price, symbol_info):
     min_notional = 100.0
     actual_notional = quantity * entry_price
     if actual_notional < min_notional:
-        # Adjust quantity to meet minimum notional
-        quantity = min_notional / entry_price
-        quantity = format_quantity_precision(quantity, step_size)
+        # Adjust quantity to meet minimum notional - round UP to ensure we exceed minimum
+        import math
+        required_quantity = min_notional / entry_price
+        # Round UP to next step_size increment (always round up, never down)
+        quantity = math.ceil(required_quantity / step_size) * step_size
         # Ensure still meets min_qty
         if quantity < min_qty:
             quantity = min_qty
+        # Format to ensure proper precision (but don't round down)
+        # Use ceil again after formatting to ensure we don't lose precision
+        formatted_qty = format_quantity_precision(quantity, step_size)
+        formatted_notional = formatted_qty * entry_price
+        if formatted_notional < min_notional:
+            # If formatted quantity still doesn't meet minimum, add one more step
+            quantity = formatted_qty + step_size
             quantity = format_quantity_precision(quantity, step_size)
-        logger.warning(f"Adjusted quantity to meet minimum notional: ${actual_notional:.2f} -> ${quantity * entry_price:.2f}")
+        else:
+            quantity = formatted_qty
+        final_notional = quantity * entry_price
+        logger.warning(f"Adjusted quantity to meet minimum notional: ${actual_notional:.2f} -> ${final_notional:.2f} (quantity: {quantity})")
     
     logger.info(f"Calculated quantity: {quantity} (Position value: ${position_value} @ ${entry_price}, Notional: ${quantity * entry_price:.2f}, step_size: {step_size})")
     return quantity
@@ -1551,10 +1602,33 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
         
         def call_api():
             try:
+                # Try current model first
                 response = gemini_client.generate_content(prompt)
                 result_container['response'] = response.text
             except Exception as e:
-                result_container['error'] = str(e)
+                error_msg = str(e)
+                # If model not found error, try other models
+                if 'not found' in error_msg.lower() or 'not supported' in error_msg.lower():
+                    logger.warning(f"Model {gemini_model_name} failed, trying alternative models...")
+                    # Try other models
+                    for alt_model_name in GEMINI_MODEL_NAMES:
+                        if alt_model_name == gemini_model_name:
+                            continue
+                        try:
+                            alt_client = genai.GenerativeModel(alt_model_name)
+                            response = alt_client.generate_content(prompt)
+                            result_container['response'] = response.text
+                            logger.info(f"Successfully used alternative model: {alt_model_name}")
+                            # Update global client for future use
+                            global gemini_client, gemini_model_name
+                            gemini_client = alt_client
+                            gemini_model_name = alt_model_name
+                            return
+                        except Exception as alt_e:
+                            logger.debug(f"Alternative model {alt_model_name} also failed: {alt_e}")
+                            continue
+                # If no alternative worked, return original error
+                result_container['error'] = error_msg
         
         api_thread = threading.Thread(target=call_api, daemon=True)
         api_thread.start()
