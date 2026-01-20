@@ -1328,22 +1328,22 @@ def validate_signal_with_ai(signal_data):
         
         indicator_info = f"""
 TRADINGVIEW INDICATOR VALUES (from your script):
-- RSI: {rsi_val:.2f if rsi_val else 'N/A'} (Oversold: <30, Overbought: >85)
-- MACD Line: {macd_line:.4f if macd_line else 'N/A'}
-- MACD Signal: {macd_signal:.4f if macd_signal else 'N/A'}
-- MACD Histogram: {macd_hist:.4f if macd_hist else 'N/A'} (Positive = bullish momentum)
-- Stochastic K: {stoch_k:.2f if stoch_k else 'N/A'} (Oversold: <20, Overbought: >80)
-- Stochastic D: {stoch_d:.2f if stoch_d else 'N/A'}
-- EMA 200: ${ema200_val:,.8f if ema200_val else 'N/A'} (Price {'ABOVE' if price_above_ema200 else 'BELOW'} EMA200 = {'BULLISH' if price_above_ema200 else 'BEARISH'} trend)
-- ATR: {atr_val:.8f if atr_val else 'N/A'} (Volatility measure)
-- Bollinger Bands: Upper=${bb_upper:,.8f if bb_upper else 'N/A'}, Basis=${bb_basis:,.8f if bb_basis else 'N/A'}, Lower=${bb_lower:,.8f if bb_lower else 'N/A'}
-- Smart Money Volume (Normalized): {smv_norm:.2f if smv_norm else 'N/A'} (Positive = buying pressure)
-- Cumulative SMV: {cum_smv:.2f if cum_smv else 'N/A'} ({'BUYING' if smart_money_buy else 'SELLING' if smart_money_sell else 'NEUTRAL'} pressure)
-- Supertrend: ${supertrend_val:,.8f if supertrend_val else 'N/A'} ({'BULLISH' if supertrend_bull else 'BEARISH'})
-- OBV: {obv_val:.2f if obv_val else 'N/A'} (Rising = buying pressure)
-- Relative Volume Percentile: {rel_vol_pct:.1f if rel_vol_pct else 'N/A'}% (High: >70%, Low: <30%)
-- MFI (Money Flow Index): {mfi_val:.2f if mfi_val else 'N/A'} (Oversold: <20, Overbought: >80)
-- Volume Ratio: {vol_ratio:.2f if vol_ratio else 'N/A'}x (vs average)
+- RSI: {(f'{rsi_val:.2f}' if rsi_val is not None else 'N/A')} (Oversold: <30, Overbought: >85)
+- MACD Line: {(f'{macd_line:.4f}' if macd_line is not None else 'N/A')}
+- MACD Signal: {(f'{macd_signal:.4f}' if macd_signal is not None else 'N/A')}
+- MACD Histogram: {(f'{macd_hist:.4f}' if macd_hist is not None else 'N/A')} (Positive = bullish momentum)
+- Stochastic K: {(f'{stoch_k:.2f}' if stoch_k is not None else 'N/A')} (Oversold: <20, Overbought: >80)
+- Stochastic D: {(f'{stoch_d:.2f}' if stoch_d is not None else 'N/A')}
+- EMA 200: ${(f'{ema200_val:,.8f}' if ema200_val is not None else 'N/A')} (Price {'ABOVE' if price_above_ema200 else 'BELOW'} EMA200 = {'BULLISH' if price_above_ema200 else 'BEARISH'} trend)
+- ATR: {(f'{atr_val:.8f}' if atr_val is not None else 'N/A')} (Volatility measure)
+- Bollinger Bands: Upper=${(f'{bb_upper:,.8f}' if bb_upper is not None else 'N/A')}, Basis=${(f'{bb_basis:,.8f}' if bb_basis is not None else 'N/A')}, Lower=${(f'{bb_lower:,.8f}' if bb_lower is not None else 'N/A')}
+- Smart Money Volume (Normalized): {(f'{smv_norm:.2f}' if smv_norm is not None else 'N/A')} (Positive = buying pressure)
+- Cumulative SMV: {(f'{cum_smv:.2f}' if cum_smv is not None else 'N/A')} ({'BUYING' if smart_money_buy else 'SELLING' if smart_money_sell else 'NEUTRAL'} pressure)
+- Supertrend: ${(f'{supertrend_val:,.8f}' if supertrend_val is not None else 'N/A')} ({'BULLISH' if supertrend_bull else 'BEARISH'})
+- OBV: {(f'{obv_val:.2f}' if obv_val is not None else 'N/A')} (Rising = buying pressure)
+- Relative Volume Percentile: {(f'{rel_vol_pct:.1f}' if rel_vol_pct is not None else 'N/A')}% (High: >70%, Low: <30%)
+- MFI (Money Flow Index): {(f'{mfi_val:.2f}' if mfi_val is not None else 'N/A')} (Oversold: <20, Overbought: >80)
+- Volume Ratio: {(f'{vol_ratio:.2f}' if vol_ratio is not None else 'N/A')}x (vs average)
 - Bullish Divergence: {'YES ✅' if has_bull_div else 'NO'}
 - Bearish Divergence: {'YES ✅' if has_bear_div else 'NO'}
 - At Bottom/Top: {'BOTTOM ✅' if at_bottom else 'TOP ✅' if at_top else 'MID-RANGE'}"""
