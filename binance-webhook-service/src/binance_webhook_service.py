@@ -1381,7 +1381,7 @@ Signal Details:
 - Entry Price: ${entry_price:,.8f}
 - Stop Loss: ${stop_loss:,.8f} (if provided)
 - Take Profit: ${take_profit:,.8f} (if provided)
-- Risk/Reward Ratio: {risk_reward_ratio:.2f if risk_reward_ratio else 'N/A'}{market_info}{indicator_info}
+- Risk/Reward Ratio: {(f'{risk_reward_ratio:.2f}' if risk_reward_ratio is not None else 'N/A')}{market_info}{indicator_info}
 
 COMPREHENSIVE TECHNICAL ANALYSIS EVALUATION:
 Use BOTH the real-time market data AND the TradingView indicator values above to evaluate this signal.
