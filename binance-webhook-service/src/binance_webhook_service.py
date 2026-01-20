@@ -1622,6 +1622,7 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
             }
         
         logger.info(f"📡 Using Gemini model: {gemini_model_name}")
+        logger.info(f"📤 AI PROMPT (full):\n{prompt}")
         start_time = time.time()
         
         # Use threading to implement timeout
@@ -1706,6 +1707,9 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
         
         # Parse response
         response_text = result_container['response'].strip()
+        
+        # Log full response for debugging
+        logger.info(f"📥 AI RESPONSE (full):\n{response_text}")
         
         # Try to extract JSON from response (AI might wrap it in markdown or text)
         import re
