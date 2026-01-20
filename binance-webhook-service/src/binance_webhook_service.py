@@ -18,6 +18,13 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 import threading
 
+# Try to import Gemini API
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+
 #Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -29,6 +36,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Log if Gemini is not available
+if not GEMINI_AVAILABLE:
+    logger.warning("google-generativeai not available. AI validation will be disabled. Install with: pip install google-generativeai")
+
 app = Flask(__name__)
 
 # Configuration from environment variables
@@ -38,6 +49,27 @@ BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET', '')
 BINANCE_TESTNET = os.getenv('BINANCE_TESTNET', 'false').lower() == 'true'
 BINANCE_SUB_ACCOUNT_EMAIL = os.getenv('BINANCE_SUB_ACCOUNT_EMAIL', '')  # For sub-account trading
 SLACK_WEBHOOK_URL = os.getenv('SLACK_WEBHOOK_URL', '')  # Slack webhook URL for error notifications
+
+# AI Validation Configuration
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+ENABLE_AI_VALIDATION = os.getenv('ENABLE_AI_VALIDATION', 'true').lower() == 'true'
+AI_VALIDATION_MIN_CONFIDENCE = float(os.getenv('AI_VALIDATION_MIN_CONFIDENCE', '50'))
+ENABLE_AI_PRICE_SUGGESTIONS = os.getenv('ENABLE_AI_PRICE_SUGGESTIONS', 'true').lower() == 'true'  # Manual review mode
+
+# Initialize Gemini API if available and configured
+gemini_client = None
+if GEMINI_AVAILABLE and GEMINI_API_KEY and ENABLE_AI_VALIDATION:
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        gemini_client = genai.GenerativeModel('gemini-pro')
+        logger.info("Gemini API initialized successfully for signal validation")
+    except Exception as e:
+        logger.warning(f"Failed to initialize Gemini API: {e}. AI validation will be disabled.")
+        gemini_client = None
+elif ENABLE_AI_VALIDATION and not GEMINI_API_KEY:
+    logger.warning("ENABLE_AI_VALIDATION is true but GEMINI_API_KEY is not set. AI validation will be disabled.")
+elif ENABLE_AI_VALIDATION and not GEMINI_AVAILABLE:
+    logger.warning("AI validation is enabled but google-generativeai package is not installed. Install it with: pip install google-generativeai")
 
 def send_slack_alert(error_type, message, details=None, symbol=None, severity='ERROR'):
     """
@@ -139,8 +171,14 @@ recent_orders = {}
 ORDER_COOLDOWN = 60  # seconds
 
 # Trading configuration
-ENTRY_SIZE_USD = 10.0  # $10 per entry
-LEVERAGE = 20  # 20X leverage
+# Entry size per trade (can be overridden via ENTRY_SIZE_USD environment variable)
+# TESTING MODE: Set to $5 for small timeframe testing (10-15 min charts)
+# PRODUCTION: Change back to $10 after testing
+ENTRY_SIZE_USD = float(os.getenv('ENTRY_SIZE_USD', '5.0'))  # Default: $5 for testing, change to 10.0 for production
+# Leverage (can be overridden via LEVERAGE environment variable)
+# TESTING MODE: Set to 5X for safer testing
+# PRODUCTION: Change back to 20X after testing
+LEVERAGE = int(os.getenv('LEVERAGE', '5'))  # Default: 5X for testing, change to 20 for production
 TOTAL_ENTRIES = 2  # Primary entry + DCA entry
 
 # Track active trades per symbol
@@ -165,7 +203,8 @@ def delayed_tp_creation(symbol, delay_seconds=5):
     thread.start()
 
 def create_tp_if_needed(symbol, trade_info):
-    """Create TP order if position exists and TP is stored but not created yet"""
+    """Create TP order if position exists and TP is stored but not created yet
+    NOTE: This function does NOT call AI validation - it only creates TP orders for existing positions"""
     if 'tp_price' not in trade_info:
         return False  # No TP to create
     
@@ -444,6 +483,7 @@ def create_tp_if_needed(symbol, trade_info):
 # Optimized to minimize API calls and stay within Binance rate limits
 def create_missing_tp_orders():
     """Background function to automatically create TP orders for positions with stored TP details
+    NOTE: This background thread does NOT call AI validation - it only creates TP orders for existing positions
     Optimized to reduce API calls:
     - Only checks symbols with stored TP details (skips symbols without TP config)
     - Uses longer intervals to stay well within Binance rate limits
@@ -1056,6 +1096,682 @@ def calculate_quantity(entry_price, symbol_info):
     return quantity
 
 
+# Validation cache to avoid duplicate API calls
+validation_cache = {}
+VALIDATION_CACHE_TTL = 300  # 5 minutes
+
+
+def validate_signal_with_ai(signal_data):
+    """
+    Validate trading signal using AI (Google Gemini API)
+    
+    Args:
+        signal_data: Dictionary containing signal information
+        
+    Returns:
+        dict: {
+            'is_valid': bool,
+            'confidence_score': float (0-100),
+            'reasoning': str,
+            'risk_level': str (LOW/MEDIUM/HIGH),
+            'error': str (if validation failed)
+        }
+    """
+    # Check if AI validation is enabled
+    if not ENABLE_AI_VALIDATION:
+        logger.debug("AI validation is disabled, skipping validation")
+        return {
+            'is_valid': True,
+            'confidence_score': 100.0,
+            'reasoning': 'AI validation disabled',
+            'risk_level': 'UNKNOWN'
+        }
+    
+    # Check if Gemini client is available
+    if not gemini_client:
+        logger.warning("Gemini client not available, proceeding without AI validation (fail-open)")
+        return {
+            'is_valid': True,
+            'confidence_score': 100.0,
+            'reasoning': 'AI validation unavailable, proceeding',
+            'risk_level': 'UNKNOWN'
+        }
+    
+    # Extract signal details
+    symbol = format_symbol(signal_data.get('symbol', ''))
+    signal_side = signal_data.get('signal_side', '').upper()
+    entry_price = safe_float(signal_data.get('entry_price'), default=None)
+    stop_loss = safe_float(signal_data.get('stop_loss'), default=None)
+    take_profit = safe_float(signal_data.get('take_profit'), default=None)
+    timeframe = signal_data.get('timeframe', 'Unknown')
+    
+    # Extract indicator values from TradingView script (if provided)
+    indicators = signal_data.get('indicators', {})
+    
+    # Check cache first
+    cache_key = f"{symbol}_{signal_side}_{entry_price}_{stop_loss}_{take_profit}"
+    current_time = time.time()
+    if cache_key in validation_cache:
+        cached_result, cache_time = validation_cache[cache_key]
+        if current_time - cache_time < VALIDATION_CACHE_TTL:
+            logger.debug(f"Using cached validation result for {symbol}")
+            return cached_result
+    
+    # Validate required fields
+    if not entry_price or entry_price <= 0:
+        logger.warning(f"Cannot validate signal: invalid entry_price")
+        return {
+            'is_valid': True,  # Fail-open: proceed if we can't validate
+            'confidence_score': 50.0,
+            'reasoning': 'Invalid entry price, proceeding without validation',
+            'risk_level': 'MEDIUM'
+        }
+    
+    # Calculate risk/reward ratio
+    risk_reward_ratio = None
+    if stop_loss and take_profit:
+        if signal_side == 'LONG':
+            risk = abs(entry_price - stop_loss)
+            reward = abs(take_profit - entry_price)
+        else:  # SHORT
+            risk = abs(stop_loss - entry_price)
+            reward = abs(entry_price - take_profit)
+        
+        if risk > 0:
+            risk_reward_ratio = reward / risk
+    
+    # Fetch real-time market data for technical analysis
+    market_data = {}
+    try:
+        if client:
+            # Get current market price
+            ticker = client.futures_symbol_ticker(symbol=symbol)
+            current_price = float(ticker.get('price', 0))
+            market_data['current_price'] = current_price
+            
+            # Calculate price distance from entry
+            if current_price > 0:
+                price_distance_pct = abs((entry_price - current_price) / current_price) * 100
+                market_data['price_distance_pct'] = price_distance_pct
+                market_data['entry_vs_current'] = 'ABOVE' if entry_price > current_price else 'BELOW'
+            
+            # Get recent candles for technical analysis (last 50 candles)
+            # Map timeframe to Binance interval
+            timeframe_map = {
+                '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+                '1h': '1h', '2h': '2h', '4h': '4h', '6h': '6h', '8h': '8h', '12h': '12h',
+                '1d': '1d', '3d': '3d', '1w': '1w', '1M': '1M'
+            }
+            interval = timeframe_map.get(timeframe.lower(), '1h')  # Default to 1h
+            
+            try:
+                klines = client.futures_klines(symbol=symbol, interval=interval, limit=50)
+                if klines:
+                    # Extract OHLCV data
+                    closes = [float(k[4]) for k in klines]
+                    highs = [float(k[2]) for k in klines]
+                    lows = [float(k[3]) for k in klines]
+                    volumes = [float(k[5]) for k in klines]
+                    
+                    # Calculate technical indicators
+                    # Trend analysis
+                    recent_closes = closes[-20:]  # Last 20 candles
+                    if len(recent_closes) >= 2:
+                        price_change = ((recent_closes[-1] - recent_closes[0]) / recent_closes[0]) * 100
+                        market_data['recent_trend_pct'] = price_change
+                        market_data['trend_direction'] = 'UP' if price_change > 0.5 else 'DOWN' if price_change < -0.5 else 'SIDEWAYS'
+                    
+                    # Support/Resistance levels
+                    market_data['recent_high'] = max(highs[-20:]) if len(highs) >= 20 else max(highs)
+                    market_data['recent_low'] = min(lows[-20:]) if len(lows) >= 20 else min(lows)
+                    
+                    # Volume analysis
+                    avg_volume = sum(volumes[-20:]) / len(volumes[-20:]) if len(volumes) >= 20 else sum(volumes) / len(volumes)
+                    current_volume = volumes[-1] if volumes else 0
+                    market_data['volume_ratio'] = current_volume / avg_volume if avg_volume > 0 else 1.0
+                    market_data['volume_status'] = 'HIGH' if market_data['volume_ratio'] > 1.5 else 'NORMAL' if market_data['volume_ratio'] > 0.5 else 'LOW'
+                    
+                    # Price position relative to recent range
+                    if market_data['recent_high'] > market_data['recent_low']:
+                        price_position = ((entry_price - market_data['recent_low']) / 
+                                         (market_data['recent_high'] - market_data['recent_low'])) * 100
+                        market_data['price_position_in_range'] = price_position
+                        if price_position > 80:
+                            market_data['price_level'] = 'NEAR_RESISTANCE'
+                        elif price_position < 20:
+                            market_data['price_level'] = 'NEAR_SUPPORT'
+                        else:
+                            market_data['price_level'] = 'MID_RANGE'
+                    
+                    # Volatility (ATR-like calculation)
+                    if len(highs) >= 14 and len(lows) >= 14:
+                        true_ranges = [highs[i] - lows[i] for i in range(max(0, len(highs)-14), len(highs))]
+                        avg_true_range = sum(true_ranges) / len(true_ranges) if true_ranges else 0
+                        volatility_pct = (avg_true_range / current_price) * 100 if current_price > 0 else 0
+                        market_data['volatility_pct'] = volatility_pct
+                        market_data['volatility_status'] = 'HIGH' if volatility_pct > 2 else 'MODERATE' if volatility_pct > 1 else 'LOW'
+                    
+            except Exception as e:
+                logger.debug(f"Could not fetch klines for {symbol}: {e}")
+                market_data['klines_error'] = str(e)
+    except Exception as e:
+        logger.debug(f"Could not fetch market data for {symbol}: {e}")
+        market_data['error'] = str(e)
+    
+    # Build indicator values section for AI prompt
+    indicator_info = ""
+    if indicators:
+        rsi_val = safe_float(indicators.get('rsi'), default=None)
+        macd_line = safe_float(indicators.get('macd_line'), default=None)
+        macd_signal = safe_float(indicators.get('macd_signal'), default=None)
+        macd_hist = safe_float(indicators.get('macd_histogram'), default=None)
+        stoch_k = safe_float(indicators.get('stoch_k'), default=None)
+        stoch_d = safe_float(indicators.get('stoch_d'), default=None)
+        ema200_val = safe_float(indicators.get('ema200'), default=None)
+        atr_val = safe_float(indicators.get('atr'), default=None)
+        bb_upper = safe_float(indicators.get('bb_upper'), default=None)
+        bb_basis = safe_float(indicators.get('bb_basis'), default=None)
+        bb_lower = safe_float(indicators.get('bb_lower'), default=None)
+        smv_norm = safe_float(indicators.get('smv_normalized'), default=None)
+        cum_smv = safe_float(indicators.get('cum_smv'), default=None)
+        supertrend_val = safe_float(indicators.get('supertrend'), default=None)
+        supertrend_bull = indicators.get('supertrend_bull', False)
+        obv_val = safe_float(indicators.get('obv'), default=None)
+        rel_vol_pct = safe_float(indicators.get('relative_volume_percentile'), default=None)
+        mfi_val = safe_float(indicators.get('mfi'), default=None)
+        vol_ratio = safe_float(indicators.get('volume_ratio'), default=None)
+        has_bull_div = indicators.get('has_bullish_divergence', False)
+        has_bear_div = indicators.get('has_bearish_divergence', False)
+        at_bottom = indicators.get('at_bottom', False)
+        at_top = indicators.get('at_top', False)
+        smart_money_buy = indicators.get('smart_money_buying', False)
+        smart_money_sell = indicators.get('smart_money_selling', False)
+        price_above_ema200 = indicators.get('price_above_ema200', False)
+        price_below_ema200 = indicators.get('price_below_ema200', False)
+        
+        indicator_info = f"""
+TRADINGVIEW INDICATOR VALUES (from your script):
+- RSI: {rsi_val:.2f if rsi_val else 'N/A'} (Oversold: <30, Overbought: >85)
+- MACD Line: {macd_line:.4f if macd_line else 'N/A'}
+- MACD Signal: {macd_signal:.4f if macd_signal else 'N/A'}
+- MACD Histogram: {macd_hist:.4f if macd_hist else 'N/A'} (Positive = bullish momentum)
+- Stochastic K: {stoch_k:.2f if stoch_k else 'N/A'} (Oversold: <20, Overbought: >80)
+- Stochastic D: {stoch_d:.2f if stoch_d else 'N/A'}
+- EMA 200: ${ema200_val:,.8f if ema200_val else 'N/A'} (Price {'ABOVE' if price_above_ema200 else 'BELOW'} EMA200 = {'BULLISH' if price_above_ema200 else 'BEARISH'} trend)
+- ATR: {atr_val:.8f if atr_val else 'N/A'} (Volatility measure)
+- Bollinger Bands: Upper=${bb_upper:,.8f if bb_upper else 'N/A'}, Basis=${bb_basis:,.8f if bb_basis else 'N/A'}, Lower=${bb_lower:,.8f if bb_lower else 'N/A'}
+- Smart Money Volume (Normalized): {smv_norm:.2f if smv_norm else 'N/A'} (Positive = buying pressure)
+- Cumulative SMV: {cum_smv:.2f if cum_smv else 'N/A'} ({'BUYING' if smart_money_buy else 'SELLING' if smart_money_sell else 'NEUTRAL'} pressure)
+- Supertrend: ${supertrend_val:,.8f if supertrend_val else 'N/A'} ({'BULLISH' if supertrend_bull else 'BEARISH'})
+- OBV: {obv_val:.2f if obv_val else 'N/A'} (Rising = buying pressure)
+- Relative Volume Percentile: {rel_vol_pct:.1f if rel_vol_pct else 'N/A'}% (High: >70%, Low: <30%)
+- MFI (Money Flow Index): {mfi_val:.2f if mfi_val else 'N/A'} (Oversold: <20, Overbought: >80)
+- Volume Ratio: {vol_ratio:.2f if vol_ratio else 'N/A'}x (vs average)
+- Bullish Divergence: {'YES ✅' if has_bull_div else 'NO'}
+- Bearish Divergence: {'YES ✅' if has_bear_div else 'NO'}
+- At Bottom/Top: {'BOTTOM ✅' if at_bottom else 'TOP ✅' if at_top else 'MID-RANGE'}"""
+    
+    # Build prompt for AI - Enhanced with real market data AND indicator values for technical analysis
+    market_info = ""
+    if market_data.get('current_price'):
+        market_info = f"""
+REAL-TIME MARKET DATA (from Binance API):
+- Current Market Price: ${market_data['current_price']:,.8f}
+- Entry Price vs Current: Entry is {market_data.get('entry_vs_current', 'N/A')} current price
+- Price Distance: {market_data.get('price_distance_pct', 0):.2f}% from current price"""
+        
+        if market_data.get('trend_direction'):
+            market_info += f"""
+- Recent Trend ({timeframe}): {market_data.get('trend_direction', 'N/A')} ({market_data.get('recent_trend_pct', 0):+.2f}%)
+- Price Range (last 20 candles): ${market_data.get('recent_low', 0):,.8f} - ${market_data.get('recent_high', 0):,.8f}
+- Entry Position: {market_data.get('price_level', 'N/A')} ({market_data.get('price_position_in_range', 0):.1f}% of range)
+- Volume Status: {market_data.get('volume_status', 'N/A')} (current/avg ratio: {market_data.get('volume_ratio', 1):.2f}x)
+- Volatility: {market_data.get('volatility_status', 'N/A')} ({market_data.get('volatility_pct', 0):.2f}%)"""
+    
+    prompt = f"""You are an expert cryptocurrency trading analyst evaluating a trading signal from an automated system.
+
+IMPORTANT CONTEXT:
+- This signal comes from a TradingView indicator that already filters signals
+- The system has a 65% win rate, so signals are generally reliable
+- Your role is to catch OBVIOUSLY bad signals, not to be overly conservative
+- When in doubt, APPROVE the signal (fail-open design)
+- You now have REAL-TIME market data for proper technical analysis
+
+Signal Details:
+- Symbol: {symbol}
+- Direction: {signal_side}
+- Timeframe: {timeframe}
+- Entry Price: ${entry_price:,.8f}
+- Stop Loss: ${stop_loss:,.8f} (if provided)
+- Take Profit: ${take_profit:,.8f} (if provided)
+- Risk/Reward Ratio: {risk_reward_ratio:.2f if risk_reward_ratio else 'N/A'}{market_info}{indicator_info}
+
+COMPREHENSIVE TECHNICAL ANALYSIS EVALUATION:
+Use BOTH the real-time market data AND the TradingView indicator values above to evaluate this signal.
+
+INDICATOR-BASED ANALYSIS:
+1. RSI Analysis:
+   - LONG signals: RSI < 50 is GOOD (oversold <30 is EXCELLENT) ✅
+   - SHORT signals: RSI > 50 is GOOD (overbought >85 is EXCELLENT) ✅
+   - RSI divergence (bullish/bearish) = STRONG confirmation ✅
+
+2. MACD Analysis:
+   - MACD Line > Signal Line = Bullish momentum ✅
+   - MACD Histogram positive = Bullish momentum ✅
+   - LONG: MACD bullish = GOOD ✅
+   - SHORT: MACD bearish = GOOD ✅
+
+3. Stochastic Analysis:
+   - LONG: Stoch K/D < 50 (oversold <20 is EXCELLENT) ✅
+   - SHORT: Stoch K/D > 50 (overbought >80 is EXCELLENT) ✅
+
+4. Trend Filters (EMA 200 & Supertrend):
+   - LONG: Price above EMA200 AND Supertrend bullish = STRONG trend ✅
+   - SHORT: Price below EMA200 AND Supertrend bearish = STRONG trend ✅
+   - Contradicting trend = Evaluate carefully but APPROVE if other factors good
+
+5. Volume Analysis:
+   - High Relative Volume (>70%) = Strong confirmation ✅
+   - Volume Ratio > 1.5x = Strong confirmation ✅
+   - OBV rising = Buying pressure ✅
+   - Smart Money Buying = Institutional accumulation ✅
+
+6. Bollinger Bands:
+   - LONG near lower band = Good entry zone ✅
+   - SHORT near upper band = Good entry zone ✅
+   - Price at bands = Potential reversal ✅
+
+7. Divergence & Reversal Signals:
+   - Bullish Divergence + At Bottom = EXCELLENT LONG setup ✅
+   - Bearish Divergence + At Top = EXCELLENT SHORT setup ✅
+
+8. Market Data Analysis:
+   - Trend Alignment: Use both market trend AND indicator trends (EMA200, Supertrend)
+   - Price Position: Combine market support/resistance with Bollinger Bands levels
+   - Volume: Use both Relative Volume Percentile AND Volume Ratio for confirmation
+
+9. Risk/Reward: 
+   - APPROVE if R/R >= 1.0 (even 1:1 is acceptable for good setups)
+   - Only REJECT if R/R < 0.5 AND multiple indicators are bearish
+   - R/R between 0.5-1.0: Evaluate based on indicator alignment above
+
+SIGNAL QUALITY SCORING:
+- EXCELLENT (80-100%): Multiple indicators aligned + good R/R + volume confirmation + divergence/reversal signals
+- GOOD (60-79%): Most indicators aligned + acceptable R/R + normal volume
+- ACCEPTABLE (50-59%): Some indicators aligned + acceptable R/R (may have minor concerns)
+- QUESTIONABLE (40-49%): Mixed signals but not clearly bad (still approve if above threshold)
+- POOR (0-39%): Multiple indicators contradict signal + poor R/R + low volume
+
+REJECTION CRITERIA (only reject if MULTIPLE red flags):
+- Risk/Reward < 0.5 AND
+- Entry price >5% away from current market price AND
+- Signal contradicts STRONG trend (>3% against signal direction) AND
+- Price at unfavorable level (LONG at resistance, SHORT at support)
+
+Otherwise, APPROVE with appropriate confidence score based on technical analysis.
+
+Respond in JSON format ONLY with this exact structure:
+{{
+    "is_valid": true/false,
+    "confidence_score": 0-100,
+    "reasoning": "Brief explanation (1-2 sentences)",
+    "risk_level": "LOW" or "MEDIUM" or "HIGH"{", "suggested_entry_price": <number> or null, "suggested_stop_loss": <number> or null, "suggested_take_profit": <number> or null, "price_suggestion_reasoning": "Why these prices are suggested (if different from original)" if you want to suggest price optimizations, otherwise omit these fields}
+}}
+
+Confidence Score Guidelines:
+- 80-100: Excellent signal, strong R/R, clear setup
+- 60-79: Good signal, acceptable R/R, reasonable setup
+- 50-59: Acceptable signal, may have minor concerns but still valid
+- 40-49: Questionable but not clearly bad (still approve if above threshold)
+- 0-39: Only for signals with clear red flags
+
+Remember: When uncertain, err on the side of APPROVAL. This is a filter, not a gatekeeper.
+
+PRICE OPTIMIZATION (AI will calculate optimal prices based on technical analysis):
+You should calculate and suggest optimized prices using REAL market data:
+- Current market price, support/resistance levels, ATR volatility, Bollinger Bands, EMA200, etc.
+- Use the indicator values provided above (RSI, MACD, Stochastic, etc.)
+
+OPTIMIZATION RULES (only suggest if BETTER than original):
+1. ENTRY PRICE:
+   - LONG trades: Suggest LOWER entry (closer to support) if better R/R or closer to key level
+   - SHORT trades: Suggest HIGHER entry (closer to resistance) if better R/R or closer to key level
+   - DO NOT suggest worse entry (LONG: don't suggest higher, SHORT: don't suggest lower)
+
+2. STOP LOSS:
+   - Suggest TIGHTER SL if ATR/volatility allows (better risk management)
+   - LONG: SL should be BELOW entry (suggest lower SL if safe)
+   - SHORT: SL should be ABOVE entry (suggest higher SL if safe)
+   - DO NOT suggest wider SL unless absolutely necessary
+
+3. TAKE PROFIT:
+   - Suggest HIGHER TP for LONG (more profit potential at resistance)
+   - Suggest LOWER TP for SHORT (more profit potential at support)
+   - Consider R/R ratio - aim for at least 1.5:1 or better
+
+4. ENTRY 2 (DCA) DISTANCE:
+   - If Entry 1 is optimized, calculate Entry 2 based on optimal distance
+   - LONG: Entry 2 should be LOWER than Entry 1 (typical 3-7% below)
+   - SHORT: Entry 2 should be HIGHER than Entry 1 (typical 3-7% above)
+   - Ensure good spacing between Entry 1 and Entry 2
+
+CALCULATION METHOD:
+- Use current market price, recent high/low, ATR, Bollinger Bands, support/resistance levels
+- Calculate optimal entry based on: support/resistance + ATR + R/R ratio
+- Calculate optimal SL based on: ATR × multiplier (typically 1.5-2.5x ATR)
+- Calculate optimal TP based on: resistance levels + R/R ratio (aim for 1.5:1 minimum)
+
+If original prices are already optimal, you may omit suggestion fields (they will use original).
+If you suggest prices, they will be APPLIED if they improve the trade (better entry, tighter SL, higher TP)."""
+    
+    try:
+        # Call Gemini API with timeout
+        logger.info(f"🤖 [AI VALIDATION] Starting validation for NEW ENTRY signal: {symbol} ({signal_side}) @ ${entry_price:,.8f}")
+        logger.info(f"🤖 [AI VALIDATION] This validation ONLY runs for new ENTRY signals, NOT for order tracking or TP creation")
+        start_time = time.time()
+        
+        # Use threading to implement timeout
+        result_container = {'response': None, 'error': None}
+        
+        def call_api():
+            try:
+                response = gemini_client.generate_content(prompt)
+                result_container['response'] = response.text
+            except Exception as e:
+                result_container['error'] = str(e)
+        
+        api_thread = threading.Thread(target=call_api, daemon=True)
+        api_thread.start()
+        api_thread.join(timeout=5)  # 5 second timeout
+        
+        if api_thread.is_alive():
+            logger.warning(f"AI validation timeout for {symbol}, proceeding without validation (fail-open)")
+            return {
+                'is_valid': True,
+                'confidence_score': 50.0,
+                'reasoning': 'AI validation timeout, proceeding',
+                'risk_level': 'MEDIUM'
+            }
+        
+        if result_container['error']:
+            raise Exception(result_container['error'])
+        
+        if not result_container['response']:
+            raise Exception("No response from AI")
+        
+        elapsed_time = time.time() - start_time
+        logger.debug(f"AI validation completed in {elapsed_time:.2f}s")
+        
+        # Parse response
+        response_text = result_container['response'].strip()
+        
+        # Try to extract JSON from response (AI might wrap it in markdown or text)
+        import re
+        # More flexible regex to capture full JSON including nested objects and optional fields
+        json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*"is_valid"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re.DOTALL)
+        if json_match:
+            response_text = json_match.group(0)
+        else:
+            # Fallback: try to find JSON block with braces
+            json_match = re.search(r'\{.*"is_valid".*\}', response_text, re.DOTALL)
+            if json_match:
+                response_text = json_match.group(0)
+        
+        # Parse JSON response
+        try:
+            validation_result = json.loads(response_text)
+        except json.JSONDecodeError:
+            # Try to extract values manually if JSON parsing fails
+            logger.warning(f"Failed to parse AI response as JSON, attempting manual extraction")
+            is_valid = 'true' in response_text.lower() or '"is_valid": true' in response_text.lower()
+            confidence_match = re.search(r'"confidence_score":\s*(\d+(?:\.\d+)?)', response_text)
+            confidence_score = float(confidence_match.group(1)) if confidence_match else 50.0
+            
+            reasoning_match = re.search(r'"reasoning":\s*"([^"]+)"', response_text)
+            reasoning = reasoning_match.group(1) if reasoning_match else "AI validation completed"
+            
+            risk_match = re.search(r'"risk_level":\s*"([^"]+)"', response_text)
+            risk_level = risk_match.group(1) if risk_match else "MEDIUM"
+            
+            # Extract optional price suggestions
+            suggested_entry_match = re.search(r'"suggested_entry_price":\s*([\d.]+|null)', response_text)
+            suggested_entry = float(suggested_entry_match.group(1)) if suggested_entry_match and suggested_entry_match.group(1) != 'null' else None
+            
+            suggested_sl_match = re.search(r'"suggested_stop_loss":\s*([\d.]+|null)', response_text)
+            suggested_sl = float(suggested_sl_match.group(1)) if suggested_sl_match and suggested_sl_match.group(1) != 'null' else None
+            
+            suggested_tp_match = re.search(r'"suggested_take_profit":\s*([\d.]+|null)', response_text)
+            suggested_tp = float(suggested_tp_match.group(1)) if suggested_tp_match and suggested_tp_match.group(1) != 'null' else None
+            
+            price_reasoning_match = re.search(r'"price_suggestion_reasoning":\s*"([^"]+)"', response_text)
+            price_reasoning = price_reasoning_match.group(1) if price_reasoning_match else ""
+            
+            validation_result = {
+                'is_valid': is_valid,
+                'confidence_score': confidence_score,
+                'reasoning': reasoning,
+                'risk_level': risk_level
+            }
+            
+            # Add price suggestions if found
+            if suggested_entry or suggested_sl or suggested_tp:
+                validation_result['suggested_entry_price'] = suggested_entry
+                validation_result['suggested_stop_loss'] = suggested_sl
+                validation_result['suggested_take_profit'] = suggested_tp
+                if price_reasoning:
+                    validation_result['price_suggestion_reasoning'] = price_reasoning
+        
+        # Validate response structure
+        if 'is_valid' not in validation_result:
+            validation_result['is_valid'] = True  # Fail-open
+        
+        if 'confidence_score' not in validation_result:
+            validation_result['confidence_score'] = 50.0
+        
+        if 'reasoning' not in validation_result:
+            validation_result['reasoning'] = 'AI validation completed'
+        
+        if 'risk_level' not in validation_result:
+            validation_result['risk_level'] = 'MEDIUM'
+        
+        # Ensure confidence_score is within valid range
+        validation_result['confidence_score'] = max(0, min(100, float(validation_result['confidence_score'])))
+        
+        # Extract price suggestions and apply smart optimization
+        optimized_prices = {
+            'entry_price': entry_price,  # Default to original
+            'stop_loss': stop_loss,      # Default to original
+            'take_profit': take_profit,  # Default to original
+            'second_entry_price': None,   # Will be calculated if Entry 1 is optimized
+            'applied_optimizations': []
+        }
+        
+        if ENABLE_AI_PRICE_SUGGESTIONS:
+            suggested_entry = safe_float(validation_result.get('suggested_entry_price'), default=None)
+            suggested_sl = safe_float(validation_result.get('suggested_stop_loss'), default=None)
+            suggested_tp = safe_float(validation_result.get('suggested_take_profit'), default=None)
+            price_reasoning = validation_result.get('price_suggestion_reasoning', '')
+            
+            # Smart optimization logic: Only apply if AI suggestion is BETTER
+            if suggested_entry:
+                if signal_side == 'LONG':
+                    # For LONG: Lower entry is better (closer to support)
+                    if suggested_entry < entry_price:
+                        optimized_prices['entry_price'] = suggested_entry
+                        optimized_prices['applied_optimizations'].append(f"Entry optimized: ${entry_price:,.8f} → ${suggested_entry:,.8f} (better entry for LONG)")
+                        logger.info(f"✅ [AI OPTIMIZATION] Entry optimized for LONG: ${entry_price:,.8f} → ${suggested_entry:,.8f} (better entry)")
+                    else:
+                        logger.info(f"⚠️  [AI OPTIMIZATION] Entry suggestion ${suggested_entry:,.8f} is HIGHER than original ${entry_price:,.8f} - keeping original (better for LONG)")
+                else:  # SHORT
+                    # For SHORT: Higher entry is better (closer to resistance)
+                    if suggested_entry > entry_price:
+                        optimized_prices['entry_price'] = suggested_entry
+                        optimized_prices['applied_optimizations'].append(f"Entry optimized: ${entry_price:,.8f} → ${suggested_entry:,.8f} (better entry for SHORT)")
+                        logger.info(f"✅ [AI OPTIMIZATION] Entry optimized for SHORT: ${entry_price:,.8f} → ${suggested_entry:,.8f} (better entry)")
+                    else:
+                        logger.info(f"⚠️  [AI OPTIMIZATION] Entry suggestion ${suggested_entry:,.8f} is LOWER than original ${entry_price:,.8f} - keeping original (better for SHORT)")
+            
+            if suggested_sl and stop_loss:
+                if signal_side == 'LONG':
+                    # For LONG: Tighter SL (higher) is better, but must stay below entry
+                    if suggested_sl > stop_loss and suggested_sl < optimized_prices['entry_price']:
+                        optimized_prices['stop_loss'] = suggested_sl
+                        optimized_prices['applied_optimizations'].append(f"SL optimized: ${stop_loss:,.8f} → ${suggested_sl:,.8f} (tighter risk)")
+                        logger.info(f"✅ [AI OPTIMIZATION] SL optimized for LONG: ${stop_loss:,.8f} → ${suggested_sl:,.8f} (tighter)")
+                    elif suggested_sl < stop_loss:
+                        # Even tighter SL - apply if safe
+                        optimized_prices['stop_loss'] = suggested_sl
+                        optimized_prices['applied_optimizations'].append(f"SL optimized: ${stop_loss:,.8f} → ${suggested_sl:,.8f} (tighter risk)")
+                        logger.info(f"✅ [AI OPTIMIZATION] SL optimized for LONG: ${stop_loss:,.8f} → ${suggested_sl:,.8f} (tighter)")
+                    else:
+                        logger.info(f"⚠️  [AI OPTIMIZATION] SL suggestion ${suggested_sl:,.8f} rejected (wider than original or invalid)")
+                else:  # SHORT
+                    # For SHORT: Tighter SL (lower) is better, but must stay above entry
+                    if suggested_sl < stop_loss and suggested_sl > optimized_prices['entry_price']:
+                        optimized_prices['stop_loss'] = suggested_sl
+                        optimized_prices['applied_optimizations'].append(f"SL optimized: ${stop_loss:,.8f} → ${suggested_sl:,.8f} (tighter risk)")
+                        logger.info(f"✅ [AI OPTIMIZATION] SL optimized for SHORT: ${stop_loss:,.8f} → ${suggested_sl:,.8f} (tighter)")
+                    elif suggested_sl > stop_loss:
+                        # Even tighter SL - apply if safe
+                        optimized_prices['stop_loss'] = suggested_sl
+                        optimized_prices['applied_optimizations'].append(f"SL optimized: ${stop_loss:,.8f} → ${suggested_sl:,.8f} (tighter risk)")
+                        logger.info(f"✅ [AI OPTIMIZATION] SL optimized for SHORT: ${stop_loss:,.8f} → ${suggested_sl:,.8f} (tighter)")
+                    else:
+                        logger.info(f"⚠️  [AI OPTIMIZATION] SL suggestion ${suggested_sl:,.8f} rejected (wider than original or invalid)")
+            
+            if suggested_tp and take_profit:
+                # Smart TP optimization: Use AI's analysis to determine BEST TP
+                # AI analyzes resistance/support levels, reversal risk, and realistic targets
+                # Trust AI's analysis - it considers if original TP might miss by 0.1-0.5% due to reversal
+                tp_diff_pct = abs((suggested_tp - take_profit) / take_profit * 100) if take_profit else 0
+                
+                if signal_side == 'LONG':
+                    # For LONG: AI analyzes resistance levels to find BEST TP
+                    # Apply AI TP if:
+                    # 1. Higher (more profit) OR
+                    # 2. Better positioned at resistance (even if slightly lower, within 2% - avoids reversal risk)
+                    if suggested_tp > take_profit:
+                        # Higher TP = more profit, apply it
+                        optimized_prices['take_profit'] = suggested_tp
+                        optimized_prices['applied_optimizations'].append(f"TP optimized: ${take_profit:,.8f} → ${suggested_tp:,.8f} (higher profit, +{tp_diff_pct:.2f}%)")
+                        logger.info(f"✅ [AI OPTIMIZATION] TP optimized for LONG: ${take_profit:,.8f} → ${suggested_tp:,.8f} (higher profit, +{tp_diff_pct:.2f}%)")
+                    elif suggested_tp >= take_profit * 0.98:  # Within 2% of original (AI found better resistance level, avoids reversal)
+                        # AI TP is slightly lower but better positioned at resistance - use it (avoids missing TP by 0.1-0.5%)
+                        optimized_prices['take_profit'] = suggested_tp
+                        optimized_prices['applied_optimizations'].append(f"TP optimized: ${take_profit:,.8f} → ${suggested_tp:,.8f} (better resistance level, avoids reversal, -{tp_diff_pct:.2f}%)")
+                        logger.info(f"✅ [AI OPTIMIZATION] TP optimized for LONG: ${take_profit:,.8f} → ${suggested_tp:,.8f} (better positioned at resistance, avoids reversal risk, -{tp_diff_pct:.2f}%)")
+                    else:
+                        # AI TP is significantly lower (>2%) - keep original (it's better)
+                        logger.info(f"⚠️  [AI OPTIMIZATION] TP suggestion ${suggested_tp:,.8f} is {tp_diff_pct:.2f}% LOWER than original ${take_profit:,.8f} - keeping original (better profit)")
+                else:  # SHORT
+                    # For SHORT: AI analyzes support levels to find BEST TP
+                    # Apply AI TP if:
+                    # 1. Lower (more profit) OR
+                    # 2. Better positioned at support (even if slightly higher, within 2% - avoids reversal risk)
+                    if suggested_tp < take_profit:
+                        # Lower TP = more profit, apply it
+                        optimized_prices['take_profit'] = suggested_tp
+                        optimized_prices['applied_optimizations'].append(f"TP optimized: ${take_profit:,.8f} → ${suggested_tp:,.8f} (higher profit, -{tp_diff_pct:.2f}%)")
+                        logger.info(f"✅ [AI OPTIMIZATION] TP optimized for SHORT: ${take_profit:,.8f} → ${suggested_tp:,.8f} (higher profit, -{tp_diff_pct:.2f}%)")
+                    elif suggested_tp <= take_profit * 1.02:  # Within 2% of original (AI found better support level, avoids reversal)
+                        # AI TP is slightly higher but better positioned at support - use it (avoids missing TP by 0.1-0.5%)
+                        optimized_prices['take_profit'] = suggested_tp
+                        optimized_prices['applied_optimizations'].append(f"TP optimized: ${take_profit:,.8f} → ${suggested_tp:,.8f} (better support level, avoids reversal, +{tp_diff_pct:.2f}%)")
+                        logger.info(f"✅ [AI OPTIMIZATION] TP optimized for SHORT: ${take_profit:,.8f} → ${suggested_tp:,.8f} (better positioned at support, avoids reversal risk, +{tp_diff_pct:.2f}%)")
+                    else:
+                        # AI TP is significantly higher (>2%) - keep original (it's better)
+                        logger.info(f"⚠️  [AI OPTIMIZATION] TP suggestion ${suggested_tp:,.8f} is {tp_diff_pct:.2f}% HIGHER than original ${take_profit:,.8f} - keeping original (better profit)")
+            
+            # Store suggestions for logging (even if not applied)
+            if suggested_entry or suggested_sl or suggested_tp:
+                validation_result['price_suggestions'] = {
+                    'entry_price': suggested_entry,
+                    'stop_loss': suggested_sl,
+                    'take_profit': suggested_tp,
+                    'reasoning': price_reasoning,
+                    'original_entry': entry_price,
+                    'original_stop_loss': stop_loss,
+                    'original_take_profit': take_profit,
+                    'optimized_entry': optimized_prices['entry_price'],
+                    'optimized_stop_loss': optimized_prices['stop_loss'],
+                    'optimized_take_profit': optimized_prices['take_profit'],
+                    'applied_optimizations': optimized_prices['applied_optimizations']
+                }
+                
+                # Log comparison with applied optimizations
+                logger.info(f"💡 [AI PRICE OPTIMIZATION] Analysis for {symbol}:")
+                logger.info(f"   ┌─────────────────────────────────────────────────────────────────────────────┐")
+                logger.info(f"   │ PRICE COMPARISON: Original (TradingView) vs AI Suggested vs Applied       │")
+                logger.info(f"   ├─────────────────────────────────────────────────────────────────────────────┤")
+                if suggested_entry:
+                    diff_pct = ((suggested_entry - entry_price) / entry_price * 100) if entry_price else 0
+                    applied = optimized_prices['entry_price']
+                    applied_diff = ((applied - entry_price) / entry_price * 100) if entry_price else 0
+                    status = "✅ APPLIED" if applied != entry_price else "❌ REJECTED (worse)"
+                    logger.info(f"   │ 📍 Entry:      Original=${entry_price:,.8f}  →  AI=${suggested_entry:,.8f} ({diff_pct:+.2f}%)  →  Applied=${applied:,.8f} ({applied_diff:+.2f}%) {status} │")
+                else:
+                    logger.info(f"   │ 📍 Entry:      Original=${entry_price:,.8f}  →  No AI suggestion (keeping original)                    │")
+                if suggested_sl:
+                    diff_pct = ((suggested_sl - stop_loss) / stop_loss * 100) if stop_loss else 0
+                    applied = optimized_prices['stop_loss']
+                    applied_diff = ((applied - stop_loss) / stop_loss * 100) if stop_loss else 0
+                    status = "✅ APPLIED" if applied != stop_loss else "❌ REJECTED"
+                    logger.info(f"   │ 🛑 Stop Loss:   Original=${stop_loss:,.8f}  →  AI=${suggested_sl:,.8f} ({diff_pct:+.2f}%)  →  Applied=${applied:,.8f} ({applied_diff:+.2f}%) {status} │")
+                else:
+                    sl_display = f"${stop_loss:,.8f}" if stop_loss else "N/A"
+                    logger.info(f"   │ 🛑 Stop Loss:   Original={sl_display:<15}  →  No AI suggestion (keeping original)                    │")
+                if suggested_tp:
+                    diff_pct = ((suggested_tp - take_profit) / take_profit * 100) if take_profit else 0
+                    applied = optimized_prices['take_profit']
+                    applied_diff = ((applied - take_profit) / take_profit * 100) if take_profit else 0
+                    status = "✅ APPLIED" if applied != take_profit else "❌ REJECTED (worse)"
+                    logger.info(f"   │ 🎯 Take Profit: Original=${take_profit:,.8f}  →  AI=${suggested_tp:,.8f} ({diff_pct:+.2f}%)  →  Applied=${applied:,.8f} ({applied_diff:+.2f}%) {status} │")
+                else:
+                    tp_display = f"${take_profit:,.8f}" if take_profit else "N/A"
+                    logger.info(f"   │ 🎯 Take Profit: Original={tp_display:<15}  →  No AI suggestion (keeping original)                    │")
+                logger.info(f"   ├─────────────────────────────────────────────────────────────────────────────┤")
+                if price_reasoning:
+                    reasoning_lines = [price_reasoning[i:i+70] for i in range(0, len(price_reasoning), 70)]
+                    for line in reasoning_lines:
+                        logger.info(f"   │ 💭 AI Reasoning: {line:<70} │")
+                if optimized_prices['applied_optimizations']:
+                    logger.info(f"   │ ✅ APPLIED OPTIMIZATIONS: {len(optimized_prices['applied_optimizations'])} price(s) optimized          │")
+                    for opt in optimized_prices['applied_optimizations']:
+                        logger.info(f"   │    • {opt:<68} │")
+                else:
+                    logger.info(f"   │ ⚠️  No optimizations applied (AI suggestions were worse than original)      │")
+                logger.info(f"   └─────────────────────────────────────────────────────────────────────────────┘")
+        
+        # Store optimized prices in validation result for use in order creation
+        validation_result['optimized_prices'] = optimized_prices
+        
+        # Cache the result
+        validation_cache[cache_key] = (validation_result, current_time)
+        
+        # Clean up old cache entries (keep last 100)
+        if len(validation_cache) > 100:
+            sorted_cache = sorted(validation_cache.items(), key=lambda x: x[1][1])
+            for key, _ in sorted_cache[:-100]:
+                del validation_cache[key]
+        
+        logger.info(f"✅ AI Validation Result for {symbol}: Valid={validation_result['is_valid']}, "
+                   f"Confidence={validation_result['confidence_score']:.1f}%, "
+                   f"Risk={validation_result['risk_level']}, "
+                   f"Reasoning={validation_result['reasoning'][:100]}...")
+        
+        return validation_result
+        
+    except Exception as e:
+        logger.warning(f"⚠️ AI validation error for {symbol}: {e}. Proceeding without validation (fail-open)")
+        return {
+            'is_valid': True,  # Fail-open: proceed if validation fails
+            'confidence_score': 50.0,
+            'reasoning': f'AI validation error: {str(e)}, proceeding',
+            'risk_level': 'MEDIUM',
+            'error': str(e)
+        }
+
+
 def create_limit_order(signal_data):
     """Create a Binance Futures limit order with $10 per entry and 20X leverage"""
     try:
@@ -1084,10 +1800,72 @@ def create_limit_order(signal_data):
             if entry_price is None or entry_price <= 0:
                 logger.warning(f"Invalid or missing entry_price in webhook payload. Discarding request. entry_price={signal_data.get('entry_price')}")
                 return {'success': False, 'error': 'Invalid or missing entry_price (NA/null)'}
+            
+            # AI Signal Validation (ONLY for NEW ENTRY signals - NOT for order tracking or TP creation)
+            logger.info(f"🔍 [AI VALIDATION] Processing NEW ENTRY signal for {symbol} - AI validation will run")
+            validation_result = validate_signal_with_ai(signal_data)
+            
+            # Check if signal is valid and meets confidence threshold
+            if not validation_result.get('is_valid', True):
+                logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {validation_result.get('reasoning', 'No reasoning provided')}")
+                return {
+                    'success': False,
+                    'error': 'Signal validation failed',
+                    'validation_result': validation_result
+                }
+            
+            confidence_score = validation_result.get('confidence_score', 100.0)
+            if confidence_score < AI_VALIDATION_MIN_CONFIDENCE:
+                logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: Confidence score {confidence_score:.1f}% is below minimum threshold of {AI_VALIDATION_MIN_CONFIDENCE}%")
+                logger.info(f"   Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
+                logger.info(f"   Risk Level: {validation_result.get('risk_level', 'UNKNOWN')}")
+                return {
+                    'success': False,
+                    'error': f'Signal confidence {confidence_score:.1f}% below minimum {AI_VALIDATION_MIN_CONFIDENCE}%',
+                    'validation_result': validation_result
+                }
+            
+            # Log successful validation
+            logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}%, "
+                       f"Risk={validation_result.get('risk_level', 'UNKNOWN')}, "
+                       f"Reasoning={validation_result.get('reasoning', 'No reasoning')[:150]}...")
+            
+            # Apply optimized prices if available
+            if 'optimized_prices' in validation_result:
+                opt_prices = validation_result['optimized_prices']
+                # Update prices with optimized values
+                if opt_prices.get('entry_price') and opt_prices['entry_price'] != entry_price:
+                    entry_price = opt_prices['entry_price']
+                    logger.info(f"🔄 [PRICE UPDATE] Using AI-optimized entry price: ${entry_price:,.8f}")
+                if opt_prices.get('stop_loss') and opt_prices['stop_loss'] != stop_loss:
+                    stop_loss = opt_prices['stop_loss']
+                    logger.info(f"🔄 [PRICE UPDATE] Using AI-optimized stop loss: ${stop_loss:,.8f}")
+                if opt_prices.get('take_profit') and opt_prices['take_profit'] != take_profit:
+                    take_profit = opt_prices['take_profit']
+                    logger.info(f"🔄 [PRICE UPDATE] Using AI-optimized take profit: ${take_profit:,.8f}")
+                
+                # Calculate optimized Entry 2 (DCA) if Entry 1 was optimized
+                if opt_prices.get('entry_price') and opt_prices['entry_price'] != safe_float(signal_data.get('entry_price'), default=entry_price):
+                    original_entry = safe_float(signal_data.get('entry_price'), default=entry_price)
+                    original_entry2 = safe_float(signal_data.get('second_entry_price'), default=None)
+                    
+                    if original_entry2 and original_entry:
+                        # Calculate Entry 2 based on optimized Entry 1, maintaining the same percentage distance
+                        entry_diff_pct = abs((original_entry2 - original_entry) / original_entry * 100)
+                        if signal_side == 'LONG':
+                            # Entry 2 should be lower than Entry 1
+                            optimized_entry2 = opt_prices['entry_price'] * (1 - entry_diff_pct / 100)
+                            opt_prices['second_entry_price'] = optimized_entry2
+                            logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (based on Entry 1 optimization, {entry_diff_pct:.2f}% below Entry 1)")
+                        else:  # SHORT
+                            # Entry 2 should be higher than Entry 1
+                            optimized_entry2 = opt_prices['entry_price'] * (1 + entry_diff_pct / 100)
+                            opt_prices['second_entry_price'] = optimized_entry2
+                            logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (based on Entry 1 optimization, {entry_diff_pct:.2f}% above Entry 1)")
         
         # Handle EXIT events - close position at market price and cancel all orders for symbol
         if event == 'EXIT':
-            logger.info(f"Processing EXIT event for {symbol}")
+            logger.info(f"Processing EXIT event for {symbol} (AI validation skipped for EXIT events)")
             
             # Check for duplicate EXIT processing
             current_time = time.time()
@@ -1335,11 +2113,16 @@ def create_limit_order(signal_data):
             logger.info(f"Cleaning up old trade tracking for {symbol}")
             del active_trades[symbol]
         
-        # Get primary entry price - use entry_price from JSON
+        # Get primary entry price - use optimized entry_price if available, otherwise original
         primary_entry_price = entry_price
         
-        # Get DCA entry price (second entry) - use second_entry_price from JSON
-        dca_entry_price = second_entry_price if second_entry_price and second_entry_price > 0 else None
+        # Get DCA entry price (second entry) - use optimized second_entry_price if available
+        # Check if AI optimized Entry 2
+        if 'optimized_prices' in validation_result and validation_result.get('optimized_prices', {}).get('second_entry_price'):
+            dca_entry_price = validation_result['optimized_prices']['second_entry_price']
+            logger.info(f"🔄 [PRICE UPDATE] Using AI-optimized Entry 2 (DCA): ${dca_entry_price:,.8f}")
+        else:
+            dca_entry_price = second_entry_price if second_entry_price and second_entry_price > 0 else None
         
         # If this is a primary entry, we need both prices to create both orders
         if is_primary_entry and not dca_entry_price:
@@ -1923,6 +2706,16 @@ if __name__ == '__main__':
     # Check configuration
     if WEBHOOK_TOKEN == 'CHANGE_ME':
         logger.warning("WEBHOOK_TOKEN is not set! Using default value.")
+    
+    # Log current trading configuration
+    logger.info(f"💰 Trading Configuration:")
+    logger.info(f"   Entry Size: ${ENTRY_SIZE_USD} per entry")
+    logger.info(f"   Leverage: {LEVERAGE}X")
+    logger.info(f"   Position Value: ${ENTRY_SIZE_USD * LEVERAGE} per entry (${ENTRY_SIZE_USD * LEVERAGE * 2} total for both entries)")
+    is_testing = ENTRY_SIZE_USD == 5.0 and LEVERAGE == 5
+    logger.info(f"   Mode: {'TESTING ($5, 5X)' if is_testing else 'PRODUCTION/CUSTOM'}")
+    logger.info(f"   To change: Set ENTRY_SIZE_USD and LEVERAGE environment variables")
+    logger.info(f"   Example: ENTRY_SIZE_USD=10.0 LEVERAGE=20 for production")
     
     if not BINANCE_API_KEY or not BINANCE_API_SECRET:
         logger.error("BINANCE_API_KEY and BINANCE_API_SECRET must be set!")
