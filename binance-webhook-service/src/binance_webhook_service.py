@@ -369,9 +369,9 @@ def send_signal_notification(symbol, signal_side, timeframe, confidence_score, r
             reasoning = validation_result.get('reasoning', '')
             # Convert to single line by replacing newlines with spaces
             reasoning = ' '.join(reasoning.split())
-            # Truncate if too long (keep it concise for single line)
-            if len(reasoning) > 200:
-                reasoning = reasoning[:200] + "..."
+            # Show more complete reasoning (increased from 200 to 600 chars for better context)
+            if len(reasoning) > 600:
+                reasoning = reasoning[:597] + "..."
             slack_message += f"*AI Analysis:* {reasoning}\n"
         
         # Send to Slack (non-blocking in a thread)
