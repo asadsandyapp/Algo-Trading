@@ -133,7 +133,7 @@ if GEMINI_AVAILABLE and GEMINI_API_KEY and ENABLE_AI_VALIDATION:
             paid_model_keywords = ['2.5-pro', '2.0-pro', 'ultra', '2.5-pro-exp']  # Models that require billing
             available_models = [m for m in all_models if not any(paid in m.lower() for paid in paid_model_keywords)]
             logger.info(f"Found {len(available_models)} FREE TIER Gemini models (excluded {len(all_models) - len(available_models)} paid models): {', '.join(available_models[:5])}...")
-    except Exception as e:
+        except Exception as e:
             logger.debug(f"Could not list available models: {e}. Will try common model names.")
         
         # Use user-specified model first, then available models, then fallback list
@@ -669,12 +669,12 @@ def create_missing_tp_orders():
                                 else:
                                     # No orders and no position - clean up TP details
                                     logger.info(f"🧹 Background thread: Cleaning up stored TP for {symbol} (no position and no pending orders)")
-                            if 'tp_price' in active_trades[symbol]:
-                                del active_trades[symbol]['tp_price']
-                            if 'tp_quantity' in active_trades[symbol]:
-                                del active_trades[symbol]['tp_quantity']
-                            if 'tp_working_type' in active_trades[symbol]:
-                                del active_trades[symbol]['tp_working_type']
+                                    if 'tp_price' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp_price']
+                                    if 'tp_quantity' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp_quantity']
+                                    if 'tp_working_type' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp_working_type']
                             except Exception as e:
                                 logger.debug(f"Error checking orders for {symbol}: {e}")
                                 # On error, keep TP details (safer to keep than delete)
@@ -2357,13 +2357,13 @@ If setup is weak, counter-trend, or lacks institutional confirmation, MODIFY or 
             # Add price suggestions if found
             if suggested_entry or suggested_entry2 or suggested_sl or suggested_tp:
                 if suggested_entry:
-                validation_result['suggested_entry_price'] = suggested_entry
+                    validation_result['suggested_entry_price'] = suggested_entry
                 if suggested_entry2:
                     validation_result['suggested_second_entry_price'] = suggested_entry2
                 if suggested_sl:
-                validation_result['suggested_stop_loss'] = suggested_sl
+                    validation_result['suggested_stop_loss'] = suggested_sl
                 if suggested_tp:
-                validation_result['suggested_take_profit'] = suggested_tp
+                    validation_result['suggested_take_profit'] = suggested_tp
                 if price_reasoning:
                     validation_result['price_suggestion_reasoning'] = price_reasoning
         
@@ -2763,7 +2763,7 @@ def create_limit_order(signal_data):
                                 atr_multiplier = 1.5
                             
                             spacing = atr_val * atr_multiplier
-                        if signal_side == 'LONG':
+                            if signal_side == 'LONG':
                                 optimized_entry2 = opt_prices['entry_price'] - spacing
                             else:  # SHORT
                                 optimized_entry2 = opt_prices['entry_price'] + spacing
@@ -2788,8 +2788,8 @@ def create_limit_order(signal_data):
                             if signal_side == 'LONG':
                                 # Entry 2 should be lower than Entry 1
                                 optimized_entry2 = opt_prices['entry_price'] * (1 - spacing_pct / 100)
-                        else:  # SHORT
-                            # Entry 2 should be higher than Entry 1
+                            else:  # SHORT
+                                # Entry 2 should be higher than Entry 1
                                 optimized_entry2 = opt_prices['entry_price'] * (1 + spacing_pct / 100)
                             opt_prices['second_entry_price'] = optimized_entry2
                             logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (based on Entry 1 optimization, {spacing_pct:.2f}% spacing for {timeframe_str} timeframe - ATR not available, using timeframe-aware spacing)")
