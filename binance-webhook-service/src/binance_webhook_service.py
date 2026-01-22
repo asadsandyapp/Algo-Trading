@@ -2211,6 +2211,44 @@ def validate_signal_with_ai(signal_data):
                         'last_10_volumes': volumes[-10:] if len(volumes) >= 10 else volumes
                     }
                     
+                    # Fetch lower timeframe data for tighter TP/SL analysis (15m and 1h)
+                    # This helps find the nearest realistic reversal points
+                    lower_tf_data = {}
+                    try:
+                        # Get 15m data for near-term support/resistance
+                        klines_15m = client.futures_klines(symbol=symbol, interval='15m', limit=50)
+                        if klines_15m:
+                            highs_15m = [float(k[2]) for k in klines_15m]
+                            lows_15m = [float(k[3]) for k in klines_15m]
+                            closes_15m = [float(k[4]) for k in klines_15m]
+                            lower_tf_data['15m'] = {
+                                'recent_high': max(highs_15m[-20:]) if len(highs_15m) >= 20 else max(highs_15m) if highs_15m else None,
+                                'recent_low': min(lows_15m[-20:]) if len(lows_15m) >= 20 else min(lows_15m) if lows_15m else None,
+                                'resistance_levels': sorted(set(highs_15m[-30:]), reverse=True)[:3] if len(highs_15m) >= 30 else [],
+                                'support_levels': sorted(set(lows_15m[-30:]))[:3] if len(lows_15m) >= 30 else []
+                            }
+                    except Exception as e:
+                        logger.debug(f"Could not fetch 15m data for {symbol}: {e}")
+                    
+                    try:
+                        # Get 1h data for short-term support/resistance
+                        klines_1h = client.futures_klines(symbol=symbol, interval='1h', limit=50)
+                        if klines_1h:
+                            highs_1h = [float(k[2]) for k in klines_1h]
+                            lows_1h = [float(k[3]) for k in klines_1h]
+                            closes_1h = [float(k[4]) for k in klines_1h]
+                            lower_tf_data['1h'] = {
+                                'recent_high': max(highs_1h[-20:]) if len(highs_1h) >= 20 else max(highs_1h) if highs_1h else None,
+                                'recent_low': min(lows_1h[-20:]) if len(lows_1h) >= 20 else min(lows_1h) if lows_1h else None,
+                                'resistance_levels': sorted(set(highs_1h[-30:]), reverse=True)[:3] if len(highs_1h) >= 30 else [],
+                                'support_levels': sorted(set(lows_1h[-30:]))[:3] if len(lows_1h) >= 30 else []
+                            }
+                    except Exception as e:
+                        logger.debug(f"Could not fetch 1h data for {symbol}: {e}")
+                    
+                    if lower_tf_data:
+                        market_data['lower_timeframe_levels'] = lower_tf_data
+                    
                     # Calculate technical indicators for AI's own analysis
                     # Trend analysis (multiple timeframes)
                     if len(closes) >= 5:
@@ -2559,19 +2597,21 @@ Entries must be placed ONLY at HIGH-PROBABILITY INSTITUTIONAL LIQUIDITY ZONES.
    - SPACING (last resort only) must be realistic (1.0-2.5x ATR or 2-7% depending on timeframe)
 
 3. STOP LOSS (INSTITUTIONAL RISK MANAGEMENT):
-   - LONG: Must be BELOW Entry 1 (typically 1.5-2.5x ATR below entry, or below order block)
-   - SHORT: Must be ABOVE Entry 1 (typically 1.5-2.5x ATR above entry, or above order block)
-   - PLACE SL: Below/above order block, below/above liquidity pool, or 1.5-2.5x ATR
+   - IMPORTANT: Use LOWER TIMEFRAMES (15m, 1h) for SL placement, NOT HTF levels (HTF SL would be too wide)
+   - LONG: Must be BELOW Entry 1 at the NEAREST support level on 15m/1h (typically 1.5-3% from entry, max 4%)
+   - SHORT: Must be ABOVE Entry 1 at the NEAREST resistance level on 15m/1h (typically 1.5-3% from entry, max 4%)
+   - PLACE SL: At nearest support/resistance on LTF (15m, 1h), NOT HTF levels
    - Evaluate if SL is too tight (will get stopped out by noise) or too wide (poor R/R)
-   - Suggest optimal SL based on: order block structure, liquidity zones, ATR, and support/resistance
+   - Suggest optimal SL based on: LTF (15m, 1h) support/resistance levels, not HTF structure
 
 4. TAKE PROFIT (INSTITUTIONAL TARGET ALIGNMENT):
-   - LONG: Must be ABOVE Entry 1 (aligned with HTF structure, liquidity objectives, resistance levels)
-   - SHORT: Must be BELOW Entry 1 (aligned with HTF structure, liquidity objectives, support levels)
-   - TARGET ALIGNMENT: TP must align with HTF structure and liquidity objectives
+   - IMPORTANT: Use LOWER TIMEFRAMES (15m, 1h) for TP placement, NOT HTF targets (HTF targets are too far)
+   - LONG: Must be ABOVE Entry 1 at the NEAREST resistance level on 15m/1h (typically 3-8% from entry, max 15%)
+   - SHORT: Must be BELOW Entry 1 at the NEAREST support level on 15m/1h (typically 3-8% from entry, max 15%)
+   - TARGET ALIGNMENT: TP should align with LTF support/resistance levels (not HTF structure targets which are too far)
    - MINIMUM RR ≥ 1:3 REQUIRED (if can't achieve, modify or discard signal)
-   - Evaluate if TP is realistic based on: HTF structure, resistance/support, liquidity zones
-   - If TP is too aggressive (won't hit) or too conservative (leaves profit on table), suggest better TP
+   - Evaluate if TP is realistic based on: LTF (15m, 1h) resistance/support levels, not HTF targets
+   - If TP is too aggressive (won't hit) or too conservative (leaves profit on table), suggest better TP at nearest LTF level
 
 PRICE OPTIMIZATION RULES (INSTITUTIONAL METHODOLOGY):
 - If prices are OPTIMAL (at institutional zones, RR ≥ 1:3): Keep original prices (set suggested_* to null)
@@ -2837,14 +2877,31 @@ CRITICAL: Entry optimization is based on TECHNICAL & STRUCTURAL CONFIRMATION, NO
 Entries must be placed ONLY at HIGH-PROBABILITY INSTITUTIONAL LIQUIDITY ZONES.
 
 OPTIMIZATION RULES (Institutional Methodology - Only suggest if BETTER than original):
+CRITICAL: Signals are based on 2H/4H timeframes. 
+- FIRST: Evaluate if original prices are GOOD based on technical analysis (institutional zones, support/resistance, market structure)
+- IF ORIGINAL PRICES ARE GOOD: KEEP THEM (set suggested_* to null) - DO NOT change just to make a 1-2% adjustment
+- IF ORIGINAL PRICES NEED IMPROVEMENT: Only suggest changes if there's a SOLID TECHNICAL REASON (better institutional zone, better support/resistance, better R/R)
+- WHEN SUGGESTING CHANGES: Keep optimizations within 1-2% MAXIMUM of original to ensure orders FILL (this is a LIMIT, not a requirement)
+- DO NOT suggest changes just because price is "close to entry" or to make a 1-2% adjustment - only change when technically justified
+
 1. ENTRY PRICE (PRIMARY INSTITUTIONAL ENTRY):
-   - IDENTIFY INSTITUTIONAL LIQUIDITY ZONE: Order block, FVG, liquidity pool, or stop-hunt zone
-   - LONG trades: Suggest entry at BULLISH ORDER BLOCK, FVG fill, or liquidity grab zone (NOT just lower price)
-   - SHORT trades: Suggest entry at BEARISH ORDER BLOCK, FVG fill, or liquidity grab zone (NOT just higher price)
-   - ENTRY MUST ALIGN with HTF structure and market structure (BOS/CHoCH)
-   - DO NOT suggest entry based on "closeness to current price" - only suggest based on STRUCTURE
-   - If original entry is NOT at institutional zone, REPLACE it with optimal institutional entry
-   - If original entry IS at institutional zone, keep it (set suggested_entry_price to null)
+   - STEP 1: EVALUATE original entry based on technical analysis:
+     * Is original entry at an institutional liquidity zone? (order block, FVG, support/resistance)
+     * Does original entry align with HTF structure and market structure (BOS/CHoCH)?
+     * Is original entry well-positioned for the trade direction?
+   
+   - STEP 2: DECISION - Keep or Optimize:
+     * If original entry is GOOD (at institutional zone, aligns with structure): KEEP IT (set suggested_entry_price to null)
+     * If original entry is NOT at institutional zone AND there's a better zone nearby: Suggest better entry
+     * DO NOT suggest changes just to make a 1-2% adjustment - only change if technically justified
+   
+   - STEP 3: If optimization needed (SOLID TECHNICAL REASON):
+     * IDENTIFY INSTITUTIONAL LIQUIDITY ZONE: Order block, FVG, liquidity pool, or stop-hunt zone
+     * LONG trades: Suggest entry at BULLISH ORDER BLOCK, FVG fill, or liquidity grab zone
+     * SHORT trades: Suggest entry at BEARISH ORDER BLOCK, FVG fill, or liquidity grab zone
+     * ENTRY MUST ALIGN with HTF structure and market structure (BOS/CHoCH)
+     * MAXIMUM distance: Keep within 1-2% of original to ensure orders FILL (this is a LIMIT, not a requirement)
+     * Only suggest if new entry is clearly better AND within 1-2% of original
 
 2. ENTRY 2 (CONFIRMATION OR SCALING ENTRY) - VALIDATE AND OPTIMIZE INDEPENDENTLY WITH FULL TECHNICAL ANALYSIS:
    - CRITICAL: You MUST perform the SAME LEVEL of technical analysis for Entry 2 as you do for Entry 1
@@ -2889,37 +2946,97 @@ OPTIMIZATION RULES (Institutional Methodology - Only suggest if BETTER than orig
           - Daily: 5-7% spacing (widest realistic)
    
    OPTIMIZATION RULES:
-   - LONG: Entry 2 should be BELOW Entry 1 (at another institutional zone or confirmation level)
-   - SHORT: Entry 2 should be ABOVE Entry 1 (at another institutional zone or confirmation level)
-   - MUST be at an institutional liquidity zone (order block, FVG, support/resistance, reversal point)
-   - ALWAYS prioritize institutional zones FIRST - spacing is LAST RESORT
-   - If original Entry 2 IS at institutional zone, KEEP it (set suggested_second_entry_price to null)
-   - If original Entry 2 is NOT at institutional zone, find the BEST institutional zone using technical analysis
-   - If Entry 2 is missing, perform FULL technical analysis to find optimal Entry 2 at institutional zone
-   - Entry 2 can be optimized independently of Entry 1 - validate both separately with full technical analysis
-   - NEVER use spacing calculations if institutional zones are available - always use the zone
+   - STEP 1: EVALUATE original Entry 2 based on technical analysis:
+     * Is original Entry 2 at an institutional liquidity zone? (order block, FVG, support/resistance)
+     * Does original Entry 2 align with market structure and provide good spacing from Entry 1?
+     * Is original Entry 2 well-positioned for the trade direction?
+   
+   - STEP 2: DECISION - Keep or Optimize:
+     * If original Entry 2 is GOOD (at institutional zone, good spacing): KEEP IT (set suggested_second_entry_price to null)
+     * If original Entry 2 is NOT at institutional zone AND there's a better zone: Suggest better Entry 2
+     * DO NOT suggest changes just to make a 1-2% adjustment - only change if technically justified
+   
+   - STEP 3: If optimization needed (SOLID TECHNICAL REASON):
+     * LONG: Entry 2 should be BELOW Entry 1 (at another institutional zone or confirmation level)
+     * SHORT: Entry 2 should be ABOVE Entry 1 (at another institutional zone or confirmation level)
+     * MUST be at an institutional liquidity zone (order block, FVG, support/resistance, reversal point)
+     * ALWAYS prioritize institutional zones FIRST - spacing is LAST RESORT
+     * MAXIMUM distance: Keep within 1-2% of original to ensure orders FILL (this is a LIMIT, not a requirement)
+     * Only suggest if new Entry 2 is clearly better AND within 1-2% of original
+     * Entry 2 can be optimized independently of Entry 1 - validate both separately with full technical analysis
+     * NEVER use spacing calculations if institutional zones are available - always use the zone
 
-3. STOP LOSS (INSTITUTIONAL RISK MANAGEMENT):
-   - LONG: SL should be BELOW entry (below order block, below liquidity pool, or 1.5-2.5x ATR below)
-   - SHORT: SL should be ABOVE entry (above order block, above liquidity pool, or 1.5-2.5x ATR above)
-   - Suggest TIGHTER SL if structure allows (better risk management, better R/R)
-   - DO NOT suggest wider SL unless absolutely necessary (only if structure requires it)
+3. STOP LOSS (INSTITUTIONAL RISK MANAGEMENT - EVALUATE ORIGINAL SL FIRST):
+   - STEP 1: EVALUATE THE ORIGINAL SL from the signal:
+     * Check if original SL is at a realistic support/resistance level (check lower timeframes: 15m, 1h)
+     * Check if original SL is tight enough (typically 1.5-3% from entry, max 4% if structure requires)
+     * Check if original SL provides adequate protection (below/above order block, liquidity pool)
+     * Check if original SL is too tight (will get stopped out by noise) or too wide (poor R/R)
+   
+   - STEP 2: DECISION - Keep or Optimize:
+     * If original SL is GOOD (realistic, tight, provides protection, at support/resistance): KEEP IT (set suggested_stop_loss to null)
+     * If original SL is TOO TIGHT (will get stopped out by noise): Suggest WIDER SL (only if technically justified)
+     * If original SL is TOO WIDE (poor R/R, unnecessary risk): Suggest TIGHTER SL (only if technically justified)
+     * DO NOT suggest changes just to make a 1-2% adjustment - only change if technically justified
+   
+   - STEP 3: If optimization needed (SOLID TECHNICAL REASON):
+     * MAXIMUM distance: Keep within 1-2% of original to ensure orders FILL (this is a LIMIT, not a requirement)
+     * Only suggest if new SL is clearly better AND within 1-2% of original
+   
+   - STEP 3: If optimization needed, use LOWER TIMEFRAMES (15m, 1h):
+     * Check market_data['lower_timeframe_levels']['15m']['support_levels'] and market_data['lower_timeframe_levels']['1h']['support_levels'] for LONG
+     * Check market_data['lower_timeframe_levels']['15m']['resistance_levels'] and market_data['lower_timeframe_levels']['1h']['resistance_levels'] for SHORT
+     * LONG: Find nearest support level BELOW entry (within 1-2% of original SL, max 4% if structure requires)
+     * SHORT: Find nearest resistance level ABOVE entry (within 1-2% of original SL, max 4% if structure requires)
+     * SL should be TIGHT but realistic - just beyond the nearest support/resistance, NOT 5-10% away
+     * DO NOT suggest wide SL (5%+) - find the nearest realistic reversal point on lower timeframes
+   
+   - CRITICAL RULES:
+     * ALWAYS evaluate original SL first - don't blindly suggest new SL
+     * If original SL is good OR within 1-2% of optimal level, KEEP IT (set suggested_stop_loss to null)
+     * Only suggest new SL if original is clearly problematic AND new SL is within 1-2% of original
+     * When suggesting new SL, explain WHY original SL needs adjustment in price_suggestion_reasoning
 
-4. TAKE PROFIT (INSTITUTIONAL TARGET ALIGNMENT):
-   - LONG: TP should be ABOVE entry (aligned with HTF structure, liquidity objectives, resistance levels)
-   - SHORT: TP should be BELOW entry (aligned with HTF structure, liquidity objectives, support levels)
-   - MINIMUM RR ≥ 1:3 REQUIRED (if can't achieve, modify or discard signal)
-   - Suggest HIGHER TP for LONG if structure allows (more profit potential at resistance/liquidity zone)
-   - Suggest LOWER TP for SHORT if structure allows (more profit potential at support/liquidity zone)
-   - TP must align with HTF structure and liquidity objectives
+4. TAKE PROFIT (INSTITUTIONAL TARGET ALIGNMENT - EVALUATE ORIGINAL TP FIRST):
+   - STEP 1: EVALUATE THE ORIGINAL TP from the signal:
+     * Check if original TP is at a realistic support/resistance level (check lower timeframes: 15m, 1h)
+     * Check if original TP is achievable (not too far - typically 3-15% from entry is realistic)
+     * Check if original TP gives RR ≥ 1:3 (minimum requirement)
+     * Check if original TP aligns with market structure and liquidity objectives
+   
+   - STEP 2: DECISION - Keep or Optimize:
+     * If original TP is GOOD (realistic, achievable, RR ≥ 1:3, at support/resistance): KEEP IT (set suggested_take_profit to null)
+     * If original TP is TOO AGGRESSIVE (won't hit, too far, unrealistic): Suggest LOWER TP (only if technically justified)
+     * If original TP is TOO CONSERVATIVE (leaves profit on table, can go further): Suggest HIGHER TP (only if technically justified)
+     * If original TP gives RR < 1:3: Find nearest level that achieves RR ≥ 1:3 (only if technically justified)
+     * DO NOT suggest changes just to make a 1-2% adjustment - only change if technically justified
+   
+   - STEP 3: If optimization needed (SOLID TECHNICAL REASON):
+     * MAXIMUM distance: Keep within 1-2% of original to ensure orders FILL (this is a LIMIT, not a requirement)
+     * Only suggest if new TP is clearly better AND within 1-2% of original
+   
+   - STEP 3: If optimization needed, use LOWER TIMEFRAMES (15m, 1h):
+     * Check market_data['lower_timeframe_levels']['15m']['resistance_levels'] and market_data['lower_timeframe_levels']['1h']['resistance_levels'] for LONG
+     * Check market_data['lower_timeframe_levels']['15m']['support_levels'] and market_data['lower_timeframe_levels']['1h']['support_levels'] for SHORT
+     * LONG: Find nearest resistance level ABOVE entry (within 1-2% of original TP, typically 3-8% from entry, max 15% if structure requires)
+     * SHORT: Find nearest support level BELOW entry (within 1-2% of original TP, typically 3-8% from entry, max 15% if structure requires)
+     * TP should be REALISTIC and ACHIEVABLE - not 20-30% away
+     * DO NOT suggest very wide TP (15%+) unless absolutely necessary for RR ≥ 1:3
+   
+   - CRITICAL RULES:
+     * ALWAYS evaluate original TP first - don't blindly suggest new TP
+     * If original TP is good OR within 1-2% of optimal level, KEEP IT (set suggested_take_profit to null)
+     * Only suggest new TP if original is clearly problematic AND new TP is within 1-2% of original
+     * When suggesting new TP, explain WHY original TP needs adjustment in price_suggestion_reasoning
 
 CALCULATION METHOD (Institutional Approach):
 - IDENTIFY INSTITUTIONAL ZONES: Order blocks, FVGs, liquidity pools, stop-hunt zones
-- VALIDATE STRUCTURE: HTF → LTF alignment, BOS/CHoCH, swing points
-- CALCULATE ENTRY: At institutional liquidity zone (order block, FVG, or liquidity pool)
-- CALCULATE SL: Below/above order block, below/above liquidity pool, or 1.5-2.5x ATR
-- CALCULATE TP: At HTF structure target, liquidity objective, or resistance/support (RR ≥ 1:3)
+- VALIDATE STRUCTURE: HTF → LTF alignment, BOS/CHoCH, swing points (HTF for trend direction, LTF for precise levels)
+- CALCULATE ENTRY: At institutional liquidity zone (order block, FVG, or liquidity pool) - can use HTF for direction
+- CALCULATE SL: At NEAREST support/resistance on LTF (15m, 1h) - NOT HTF (HTF SL would be too wide)
+- CALCULATE TP: At NEAREST resistance/support on LTF (15m, 1h) - NOT HTF targets (HTF targets are too far, 20-30% away)
 - VALIDATE RR: Must be ≥ 1:3 (if not, modify or discard)
+- CRITICAL: HTF is for TREND DIRECTION and ENTRY optimization, LTF (15m, 1h) is for SL/TP placement (tighter, more achievable)
 
 If original prices are already optimal (at institutional zones, RR ≥ 1:3), you may omit suggestion fields (they will use original).
 If you suggest prices, they will be APPLIED if they improve the trade (better institutional entry, tighter SL, higher TP, better RR).
