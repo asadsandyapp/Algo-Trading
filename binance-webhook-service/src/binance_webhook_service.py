@@ -3529,62 +3529,30 @@ def create_limit_order(signal_data):
                     logger.info(f"🔄 [PRICE UPDATE] Using AI-optimized take profit: ${take_profit:,.8f}")
                 
                 # Calculate optimized Entry 2 (DCA) if Entry 1 was optimized
+                # Keep Entry 2 close to original Entry 2, maintaining relative spacing from Entry 1
                 if opt_prices.get('entry_price') and opt_prices['entry_price'] != safe_float(signal_data.get('entry_price'), default=entry_price):
                     original_entry = safe_float(signal_data.get('entry_price'), default=entry_price)
                     original_entry2 = safe_float(signal_data.get('second_entry_price'), default=None)
                     
                     if original_entry2 and original_entry:
-                        # Calculate Entry 2 based on technical analysis (ATR-based or timeframe-aware spacing)
-                        # NOT hardcoded percentage - adapts to volatility and timeframe
-                        timeframe_str = signal_data.get('timeframe', '1H').upper()
-                        atr_val = safe_float(indicators.get('atr'), default=None) if indicators else None
+                        # Calculate the ORIGINAL spacing between Entry 1 and Entry 2
+                        if signal_side == 'LONG':
+                            original_spacing = original_entry - original_entry2  # Entry 2 is below Entry 1
+                        else:  # SHORT
+                            original_spacing = original_entry2 - original_entry  # Entry 2 is above Entry 1
                         
-                        if atr_val and atr_val > 0:
-                            # ATR-based spacing (PREFERRED) - realistic for 20x leverage, $10 entries
-                            # Spacing must be tight enough to fill before trade closes
-                            if '1H' in timeframe_str:
-                                atr_multiplier = 1.25  # 1.0-1.5x ATR range, use 1.25x as default (tight, fills quickly)
-                            elif '2H' in timeframe_str:
-                                atr_multiplier = 1.5   # 1.2-1.8x ATR range, use 1.5x as default (moderate, still fills reliably)
-                            elif '4H' in timeframe_str:
-                                atr_multiplier = 1.75  # 1.5-2.0x ATR range, use 1.75x as default (wider but realistic)
-                            elif '1D' in timeframe_str or 'DAILY' in timeframe_str:
-                                atr_multiplier = 2.25  # 2.0-2.5x ATR range, use 2.25x as default (widest but fillable)
-                            else:
-                                # Default to 2H spacing if timeframe unknown
-                                atr_multiplier = 1.5
-                            
-                            spacing = atr_val * atr_multiplier
-                            if signal_side == 'LONG':
-                                optimized_entry2 = opt_prices['entry_price'] - spacing
-                            else:  # SHORT
-                                optimized_entry2 = opt_prices['entry_price'] + spacing
-                            opt_prices['second_entry_price'] = optimized_entry2
-                            spacing_pct = (spacing / opt_prices['entry_price']) * 100
-                            logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (based on Entry 1 optimization, {spacing_pct:.2f}% spacing using {atr_multiplier}x ATR = ${atr_val:,.8f} for {timeframe_str} timeframe)")
-                        else:
-                            # Timeframe-aware percentage spacing (fallback if ATR not available)
-                            # Realistic spacing for 20x leverage, $10 entries - tight enough to fill
-                            if '1H' in timeframe_str:
-                                spacing_pct = 2.5  # 2-3% range, use 2.5% as default (tight, fills quickly)
-                            elif '2H' in timeframe_str:
-                                spacing_pct = 3.5  # 3-4% range, use 3.5% as default (moderate, still fills reliably)
-                            elif '4H' in timeframe_str:
-                                spacing_pct = 4.5  # 4-5% range, use 4.5% as default (wider but realistic)
-                            elif '1D' in timeframe_str or 'DAILY' in timeframe_str:
-                                spacing_pct = 6.0  # 5-7% range, use 6% as default (widest but fillable)
-                            else:
-                                # Default to 2H spacing if timeframe unknown
-                                spacing_pct = 3.5
-                            
-                            if signal_side == 'LONG':
-                                # Entry 2 should be lower than Entry 1
-                                optimized_entry2 = opt_prices['entry_price'] * (1 - spacing_pct / 100)
-                            else:  # SHORT
-                                # Entry 2 should be higher than Entry 1
-                                optimized_entry2 = opt_prices['entry_price'] * (1 + spacing_pct / 100)
-                            opt_prices['second_entry_price'] = optimized_entry2
-                            logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (based on Entry 1 optimization, {spacing_pct:.2f}% spacing for {timeframe_str} timeframe - ATR not available, using timeframe-aware spacing)")
+                        # Calculate original spacing as percentage
+                        original_spacing_pct = (original_spacing / original_entry) * 100 if original_entry > 0 else 0
+                        
+                        # Apply the SAME spacing percentage to the optimized Entry 1
+                        # This keeps Entry 2 close to its original position relative to Entry 1
+                        if signal_side == 'LONG':
+                            optimized_entry2 = opt_prices['entry_price'] * (1 - original_spacing_pct / 100)
+                        else:  # SHORT
+                            optimized_entry2 = opt_prices['entry_price'] * (1 + original_spacing_pct / 100)
+                        
+                        opt_prices['second_entry_price'] = optimized_entry2
+                        logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (maintaining original {original_spacing_pct:.2f}% spacing from optimized Entry 1, original Entry 2 was ${original_entry2:,.8f})")
         
         # Handle EXIT events - close position at market price and cancel all orders for symbol
         if event == 'EXIT':
