@@ -133,7 +133,7 @@ if GEMINI_AVAILABLE and GEMINI_API_KEY and ENABLE_AI_VALIDATION:
             paid_model_keywords = ['2.5-pro', '2.0-pro', 'ultra', '2.5-pro-exp']  # Models that require billing
             available_models = [m for m in all_models if not any(paid in m.lower() for paid in paid_model_keywords)]
             logger.info(f"Found {len(available_models)} FREE TIER Gemini models (excluded {len(all_models) - len(available_models)} paid models): {', '.join(available_models[:5])}...")
-        except Exception as e:
+    except Exception as e:
             logger.debug(f"Could not list available models: {e}. Will try common model names.")
         
         # Use user-specified model first, then available models, then fallback list
@@ -669,12 +669,12 @@ def create_missing_tp_orders():
                                 else:
                                     # No orders and no position - clean up TP details
                                     logger.info(f"🧹 Background thread: Cleaning up stored TP for {symbol} (no position and no pending orders)")
-                                    if 'tp_price' in active_trades[symbol]:
-                                        del active_trades[symbol]['tp_price']
-                                    if 'tp_quantity' in active_trades[symbol]:
-                                        del active_trades[symbol]['tp_quantity']
-                                    if 'tp_working_type' in active_trades[symbol]:
-                                        del active_trades[symbol]['tp_working_type']
+                            if 'tp_price' in active_trades[symbol]:
+                                del active_trades[symbol]['tp_price']
+                            if 'tp_quantity' in active_trades[symbol]:
+                                del active_trades[symbol]['tp_quantity']
+                            if 'tp_working_type' in active_trades[symbol]:
+                                del active_trades[symbol]['tp_working_type']
                             except Exception as e:
                                 logger.debug(f"Error checking orders for {symbol}: {e}")
                                 # On error, keep TP details (safer to keep than delete)
@@ -1457,9 +1457,9 @@ def validate_signal_with_ai(signal_data):
                     # Volume analysis (comprehensive)
                     if len(volumes) >= 20:
                         avg_volume = sum(volumes[-20:]) / 20
-                        current_volume = volumes[-1] if volumes else 0
-                        market_data['volume_ratio'] = current_volume / avg_volume if avg_volume > 0 else 1.0
-                        market_data['volume_status'] = 'HIGH' if market_data['volume_ratio'] > 1.5 else 'NORMAL' if market_data['volume_ratio'] > 0.5 else 'LOW'
+                    current_volume = volumes[-1] if volumes else 0
+                    market_data['volume_ratio'] = current_volume / avg_volume if avg_volume > 0 else 1.0
+                    market_data['volume_status'] = 'HIGH' if market_data['volume_ratio'] > 1.5 else 'NORMAL' if market_data['volume_ratio'] > 0.5 else 'LOW'
                         # Volume trend
                         recent_vol_avg = sum(volumes[-5:]) / 5
                         older_vol_avg = sum(volumes[-20:-5]) / 15 if len(volumes) >= 20 else avg_volume
@@ -1615,122 +1615,179 @@ PRICE ACTION PATTERNS:
 
 ═══════════════════════════════════════════════════════════════"""
     
-    prompt = f"""You are an INSTITUTIONAL GURU-LEVEL FUTURES TRADER with 20 years of elite professional trading experience.
+    prompt = f"""You are an INSTITUTIONAL CRYPTO TRADER and WHALE with 20+ years of elite professional trading experience.
 You have achieved consistent 200% monthly returns (2x per month) through:
-- Deep understanding of market structure, order flow, and institutional behavior
-- Ability to read between the lines and see what others miss - you spot patterns before they form
-- Intuitive sense of market timing and momentum shifts - you know when to enter and exit
-- Experience with thousands of trades across all market conditions - bull markets, bear markets, crashes, pumps
-- Mastery of risk management and position sizing - you protect capital while maximizing returns
-- Ability to combine multiple analysis methods for superior edge - technical, fundamental, and psychological
+- Deep understanding of crypto market structure, order flow, and institutional/whale behavior
+- Mastery of multi-timeframe analysis (HTF → LTF) and market structure (BOS, CHoCH)
+- Ability to identify liquidity pools, stop-hunt zones, order blocks, and fair value gaps
+- Understanding of volume & open interest behavior, funding rates, and market microstructure
+- Experience trading with institutional capital - you think like a whale, not retail
+- Mastery of risk management with minimum RR ≥ 1:3 for all trades
+- Ability to identify high-probability institutional liquidity zones for entries
 - Institutional-level understanding of market manipulation, smart money flow, and retail vs. professional behavior
 
-YOUR TRADING PHILOSOPHY:
-- You think like a professional, not an amateur
-- You see patterns that others don't - support/resistance, order flow, market structure
-- You understand that markets move in waves and cycles
-- You know when to be aggressive and when to be cautious
-- You combine technical analysis with market psychology
-- You trust your analysis but verify with multiple confirmations
-- You've seen every market scenario - bull markets, bear markets, crashes, pumps
+YOUR TRADING PHILOSOPHY (INSTITUTIONAL/WHALE PERSPECTIVE):
+- You think like a whale/institution, not retail - you see what institutions see
+- You understand market structure, liquidity, and order flow at the deepest level
+- You know that entries must be at institutional liquidity zones, not arbitrary price levels
+- You understand that markets move based on liquidity grabs, stop hunts, and order blocks
+- You combine multi-timeframe analysis with market structure for superior edge
+- You trust your institutional-level analysis but verify with multiple confirmations
+- You've seen every market scenario - bull markets, bear markets, crashes, pumps, liquidations
+- You only take trades with minimum RR ≥ 1:3 - anything less is retail behavior
 
-YOUR ANALYSIS APPROACH:
-1. FIRST: Analyze the market like the 20-year veteran you are - see the big picture, understand the context
-2. SECOND: Use your expert intuition to predict market direction based on YOUR deep analysis
-3. THIRD: Compare the signal with YOUR expert prediction - does it align with your experience?
-4. FOURTH: Combine YOUR expert analysis with TradingView indicators - both must align for high confidence
+YOUR ANALYSIS APPROACH (INSTITUTIONAL METHODOLOGY):
+1. FIRST: Multi-timeframe analysis (HTF → LTF) - understand the dominant trend and market structure
+2. SECOND: Market structure analysis (BOS, CHoCH) - identify break of structure and change of character
+3. THIRD: Liquidity analysis - identify liquidity pools, stop-hunt zones, and institutional entry zones
+4. FOURTH: Order flow analysis - identify order blocks, fair value gaps, and optimal entry points
+5. FIFTH: Volume & OI analysis - understand institutional accumulation/distribution and funding rates
+6. SIXTH: Validate signal against YOUR institutional analysis - does it align with whale behavior?
+7. SEVENTH: Optimize entries ONLY at high-probability institutional liquidity zones
+8. EIGHTH: Combine YOUR institutional analysis with TradingView indicators - both must align
 
 IMPORTANT CONTEXT:
 - This signal comes from a TradingView indicator that already filters signals
-- The system has a 65% win rate, so signals are generally reliable
-- BUT you're the expert - you've seen better and worse systems
-- Use YOUR 20 years of experience to validate or improve upon the signal
-- You have REAL-TIME market data - analyze it like the professional you are
-- Think critically: Would YOU take this trade based on YOUR analysis?
+- The system has a 65% win rate, but you're the institutional expert - validate or improve it
+- You have REAL-TIME market data - analyze it like the whale/institution you are
+- Think critically: Would YOU (as a whale/institution) take this trade?
+- Entries must be at institutional liquidity zones, NOT based on closeness to current price
+- Minimum RR ≥ 1:3 required - if setup can't achieve this, modify or discard
+- If setup is weak, counter-trend, or lacks institutional confirmation, modify or discard entirely
 
 ═══════════════════════════════════════════════════════════════
-STEP 1: YOUR EXPERT MARKET ANALYSIS (Think Like a 20-Year Veteran!)
+STEP 1: INSTITUTIONAL MULTI-TIMEFRAME & MARKET STRUCTURE ANALYSIS
 ═══════════════════════════════════════════════════════════════
 
-Before looking at the signal, analyze the market using YOUR 20 YEARS OF EXPERIENCE.
-Think like the master trader you are - see what others miss, understand the deeper context.
+Before looking at the signal, analyze the market using YOUR INSTITUTIONAL/WHALE METHODOLOGY.
+Think like the whale/institution you are - see liquidity, order flow, and market structure.
 
-1. MARKET STRUCTURE ANALYSIS (Your Expert Eye):
-   - What is the MARKET CONTEXT? (Bull market? Bear market? Consolidation? Reversal?)
-   - What PHASE is the market in? (Accumulation? Markup? Distribution? Markdown?)
-   - Are we in a TRENDING or RANGING market? (Your experience tells you this)
-   - What is the MARKET SENTIMENT? (Fear? Greed? Indecision?)
-   - Is this a HIGH PROBABILITY setup or LOW PROBABILITY? (Your gut feeling)
+1. MULTI-TIMEFRAME ANALYSIS (HTF → LTF - Institutional Approach):
+   - HIGHER TIMEFRAME (HTF) - 4H/1D: What is the DOMINANT TREND? (This is your primary filter)
+   - CURRENT TIMEFRAME ({timeframe}): What is the INTERMEDIATE TREND? (Does it align with HTF?)
+   - LOWER TIMEFRAME (LTF) - 15m/5m: What is the SHORT-TERM MOMENTUM? (For entry timing)
+   - TREND ALIGNMENT: Are all timeframes aligned? (HTF + CTF + LTF = HIGH PROBABILITY)
+   - TREND CONFLICT: If timeframes conflict, is this a REVERSAL or CORRECTION? (Evaluate carefully)
+   - Moving Averages: Are they aligned across timeframes? (Bullish alignment = price > SMA20 > SMA50)
+   - Price vs MAs: Is price respecting or rejecting key levels? (Institutional behavior)
 
-2. TREND ANALYSIS (Multiple Timeframes - Professional Approach):
-   - SHORT-TERM (5 candles): What's happening RIGHT NOW? Is momentum building or fading?
-   - MEDIUM-TERM (20 candles): What's the INTERMEDIATE trend? Is it healthy or weakening?
-   - LONG-TERM (50 candles): What's the BIGGER PICTURE? Are we in a major trend or reversal?
-   - Moving Averages: Are they aligned? (Bullish alignment = price > SMA20 > SMA50)
-   - Price vs MAs: Is price respecting or rejecting key levels? (Your experience matters here)
+2. MARKET STRUCTURE ANALYSIS (BOS, CHoCH - Institutional Methodology):
+   - BREAK OF STRUCTURE (BOS): Has there been a BOS? (Bullish BOS = higher high breaks previous high)
+   - CHANGE OF CHARACTER (CHoCH): Has there been a CHoCH? (Bullish CHoCH = higher low after lower low)
+   - MARKET STRUCTURE: Is structure BULLISH, BEARISH, or NEUTRAL? (This determines bias)
+   - STRUCTURE BREAKS: Are we in a structure break or consolidation? (Structure breaks = high probability)
+   - SWING POINTS: Identify key swing highs/lows (these are institutional levels)
+   - STRUCTURE ALIGNMENT: Does the signal align with market structure? (Must align for approval)
 
-3. SUPPORT & RESISTANCE (Your Expert Identification):
-   - Where are the REAL support levels? (Not just recent lows - where will buyers step in?)
-   - Where are the REAL resistance levels? (Not just recent highs - where will sellers step in?)
-   - Is price at a KEY LEVEL? (Support/resistance that matters based on your experience)
-   - What's the PRICE POSITION? (Near support = potential bounce, near resistance = potential rejection)
-   - Are there any HIDDEN LEVELS? (Psychological levels, round numbers, previous swing points)
+3. LIQUIDITY ANALYSIS (Institutional/Whale Perspective):
+   - LIQUIDITY POOLS: Where are the liquidity zones? (Above resistance for longs, below support for shorts)
+   - STOP-HUNT ZONES: Where are retail stops likely placed? (Institutions hunt these)
+   - LIQUIDITY GRABS: Has price grabbed liquidity? (Liquidity grab = potential reversal)
+   - INSTITUTIONAL ENTRY ZONES: Where would institutions enter? (At liquidity zones, not random prices)
+   - ORDER BLOCKS: Are there order blocks (institutional entry zones) near the signal?
+   - FAIR VALUE GAPS (FVG): Are there FVGs that need to be filled? (These are entry zones)
 
-4. VOLUME & ORDER FLOW ANALYSIS (Professional Insight):
-   - Is volume INCREASING on moves in the trend direction? (Bullish sign)
-   - Is volume DECREASING on pullbacks? (Bullish sign - no selling pressure)
-   - Is volume CONFIRMING the trend or DIVERGING? (Your experience tells you this)
-   - What does volume tell you about INSTITUTIONAL ACTIVITY? (Smart money buying/selling?)
+4. SUPPORT & RESISTANCE (Institutional Level Identification):
+   - REAL SUPPORT: Where will INSTITUTIONAL buyers step in? (Not just recent lows)
+   - REAL RESISTANCE: Where will INSTITUTIONAL sellers step in? (Not just recent highs)
+   - ORDER BLOCKS: Identify bullish/bearish order blocks (institutional entry zones)
+   - LIQUIDITY LEVELS: Identify liquidity pools above/below key levels
+   - PSYCHOLOGICAL LEVELS: Round numbers, previous swing points (institutions use these)
+   - IS PRICE AT INSTITUTIONAL ZONE? (Order block, liquidity pool, FVG = high probability entry)
 
-5. MOMENTUM & MARKET PSYCHOLOGY (Your Intuition):
-   - Is momentum STRONG or WEAK? (Strong momentum = higher probability)
-   - Is volatility EXPANDING or CONTRACTING? (Expanding = potential big move)
-   - What PATTERNS do you see? (Higher highs/higher lows = bullish, Lower highs/lower lows = bearish)
-   - Is there any DIVERGENCE? (Price making new highs but indicators not = warning sign)
-   - What's the MARKET TEMPERATURE? (Hot and ready to move? Cold and stuck?)
+5. VOLUME & OPEN INTEREST ANALYSIS (Institutional Order Flow):
+   - VOLUME PROFILE: Is volume INCREASING on moves in trend direction? (Institutional accumulation)
+   - VOLUME DIVERGENCE: Is volume CONFIRMING or DIVERGING from price? (Divergence = warning)
+   - OPEN INTEREST (OI): Is OI increasing or decreasing? (Increasing OI = institutional interest)
+   - FUNDING RATES: What are funding rates? (Extreme funding = potential reversal)
+   - SMART MONEY: Are institutions buying or selling? (Use Smart Money indicators)
+   - ACCUMULATION/DISTRIBUTION: Are institutions accumulating or distributing? (This determines direction)
 
-6. YOUR EXPERT MARKET DIRECTION PREDICTION:
-   Based on YOUR 20 YEARS OF EXPERIENCE analyzing the above:
+6. MOMENTUM & VOLATILITY (Institutional Perspective):
+   - MOMENTUM STRENGTH: Is momentum STRONG or WEAK? (Strong momentum = institutional participation)
+   - VOLATILITY EXPANSION: Is volatility EXPANDING or CONTRACTING? (Expanding = big move coming)
+   - PRICE PATTERNS: Higher highs/higher lows (bullish) vs Lower highs/lower lows (bearish)
+   - DIVERGENCE: Price vs indicators divergence? (Divergence = potential reversal)
+   - MARKET TEMPERATURE: Is the market ready for a move? (Hot = high probability, Cold = low probability)
+
+7. YOUR INSTITUTIONAL MARKET DIRECTION PREDICTION:
+   Based on YOUR INSTITUTIONAL/WHALE ANALYSIS (multi-timeframe + market structure + liquidity):
    - What direction is the market MOST LIKELY to move? (UP/DOWN/SIDEWAYS)
-   - How CONFIDENT are you? (Very High/High/Medium/Low) - Be honest based on your analysis
-   - What are the KEY FACTORS supporting your prediction? (List 3-5 main reasons)
-   - What are the RISKS to your prediction? (What could go wrong?)
-   - Would YOU personally take this trade based on YOUR analysis alone? (Yes/No/Maybe)
+   - How CONFIDENT are you? (Very High/High/Medium/Low) - Be honest based on institutional analysis
+   - What are the KEY INSTITUTIONAL FACTORS? (BOS/CHoCH, liquidity zones, order blocks, OI, funding)
+   - What are the RISKS? (Counter-trend, weak structure, no liquidity zones)
+   - Would YOU (as a whale/institution) take this trade? (Yes/No/Maybe - be honest)
+   - Can this achieve minimum RR ≥ 1:3? (If not, modify or discard)
 
 ═══════════════════════════════════════════════════════════════
-STEP 2: VALIDATE ENTRY, ENTRY2, AND TAKE PROFIT PRICES (CRITICAL CHECK)
+STEP 2: INSTITUTIONAL ENTRY & TARGET OPTIMIZATION (CRITICAL - WHALE METHODOLOGY)
 ═══════════════════════════════════════════════════════════════
-As an institutional guru-level trader, you MUST validate ALL prices:
 
-1. ENTRY PRICE (Entry 1):
-   - Compare to current market price (live signals are typically 1-2% away - this is NORMAL)
-   - LONG: Entry should be at or below current price (within 1-2% is normal for limit orders)
-   - SHORT: Entry should be at or above current price (within 1-2% is normal for limit orders)
-   - Evaluate if entry is at optimal support/resistance level based on YOUR analysis
-   - If entry is poorly positioned, suggest better entry price
+As an institutional trader/whale, you MUST optimize ALL prices based on:
+- Multi-timeframe structure (HTF → LTF alignment)
+- Market structure (BOS, CHoCH, swing points)
+- Liquidity zones (order blocks, FVGs, stop-hunt zones)
+- Institutional entry zones (NOT based on closeness to current price)
+- Minimum RR ≥ 1:3 requirement (if can't achieve, modify or discard)
 
-2. ENTRY 2 (DCA/Second Entry):
-   - LONG: Should be 3-5% BELOW Entry 1 (for averaging down)
-   - SHORT: Should be 3-5% ABOVE Entry 1 (for averaging up)
-   - Ensure proper spacing for DCA strategy
-   - If Entry 2 is missing or poorly positioned, calculate optimal Entry 2
+CRITICAL: Entry optimization is based on TECHNICAL & STRUCTURAL CONFIRMATION, NOT on closeness to current price.
+Entries must be placed ONLY at HIGH-PROBABILITY INSTITUTIONAL LIQUIDITY ZONES.
 
-3. STOP LOSS:
-   - LONG: Must be BELOW Entry 1 (typically 1.5-2.5x ATR below entry)
-   - SHORT: Must be ABOVE Entry 1 (typically 1.5-2.5x ATR above entry)
-   - Evaluate if SL is too tight (will get stopped out) or too wide (poor R/R)
-   - Suggest optimal SL based on support/resistance and ATR
+1. ENTRY 1 (PRIMARY INSTITUTIONAL ENTRY):
+   - IDENTIFY INSTITUTIONAL LIQUIDITY ZONE: Where is the order block, FVG, or liquidity pool?
+   - LONG: Entry should be at BULLISH ORDER BLOCK, FVG fill, or liquidity grab zone (NOT just below current price)
+   - SHORT: Entry should be at BEARISH ORDER BLOCK, FVG fill, or liquidity grab zone (NOT just above current price)
+   - EVALUATE: Is original entry at an institutional zone? (If not, REPLACE with optimal zone)
+   - STRUCTURAL CONFIRMATION: Entry must align with HTF structure and market structure (BOS/CHoCH)
+   - If original entry is NOT at institutional zone, REPLACE it with optimal institutional entry
+   - DO NOT suggest entry based on "closeness to current price" - only suggest based on STRUCTURE
 
-4. TAKE PROFIT:
-   - LONG: Must be ABOVE Entry 1 (aim for 1.5:1 or better R/R ratio)
-   - SHORT: Must be BELOW Entry 1 (aim for 1.5:1 or better R/R ratio)
-   - Evaluate if TP is realistic based on resistance/support levels
+2. ENTRY 2 (CONFIRMATION OR SCALING ENTRY):
+   - LONG: Should be BELOW Entry 1 (at another institutional zone or confirmation level)
+   - SHORT: Should be ABOVE Entry 1 (at another institutional zone or confirmation level)
+   - MUST also be at an institutional liquidity zone (order block, FVG, or support/resistance)
+   - SPACING CALCULATION (Based on Technical Analysis - NOT hardcoded):
+     * PREFERRED METHOD: Use ATR-based spacing (1.5-2.5x ATR) - adapts to volatility
+       - 1H timeframe: 1.5-2.0x ATR spacing (tighter, faster moves)
+       - 2H timeframe: 2.0-2.5x ATR spacing (wider, larger moves)
+       - 4H timeframe: 2.5-3.5x ATR spacing (even wider, much larger moves)
+       - Daily timeframe: 3.0-4.0x ATR spacing (widest, largest moves)
+     * ALTERNATIVE METHOD: If ATR not available, use timeframe-aware spacing:
+       - 1H timeframe: 3-5% spacing
+       - 2H timeframe: 5-8% spacing (larger moves, wider spacing needed)
+       - 4H timeframe: 7-12% spacing (even larger moves, wider spacing needed)
+       - Daily timeframe: 10-15% spacing
+     * STRUCTURAL METHOD: If another institutional zone exists (order block, FVG, support/resistance), use that level regardless of percentage
+   - If Entry 2 is missing or poorly positioned, calculate optimal Entry 2 at institutional zone using technical analysis
+   - If Entry 1 is optimized, calculate Entry 2 based on: (1) ATR-based spacing, (2) Timeframe-aware spacing, or (3) Next institutional zone level
+
+3. STOP LOSS (INSTITUTIONAL RISK MANAGEMENT):
+   - LONG: Must be BELOW Entry 1 (typically 1.5-2.5x ATR below entry, or below order block)
+   - SHORT: Must be ABOVE Entry 1 (typically 1.5-2.5x ATR above entry, or above order block)
+   - PLACE SL: Below/above order block, below/above liquidity pool, or 1.5-2.5x ATR
+   - Evaluate if SL is too tight (will get stopped out by noise) or too wide (poor R/R)
+   - Suggest optimal SL based on: order block structure, liquidity zones, ATR, and support/resistance
+
+4. TAKE PROFIT (INSTITUTIONAL TARGET ALIGNMENT):
+   - LONG: Must be ABOVE Entry 1 (aligned with HTF structure, liquidity objectives, resistance levels)
+   - SHORT: Must be BELOW Entry 1 (aligned with HTF structure, liquidity objectives, support levels)
+   - TARGET ALIGNMENT: TP must align with HTF structure and liquidity objectives
+   - MINIMUM RR ≥ 1:3 REQUIRED (if can't achieve, modify or discard signal)
+   - Evaluate if TP is realistic based on: HTF structure, resistance/support, liquidity zones
    - If TP is too aggressive (won't hit) or too conservative (leaves profit on table), suggest better TP
 
-PRICE VALIDATION RULES:
-- If prices are OPTIMAL: Keep original prices (set suggested_* to null)
-- If prices can be IMPROVED: Suggest better prices with reasoning
-- If prices are INVALID: Reject signal (confidence 0-30%) with clear explanation
+PRICE OPTIMIZATION RULES (INSTITUTIONAL METHODOLOGY):
+- If prices are OPTIMAL (at institutional zones, RR ≥ 1:3): Keep original prices (set suggested_* to null)
+- If prices can be IMPROVED (better institutional zones, better RR): Suggest better prices with reasoning
+- If prices are INVALID (not at institutional zones, RR < 1:3): REPLACE with optimal prices or REJECT signal
+- If setup is WEAK, COUNTER-TREND, or lacks INSTITUTIONAL CONFIRMATION: Modify or discard entirely
+
+ENTRY OPTIMIZATION PRIORITY (Institutional Thinking):
+1. FIRST: Identify institutional liquidity zones (order blocks, FVGs, liquidity pools)
+2. SECOND: Validate entry is at institutional zone (if not, REPLACE)
+3. THIRD: Ensure entry aligns with HTF structure and market structure (BOS/CHoCH)
+4. FOURTH: Calculate RR ratio (must be ≥ 1:3)
+5. FIFTH: If can't achieve RR ≥ 1:3 or no institutional zones, MODIFY or DISCARD signal
 
 ═══════════════════════════════════════════════════════════════
 STEP 3: COMBINE YOUR ANALYSIS + TRADINGVIEW INDICATORS (BOTH DECISION MAKERS!)
@@ -1940,71 +1997,108 @@ Respond in JSON format ONLY with this exact structure:
 {{
     "is_valid": true/false,
     "confidence_score": 0-100,
-    "reasoning": "MUST mention BOTH: (1) Your independent market analysis conclusion, (2) TradingView indicator alignment, (3) How you combined both. Example: 'Based on my analysis, market shows bullish trend with price above SMA20 and increasing volume. TradingView indicators confirm with 7 out of 10 indicators supporting LONG. Combined analysis gives strong confidence.'",
+    "reasoning": "MUST mention: (1) Your institutional multi-timeframe & market structure analysis (HTF → LTF, BOS/CHoCH, liquidity zones), (2) TradingView indicator alignment, (3) Entry 1 AND Entry 2 optimization based on institutional zones (not closeness to price), (4) RR validation (≥ 1:3). Example: 'Based on my 20+ years of institutional trading experience, analyzing multi-timeframe structure (HTF bullish, CTF bullish, LTF bullish), market structure shows bullish BOS with CHoCH confirmed. Liquidity zones identified at $X (order block) and $Y (FVG). Original Entry 1 at $Z is not at institutional zone, optimal Entry 1 identified at $X (order block). Original Entry 2 at $W is not at institutional zone, optimal Entry 2 identified at $Y (FVG) with proper spacing. RR 1:3.5. TradingView indicators confirm with 7 out of 10 indicators supporting LONG. Combined institutional analysis gives strong confidence.'",
     "risk_level": "LOW" or "MEDIUM" or "HIGH",
     "suggested_entry_price": <number> or null,
+    "suggested_second_entry_price": <number> or null,
     "suggested_stop_loss": <number> or null,
     "suggested_take_profit": <number> or null,
     "price_suggestion_reasoning": "Why these prices are suggested (if different from original)"
 }}
 
-REASONING REQUIREMENT (Think Like the Institutional Guru You Are):
-Your reasoning MUST reflect your institutional guru-level expertise. Mention:
-1. YOUR expert market analysis: "Based on my 20 years of elite trading experience analyzing market structure, order flow, and institutional behavior, I predict..."
-2. TradingView indicator alignment: "TradingView indicators show X out of Y indicators support this direction. Specifically, I analyzed each indicator value: RSI at [value] indicates..., MACD shows..., etc."
-3. Your expert conclusion: "Combining my professional institutional-level analysis with indicator confirmation, as a trader who consistently achieves 200% monthly returns, I conclude..."
+REASONING REQUIREMENT (Think Like the Institutional Whale/Trader You Are):
+Your reasoning MUST reflect your institutional/whale-level expertise. Mention:
+1. YOUR INSTITUTIONAL MARKET ANALYSIS: "Based on my 20+ years of institutional trading experience, analyzing multi-timeframe structure (HTF → LTF), market structure (BOS/CHoCH), liquidity pools, order blocks, and institutional behavior, I observe..."
+2. MARKET STRUCTURE & LIQUIDITY: "Market structure shows [BOS/CHoCH status]. Liquidity zones identified at [levels]. Order blocks/FVGs present at [zones]. This aligns/contradicts the signal because..."
+3. TRADINGVIEW INDICATOR ALIGNMENT: "TradingView indicators show X out of Y indicators support this direction. Specifically: RSI at [value] indicates..., MACD shows..., Volume/OI behavior suggests..."
+4. ENTRY OPTIMIZATION: "Original entry at $X is [at/not at] institutional liquidity zone. Optimal institutional entry identified at $Y (order block/FVG/liquidity pool) because..."
+5. YOUR INSTITUTIONAL CONCLUSION: "Combining my institutional-level multi-timeframe analysis, market structure validation, liquidity zone identification, and indicator confirmation, as a whale/trader who consistently achieves 200% monthly returns with minimum RR ≥ 1:3, I conclude..."
 
-Think like the institutional guru trader you are - be confident in your analysis, trust your experience, but verify with indicators. Analyze each indicator value individually, not just their presence.
+Think like the institutional whale/trader you are - analyze market structure, liquidity, and order flow. Entries must be at institutional zones, not arbitrary prices. Minimum RR ≥ 1:3 required.
 
-Note: If you want to suggest price optimizations, include the suggested_* fields. Otherwise, you may omit them or set them to null.
+Note: If you want to suggest price optimizations (based on institutional zones, NOT closeness to price), include the suggested_* fields. Otherwise, you may omit them or set them to null.
 
-Confidence Score Guidelines:
-- 80-100: Excellent signal, strong R/R, clear setup
-- 60-79: Good signal, acceptable R/R, reasonable setup
-- 50-59: Acceptable signal, may have minor concerns but still valid
-- 40-49: Questionable but not clearly bad (still approve if above threshold)
-- 0-39: Only for signals with clear red flags
+Confidence Score Guidelines (Institutional Standards):
+- 80-100: Excellent signal, strong institutional confirmation, RR ≥ 1:3, clear setup at liquidity zones
+- 60-79: Good signal, acceptable institutional confirmation, RR ≥ 1:3, reasonable setup
+- 50-59: Acceptable signal, some institutional confirmation, RR ≥ 1:3, minor concerns
+- 40-49: Questionable signal, weak institutional confirmation, RR < 1:3 or no liquidity zones
+- 0-39: Poor signal, counter-trend, no institutional confirmation, RR < 1:3, reject or discard
 
-Remember: When uncertain, err on the side of APPROVAL. This is a filter, not a gatekeeper.
+Remember: If setup is weak, counter-trend, or lacks institutional confirmation, MODIFY or DISCARD entirely. Minimum RR ≥ 1:3 required.
 
-PRICE OPTIMIZATION (AI will calculate optimal prices based on technical analysis):
-You should calculate and suggest optimized prices using REAL market data:
-- Current market price, support/resistance levels, ATR volatility, Bollinger Bands, EMA200, etc.
-- Use the indicator values provided above (RSI, MACD, Stochastic, etc.)
+PRICE OPTIMIZATION (Institutional Methodology - Based on Structure & Liquidity):
+You MUST calculate and suggest optimized prices using INSTITUTIONAL METHODOLOGY:
+- Multi-timeframe structure (HTF → LTF alignment)
+- Market structure (BOS, CHoCH, swing points)
+- Liquidity zones (order blocks, FVGs, stop-hunt zones, liquidity pools)
+- Volume & OI behavior, funding rates
+- Support/resistance levels, ATR volatility, Bollinger Bands, EMA200
+- Use indicator values (RSI, MACD, Stochastic, etc.) for confirmation
 
-OPTIMIZATION RULES (only suggest if BETTER than original):
-1. ENTRY PRICE:
-   - LONG trades: Suggest LOWER entry (closer to support) if better R/R or closer to key level
-   - SHORT trades: Suggest HIGHER entry (closer to resistance) if better R/R or closer to key level
-   - DO NOT suggest worse entry (LONG: don't suggest higher, SHORT: don't suggest lower)
+CRITICAL: Entry optimization is based on TECHNICAL & STRUCTURAL CONFIRMATION, NOT on closeness to current price.
+Entries must be placed ONLY at HIGH-PROBABILITY INSTITUTIONAL LIQUIDITY ZONES.
 
-2. STOP LOSS:
-   - Suggest TIGHTER SL if ATR/volatility allows (better risk management)
-   - LONG: SL should be BELOW entry (suggest lower SL if safe)
-   - SHORT: SL should be ABOVE entry (suggest higher SL if safe)
-   - DO NOT suggest wider SL unless absolutely necessary
+OPTIMIZATION RULES (Institutional Methodology - Only suggest if BETTER than original):
+1. ENTRY PRICE (PRIMARY INSTITUTIONAL ENTRY):
+   - IDENTIFY INSTITUTIONAL LIQUIDITY ZONE: Order block, FVG, liquidity pool, or stop-hunt zone
+   - LONG trades: Suggest entry at BULLISH ORDER BLOCK, FVG fill, or liquidity grab zone (NOT just lower price)
+   - SHORT trades: Suggest entry at BEARISH ORDER BLOCK, FVG fill, or liquidity grab zone (NOT just higher price)
+   - ENTRY MUST ALIGN with HTF structure and market structure (BOS/CHoCH)
+   - DO NOT suggest entry based on "closeness to current price" - only suggest based on STRUCTURE
+   - If original entry is NOT at institutional zone, REPLACE it with optimal institutional entry
+   - If original entry IS at institutional zone, keep it (set suggested_entry_price to null)
 
-3. TAKE PROFIT:
-   - Suggest HIGHER TP for LONG (more profit potential at resistance)
-   - Suggest LOWER TP for SHORT (more profit potential at support)
-   - Consider R/R ratio - aim for at least 1.5:1 or better
+2. ENTRY 2 (CONFIRMATION OR SCALING ENTRY) - VALIDATE AND OPTIMIZE INDEPENDENTLY:
+   - CRITICAL: You MUST validate Entry 2 independently, just like Entry 1
+   - LONG: Entry 2 should be BELOW Entry 1 (at another institutional zone or confirmation level)
+   - SHORT: Entry 2 should be ABOVE Entry 1 (at another institutional zone or confirmation level)
+   - MUST also be at an institutional liquidity zone (order block, FVG, or support/resistance)
+   - EVALUATE: Is original Entry 2 at an institutional zone? (If not, REPLACE with optimal zone)
+   - STRUCTURAL CONFIRMATION: Entry 2 must align with HTF structure and market structure (BOS/CHoCH)
+   - SPACING CALCULATION (Based on Technical Analysis - NOT hardcoded):
+     * PREFERRED METHOD: Use ATR-based spacing (1.5-2.5x ATR) - adapts to volatility
+       - 1H timeframe: 1.5-2.0x ATR spacing (tighter, faster moves)
+       - 2H timeframe: 2.0-2.5x ATR spacing (wider, larger moves)
+       - 4H timeframe: 2.5-3.5x ATR spacing (even wider, much larger moves)
+       - Daily timeframe: 3.0-4.0x ATR spacing (widest, largest moves)
+     * ALTERNATIVE METHOD: If ATR not available, use timeframe-aware spacing:
+       - 1H timeframe: 3-5% spacing
+       - 2H timeframe: 5-8% spacing (larger moves, wider spacing needed)
+       - 4H timeframe: 7-12% spacing (even larger moves, wider spacing needed)
+       - Daily timeframe: 10-15% spacing
+     * STRUCTURAL METHOD: If another institutional zone exists (order block, FVG, support/resistance), use that level regardless of percentage
+   - If Entry 2 is missing or poorly positioned, calculate optimal Entry 2 at institutional zone using technical analysis
+   - If Entry 2 is NOT at institutional zone, REPLACE it with optimal Entry 2 (set suggested_second_entry_price)
+   - If Entry 2 IS at institutional zone, keep it (set suggested_second_entry_price to null)
+   - Entry 2 can be optimized independently of Entry 1 - validate both separately
+   - Ensure good spacing between Entry 1 and Entry 2 for proper DCA strategy - spacing adapts to timeframe and volatility
 
-4. ENTRY 2 (DCA/Second Entry) VALIDATION:
-   - VALIDATE Entry 2 if provided in signal
-   - LONG: Entry 2 should be LOWER than Entry 1 (typical 3-5% below for DCA)
-   - SHORT: Entry 2 should be HIGHER than Entry 1 (typical 3-5% above for DCA)
-   - If Entry 2 is missing or poorly positioned, calculate optimal Entry 2
-   - If Entry 1 is optimized, calculate Entry 2 based on optimal distance (maintain 3-5% spacing)
-   - Ensure good spacing between Entry 1 and Entry 2 for proper DCA strategy
+3. STOP LOSS (INSTITUTIONAL RISK MANAGEMENT):
+   - LONG: SL should be BELOW entry (below order block, below liquidity pool, or 1.5-2.5x ATR below)
+   - SHORT: SL should be ABOVE entry (above order block, above liquidity pool, or 1.5-2.5x ATR above)
+   - Suggest TIGHTER SL if structure allows (better risk management, better R/R)
+   - DO NOT suggest wider SL unless absolutely necessary (only if structure requires it)
 
-CALCULATION METHOD:
-- Use current market price, recent high/low, ATR, Bollinger Bands, support/resistance levels
-- Calculate optimal entry based on: support/resistance + ATR + R/R ratio
-- Calculate optimal SL based on: ATR × multiplier (typically 1.5-2.5x ATR)
-- Calculate optimal TP based on: resistance levels + R/R ratio (aim for 1.5:1 minimum)
+4. TAKE PROFIT (INSTITUTIONAL TARGET ALIGNMENT):
+   - LONG: TP should be ABOVE entry (aligned with HTF structure, liquidity objectives, resistance levels)
+   - SHORT: TP should be BELOW entry (aligned with HTF structure, liquidity objectives, support levels)
+   - MINIMUM RR ≥ 1:3 REQUIRED (if can't achieve, modify or discard signal)
+   - Suggest HIGHER TP for LONG if structure allows (more profit potential at resistance/liquidity zone)
+   - Suggest LOWER TP for SHORT if structure allows (more profit potential at support/liquidity zone)
+   - TP must align with HTF structure and liquidity objectives
 
-If original prices are already optimal, you may omit suggestion fields (they will use original).
-If you suggest prices, they will be APPLIED if they improve the trade (better entry, tighter SL, higher TP)."""
+CALCULATION METHOD (Institutional Approach):
+- IDENTIFY INSTITUTIONAL ZONES: Order blocks, FVGs, liquidity pools, stop-hunt zones
+- VALIDATE STRUCTURE: HTF → LTF alignment, BOS/CHoCH, swing points
+- CALCULATE ENTRY: At institutional liquidity zone (order block, FVG, or liquidity pool)
+- CALCULATE SL: Below/above order block, below/above liquidity pool, or 1.5-2.5x ATR
+- CALCULATE TP: At HTF structure target, liquidity objective, or resistance/support (RR ≥ 1:3)
+- VALIDATE RR: Must be ≥ 1:3 (if not, modify or discard)
+
+If original prices are already optimal (at institutional zones, RR ≥ 1:3), you may omit suggestion fields (they will use original).
+If you suggest prices, they will be APPLIED if they improve the trade (better institutional entry, tighter SL, higher TP, better RR).
+If setup is weak, counter-trend, or lacks institutional confirmation, MODIFY or DISCARD entirely."""
     
     try:
         # Call Gemini API with timeout
@@ -2117,12 +2211,12 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
             elapsed = time.time() - start_time
             if elapsed > 60:
                 logger.warning(f"⏱️ AI validation safety timeout for {symbol} (60s), proceeding without validation (fail-open)")
-                return {
-                    'is_valid': True,
+            return {
+                'is_valid': True,
                     'confidence_score': 100.0,  # High score to pass threshold - fail-open design
                     'reasoning': 'AI validation safety timeout, proceeding (fail-open)',
-                    'risk_level': 'MEDIUM'
-                }
+                'risk_level': 'MEDIUM'
+            }
         
         # Check for error first - handle gracefully with fail-open design
         if result_container['error']:
@@ -2205,6 +2299,9 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
             suggested_entry_match = re.search(r'"suggested_entry_price":\s*([\d.]+|null)', response_text)
             suggested_entry = float(suggested_entry_match.group(1)) if suggested_entry_match and suggested_entry_match.group(1) != 'null' else None
             
+            suggested_entry2_match = re.search(r'"suggested_second_entry_price":\s*([\d.]+|null)', response_text)
+            suggested_entry2 = float(suggested_entry2_match.group(1)) if suggested_entry2_match and suggested_entry2_match.group(1) != 'null' else None
+            
             suggested_sl_match = re.search(r'"suggested_stop_loss":\s*([\d.]+|null)', response_text)
             suggested_sl = float(suggested_sl_match.group(1)) if suggested_sl_match and suggested_sl_match.group(1) != 'null' else None
             
@@ -2222,10 +2319,15 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
             }
             
             # Add price suggestions if found
-            if suggested_entry or suggested_sl or suggested_tp:
-                validation_result['suggested_entry_price'] = suggested_entry
-                validation_result['suggested_stop_loss'] = suggested_sl
-                validation_result['suggested_take_profit'] = suggested_tp
+            if suggested_entry or suggested_entry2 or suggested_sl or suggested_tp:
+                if suggested_entry:
+                    validation_result['suggested_entry_price'] = suggested_entry
+                if suggested_entry2:
+                    validation_result['suggested_second_entry_price'] = suggested_entry2
+                if suggested_sl:
+                    validation_result['suggested_stop_loss'] = suggested_sl
+                if suggested_tp:
+                    validation_result['suggested_take_profit'] = suggested_tp
                 if price_reasoning:
                     validation_result['price_suggestion_reasoning'] = price_reasoning
         
@@ -2263,19 +2365,22 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
             logger.info(f"   💭 Reasoning: {reasoning}")
         
         # Extract price suggestions and apply smart optimization
+        original_entry2 = safe_float(signal_data.get('second_entry_price'), default=None)
         optimized_prices = {
             'entry_price': entry_price,  # Default to original
             'stop_loss': stop_loss,      # Default to original
             'take_profit': take_profit,  # Default to original
-            'second_entry_price': None,   # Will be calculated if Entry 1 is optimized
+            'second_entry_price': original_entry2,   # Default to original, will be optimized if AI suggests or Entry 1 is optimized
             'applied_optimizations': []
         }
         
         if ENABLE_AI_PRICE_SUGGESTIONS:
             suggested_entry = safe_float(validation_result.get('suggested_entry_price'), default=None)
+            suggested_entry2 = safe_float(validation_result.get('suggested_second_entry_price'), default=None)
             suggested_sl = safe_float(validation_result.get('suggested_stop_loss'), default=None)
             suggested_tp = safe_float(validation_result.get('suggested_take_profit'), default=None)
             price_reasoning = validation_result.get('price_suggestion_reasoning', '')
+            original_entry2 = safe_float(signal_data.get('second_entry_price'), default=None)
             
             # Smart optimization logic: Only apply if AI suggestion is BETTER
             if suggested_entry:
@@ -2295,6 +2400,55 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
                         logger.info(f"✅ [AI OPTIMIZATION] Entry optimized for SHORT: ${entry_price:,.8f} → ${suggested_entry:,.8f} (better entry)")
                     else:
                         logger.info(f"⚠️  [AI OPTIMIZATION] Entry suggestion ${suggested_entry:,.8f} is LOWER than original ${entry_price:,.8f} - keeping original (better for SHORT)")
+            
+            # Entry 2 optimization (independent of Entry 1)
+            if suggested_entry2 and original_entry2:
+                # Validate Entry 2 is in correct direction relative to Entry 1
+                current_entry1 = optimized_prices.get('entry_price', entry_price)
+                
+                if signal_side == 'LONG':
+                    # For LONG: Entry 2 should be BELOW Entry 1
+                    if suggested_entry2 < current_entry1:
+                        # Validate it's better than original Entry 2 (lower is better for LONG)
+                        if suggested_entry2 < original_entry2:
+                            optimized_prices['second_entry_price'] = suggested_entry2
+                            optimized_prices['applied_optimizations'].append(f"Entry 2 optimized: ${original_entry2:,.8f} → ${suggested_entry2:,.8f} (better entry for LONG)")
+                            logger.info(f"✅ [AI OPTIMIZATION] Entry 2 optimized for LONG: ${original_entry2:,.8f} → ${suggested_entry2:,.8f} (better entry)")
+                        elif suggested_entry2 == original_entry2:
+                            # Same as original - keep it
+                            optimized_prices['second_entry_price'] = suggested_entry2
+                            logger.info(f"ℹ️  [AI OPTIMIZATION] Entry 2 suggestion ${suggested_entry2:,.8f} matches original - keeping it")
+                        else:
+                            logger.info(f"⚠️  [AI OPTIMIZATION] Entry 2 suggestion ${suggested_entry2:,.8f} is HIGHER than original ${original_entry2:,.8f} - keeping original (better for LONG)")
+                    else:
+                        logger.info(f"⚠️  [AI OPTIMIZATION] Entry 2 suggestion ${suggested_entry2:,.8f} is ABOVE Entry 1 ${current_entry1:,.8f} - invalid for LONG, keeping original")
+                else:  # SHORT
+                    # For SHORT: Entry 2 should be ABOVE Entry 1
+                    if suggested_entry2 > current_entry1:
+                        # Validate it's better than original Entry 2 (higher is better for SHORT)
+                        if suggested_entry2 > original_entry2:
+                            optimized_prices['second_entry_price'] = suggested_entry2
+                            optimized_prices['applied_optimizations'].append(f"Entry 2 optimized: ${original_entry2:,.8f} → ${suggested_entry2:,.8f} (better entry for SHORT)")
+                            logger.info(f"✅ [AI OPTIMIZATION] Entry 2 optimized for SHORT: ${original_entry2:,.8f} → ${suggested_entry2:,.8f} (better entry)")
+                        elif suggested_entry2 == original_entry2:
+                            # Same as original - keep it
+                            optimized_prices['second_entry_price'] = suggested_entry2
+                            logger.info(f"ℹ️  [AI OPTIMIZATION] Entry 2 suggestion ${suggested_entry2:,.8f} matches original - keeping it")
+                        else:
+                            logger.info(f"⚠️  [AI OPTIMIZATION] Entry 2 suggestion ${suggested_entry2:,.8f} is LOWER than original ${original_entry2:,.8f} - keeping original (better for SHORT)")
+                    else:
+                        logger.info(f"⚠️  [AI OPTIMIZATION] Entry 2 suggestion ${suggested_entry2:,.8f} is BELOW Entry 1 ${current_entry1:,.8f} - invalid for SHORT, keeping original")
+            elif suggested_entry2 and not original_entry2:
+                # AI suggests Entry 2 but original signal didn't have one - use AI suggestion if valid
+                current_entry1 = optimized_prices.get('entry_price', entry_price)
+                if signal_side == 'LONG' and suggested_entry2 < current_entry1:
+                    optimized_prices['second_entry_price'] = suggested_entry2
+                    optimized_prices['applied_optimizations'].append(f"Entry 2 added: ${suggested_entry2:,.8f} (AI suggested, original was missing)")
+                    logger.info(f"✅ [AI OPTIMIZATION] Entry 2 added for LONG: ${suggested_entry2:,.8f} (original was missing)")
+                elif signal_side == 'SHORT' and suggested_entry2 > current_entry1:
+                    optimized_prices['second_entry_price'] = suggested_entry2
+                    optimized_prices['applied_optimizations'].append(f"Entry 2 added: ${suggested_entry2:,.8f} (AI suggested, original was missing)")
+                    logger.info(f"✅ [AI OPTIMIZATION] Entry 2 added for SHORT: ${suggested_entry2:,.8f} (original was missing)")
             
             if suggested_sl and stop_loss:
                 if signal_side == 'LONG':
@@ -2368,13 +2522,15 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
                         logger.info(f"⚠️  [AI OPTIMIZATION] TP suggestion ${suggested_tp:,.8f} is {tp_diff_pct:.2f}% HIGHER than original ${take_profit:,.8f} - keeping original (better profit)")
             
             # Store suggestions for logging (even if not applied)
-            if suggested_entry or suggested_sl or suggested_tp:
+            if suggested_entry or suggested_entry2 or suggested_sl or suggested_tp:
                 validation_result['price_suggestions'] = {
                     'entry_price': suggested_entry,
+                    'second_entry_price': suggested_entry2,
                     'stop_loss': suggested_sl,
                     'take_profit': suggested_tp,
                     'reasoning': price_reasoning,
                     'original_entry': entry_price,
+                    'original_second_entry': original_entry2,
                     'original_stop_loss': stop_loss,
                     'original_take_profit': take_profit,
                     'optimized_entry': optimized_prices['entry_price'],
@@ -2396,6 +2552,19 @@ If you suggest prices, they will be APPLIED if they improve the trade (better en
                     logger.info(f"   │ 📍 Entry:      Original=${entry_price:,.8f}  →  AI=${suggested_entry:,.8f} ({diff_pct:+.2f}%)  →  Applied=${applied:,.8f} ({applied_diff:+.2f}%) {status} │")
                 else:
                     logger.info(f"   │ 📍 Entry:      Original=${entry_price:,.8f}  →  No AI suggestion (keeping original)                    │")
+                if suggested_entry2:
+                    if original_entry2:
+                        diff_pct = ((suggested_entry2 - original_entry2) / original_entry2 * 100) if original_entry2 else 0
+                        applied = optimized_prices.get('second_entry_price', original_entry2)
+                        applied_diff = ((applied - original_entry2) / original_entry2 * 100) if original_entry2 else 0
+                        status = "✅ APPLIED" if applied != original_entry2 else "❌ REJECTED (worse)"
+                        logger.info(f"   │ 📍 Entry 2:    Original=${original_entry2:,.8f}  →  AI=${suggested_entry2:,.8f} ({diff_pct:+.2f}%)  →  Applied=${applied:,.8f} ({applied_diff:+.2f}%) {status} │")
+                    else:
+                        applied = optimized_prices.get('second_entry_price')
+                        status = "✅ APPLIED" if applied else "❌ REJECTED"
+                        logger.info(f"   │ 📍 Entry 2:    Original=N/A (not provided)  →  AI=${suggested_entry2:,.8f}  →  Applied=${applied:,.8f if applied else 'N/A'} {status} │")
+                elif original_entry2:
+                    logger.info(f"   │ 📍 Entry 2:    Original=${original_entry2:,.8f}  →  No AI suggestion (keeping original)                    │")
                 if suggested_sl:
                     diff_pct = ((suggested_sl - stop_loss) / stop_loss * 100) if stop_loss else 0
                     applied = optimized_prices['stop_loss']
@@ -2537,18 +2706,55 @@ def create_limit_order(signal_data):
                     original_entry2 = safe_float(signal_data.get('second_entry_price'), default=None)
                     
                     if original_entry2 and original_entry:
-                        # Calculate Entry 2 based on optimized Entry 1, maintaining the same percentage distance
-                        entry_diff_pct = abs((original_entry2 - original_entry) / original_entry * 100)
-                        if signal_side == 'LONG':
-                            # Entry 2 should be lower than Entry 1
-                            optimized_entry2 = opt_prices['entry_price'] * (1 - entry_diff_pct / 100)
+                        # Calculate Entry 2 based on technical analysis (ATR-based or timeframe-aware spacing)
+                        # NOT hardcoded percentage - adapts to volatility and timeframe
+                        timeframe_str = signal_data.get('timeframe', '1H').upper()
+                        atr_val = safe_float(indicators.get('atr'), default=None) if indicators else None
+                        
+                        if atr_val and atr_val > 0:
+                            # ATR-based spacing (PREFERRED) - adapts to volatility
+                            if '1H' in timeframe_str:
+                                atr_multiplier = 1.75  # 1.5-2.0x ATR range, use 1.75x as default
+                            elif '2H' in timeframe_str:
+                                atr_multiplier = 2.25  # 2.0-2.5x ATR range, use 2.25x as default
+                            elif '4H' in timeframe_str:
+                                atr_multiplier = 3.0   # 2.5-3.5x ATR range, use 3.0x as default
+                            elif '1D' in timeframe_str or 'DAILY' in timeframe_str:
+                                atr_multiplier = 3.5   # 3.0-4.0x ATR range, use 3.5x as default
+                            else:
+                                # Default to 2H spacing if timeframe unknown
+                                atr_multiplier = 2.25
+                            
+                            spacing = atr_val * atr_multiplier
+                            if signal_side == 'LONG':
+                                optimized_entry2 = opt_prices['entry_price'] - spacing
+                            else:  # SHORT
+                                optimized_entry2 = opt_prices['entry_price'] + spacing
                             opt_prices['second_entry_price'] = optimized_entry2
-                            logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (based on Entry 1 optimization, {entry_diff_pct:.2f}% below Entry 1)")
-                        else:  # SHORT
-                            # Entry 2 should be higher than Entry 1
-                            optimized_entry2 = opt_prices['entry_price'] * (1 + entry_diff_pct / 100)
+                            spacing_pct = (spacing / opt_prices['entry_price']) * 100
+                            logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (based on Entry 1 optimization, {spacing_pct:.2f}% spacing using {atr_multiplier}x ATR = ${atr_val:,.8f} for {timeframe_str} timeframe)")
+                        else:
+                            # Timeframe-aware percentage spacing (fallback if ATR not available)
+                            if '1H' in timeframe_str:
+                                spacing_pct = 4.0  # 3-5% range, use 4% as default
+                            elif '2H' in timeframe_str:
+                                spacing_pct = 6.5  # 5-8% range, use 6.5% as default
+                            elif '4H' in timeframe_str:
+                                spacing_pct = 9.5  # 7-12% range, use 9.5% as default
+                            elif '1D' in timeframe_str or 'DAILY' in timeframe_str:
+                                spacing_pct = 12.5  # 10-15% range, use 12.5% as default
+                            else:
+                                # Default to 2H spacing if timeframe unknown
+                                spacing_pct = 6.5
+                            
+                            if signal_side == 'LONG':
+                                # Entry 2 should be lower than Entry 1
+                                optimized_entry2 = opt_prices['entry_price'] * (1 - spacing_pct / 100)
+                            else:  # SHORT
+                                # Entry 2 should be higher than Entry 1
+                                optimized_entry2 = opt_prices['entry_price'] * (1 + spacing_pct / 100)
                             opt_prices['second_entry_price'] = optimized_entry2
-                            logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (based on Entry 1 optimization, {entry_diff_pct:.2f}% above Entry 1)")
+                            logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (based on Entry 1 optimization, {spacing_pct:.2f}% spacing for {timeframe_str} timeframe - ATR not available, using timeframe-aware spacing)")
         
         # Handle EXIT events - close position at market price and cancel all orders for symbol
         if event == 'EXIT':
@@ -2803,13 +3009,19 @@ def create_limit_order(signal_data):
         # Get primary entry price - use optimized entry_price if available, otherwise original
         primary_entry_price = entry_price
         
-        # Get DCA entry price (second entry) - use optimized second_entry_price if available
-        # Check if AI optimized Entry 2
+        # Get DCA entry price (second entry) - prioritize AI-suggested Entry 2, then recalculated Entry 2, then original
+        # Priority: 1) AI-suggested Entry 2, 2) Recalculated Entry 2 (if Entry 1 was optimized), 3) Original Entry 2
         if 'optimized_prices' in validation_result and validation_result.get('optimized_prices', {}).get('second_entry_price'):
             dca_entry_price = validation_result['optimized_prices']['second_entry_price']
-            logger.info(f"🔄 [PRICE UPDATE] Using AI-optimized Entry 2 (DCA): ${dca_entry_price:,.8f}")
+            # Check if this is AI-suggested (from AI validation) or recalculated (from Entry 1 optimization)
+            if 'suggested_second_entry_price' in validation_result.get('price_suggestions', {}):
+                logger.info(f"🔄 [PRICE UPDATE] Using AI-suggested Entry 2 (DCA): ${dca_entry_price:,.8f}")
+            else:
+                logger.info(f"🔄 [PRICE UPDATE] Using recalculated Entry 2 (DCA): ${dca_entry_price:,.8f} (based on Entry 1 optimization)")
         else:
             dca_entry_price = second_entry_price if second_entry_price and second_entry_price > 0 else None
+            if dca_entry_price:
+                logger.info(f"ℹ️  [PRICE] Using original Entry 2 (DCA): ${dca_entry_price:,.8f}")
         
         # If this is a primary entry, we need both prices to create both orders
         if is_primary_entry and not dca_entry_price:
