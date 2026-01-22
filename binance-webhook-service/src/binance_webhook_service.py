@@ -1460,10 +1460,10 @@ def validate_signal_with_ai(signal_data):
                     current_volume = volumes[-1] if volumes else 0
                     market_data['volume_ratio'] = current_volume / avg_volume if avg_volume > 0 else 1.0
                     market_data['volume_status'] = 'HIGH' if market_data['volume_ratio'] > 1.5 else 'NORMAL' if market_data['volume_ratio'] > 0.5 else 'LOW'
-                        # Volume trend
-                        recent_vol_avg = sum(volumes[-5:]) / 5
-                        older_vol_avg = sum(volumes[-20:-5]) / 15 if len(volumes) >= 20 else avg_volume
-                        market_data['volume_trend'] = 'INCREASING' if recent_vol_avg > older_vol_avg * 1.2 else 'DECREASING' if recent_vol_avg < older_vol_avg * 0.8 else 'STABLE'
+                    # Volume trend
+                    recent_vol_avg = sum(volumes[-5:]) / 5
+                    older_vol_avg = sum(volumes[-20:-5]) / 15 if len(volumes) >= 20 else avg_volume
+                    market_data['volume_trend'] = 'INCREASING' if recent_vol_avg > older_vol_avg * 1.2 else 'DECREASING' if recent_vol_avg < older_vol_avg * 0.8 else 'STABLE'
                     
                     # Price position relative to recent range
                     if market_data.get('recent_high', 0) > market_data.get('recent_low', 0):
@@ -1742,24 +1742,32 @@ Entries must be placed ONLY at HIGH-PROBABILITY INSTITUTIONAL LIQUIDITY ZONES.
    - If original entry is NOT at institutional zone, REPLACE it with optimal institutional entry
    - DO NOT suggest entry based on "closeness to current price" - only suggest based on STRUCTURE
 
-2. ENTRY 2 (CONFIRMATION OR SCALING ENTRY):
+2. ENTRY 2 (CONFIRMATION OR SCALING ENTRY) - FULL TECHNICAL ANALYSIS REQUIRED:
+   - CRITICAL: Perform the SAME LEVEL of technical analysis for Entry 2 as Entry 1
+   - Entry 2 is NOT spacing - it requires FULL institutional analysis
+   - SPACING IS THE LAST PRIORITY - only use if no institutional zones are found
+   
+   TECHNICAL ANALYSIS FOR ENTRY 2 (Same as Entry 1):
+   - MULTI-TIMEFRAME: Analyze HTF → LTF structure to find Entry 2 institutional zones
+   - MARKET STRUCTURE: Identify BOS/CHoCH levels where Entry 2 should be placed
+   - LIQUIDITY ZONES: Find order blocks, FVGs, stop-hunt zones BELOW Entry 1 (LONG) or ABOVE Entry 1 (SHORT)
+   - SUPPORT/RESISTANCE: Identify key support (LONG) or resistance (SHORT) levels for Entry 2
+   - VOLUME ANALYSIS: Check volume profile and OI behavior at potential Entry 2 zones
+   
+   ENTRY 2 OPTIMIZATION (Priority Order):
+   1. FIRST PRIORITY: Find institutional zones (order blocks, FVGs, support/resistance, reversal points)
+   2. SECOND PRIORITY: Check if original Entry 2 is at institutional zone - if YES, KEEP it
+   3. THIRD PRIORITY: If original Entry 2 is NOT at institutional zone, use BEST institutional zone from analysis
+   4. LAST PRIORITY (ONLY IF NO ZONES FOUND): Use spacing calculations as fallback
+   
+   OPTIMIZATION RULES:
    - LONG: Should be BELOW Entry 1 (at another institutional zone or confirmation level)
    - SHORT: Should be ABOVE Entry 1 (at another institutional zone or confirmation level)
-   - MUST also be at an institutional liquidity zone (order block, FVG, or support/resistance)
-   - SPACING CALCULATION (Based on Technical Analysis - NOT hardcoded):
-     * PREFERRED METHOD: Use ATR-based spacing (1.5-2.5x ATR) - adapts to volatility
-       - 1H timeframe: 1.5-2.0x ATR spacing (tighter, faster moves)
-       - 2H timeframe: 2.0-2.5x ATR spacing (wider, larger moves)
-       - 4H timeframe: 2.5-3.5x ATR spacing (even wider, much larger moves)
-       - Daily timeframe: 3.0-4.0x ATR spacing (widest, largest moves)
-     * ALTERNATIVE METHOD: If ATR not available, use timeframe-aware spacing:
-       - 1H timeframe: 3-5% spacing
-       - 2H timeframe: 5-8% spacing (larger moves, wider spacing needed)
-       - 4H timeframe: 7-12% spacing (even larger moves, wider spacing needed)
-       - Daily timeframe: 10-15% spacing
-     * STRUCTURAL METHOD: If another institutional zone exists (order block, FVG, support/resistance), use that level regardless of percentage
-   - If Entry 2 is missing or poorly positioned, calculate optimal Entry 2 at institutional zone using technical analysis
-   - If Entry 1 is optimized, calculate Entry 2 based on: (1) ATR-based spacing, (2) Timeframe-aware spacing, or (3) Next institutional zone level
+   - MUST be at an institutional liquidity zone (order block, FVG, support/resistance, reversal point)
+   - ALWAYS prioritize institutional zones FIRST - spacing is LAST RESORT
+   - NEVER use spacing if institutional zones are available - always use the zone
+   - If Entry 2 is missing, perform FULL technical analysis to find optimal Entry 2 at institutional zone
+   - SPACING (last resort only) must be realistic (1.0-2.5x ATR or 2-7% depending on timeframe)
 
 3. STOP LOSS (INSTITUTIONAL RISK MANAGEMENT):
    - LONG: Must be BELOW Entry 1 (typically 1.5-2.5x ATR below entry, or below order block)
@@ -2049,30 +2057,58 @@ OPTIMIZATION RULES (Institutional Methodology - Only suggest if BETTER than orig
    - If original entry is NOT at institutional zone, REPLACE it with optimal institutional entry
    - If original entry IS at institutional zone, keep it (set suggested_entry_price to null)
 
-2. ENTRY 2 (CONFIRMATION OR SCALING ENTRY) - VALIDATE AND OPTIMIZE INDEPENDENTLY:
-   - CRITICAL: You MUST validate Entry 2 independently, just like Entry 1
+2. ENTRY 2 (CONFIRMATION OR SCALING ENTRY) - VALIDATE AND OPTIMIZE INDEPENDENTLY WITH FULL TECHNICAL ANALYSIS:
+   - CRITICAL: You MUST perform the SAME LEVEL of technical analysis for Entry 2 as you do for Entry 1
+   - Entry 2 is NOT a spacing calculation - it requires FULL institutional analysis
+   - SPACING IS THE LAST PRIORITY - only use if no institutional zones are found
+   
+   TECHNICAL ANALYSIS FOR ENTRY 2 (Same as Entry 1):
+   - MULTI-TIMEFRAME ANALYSIS: Check HTF → LTF structure for Entry 2 location
+   - MARKET STRUCTURE: Identify BOS/CHoCH levels where Entry 2 should be placed
+   - LIQUIDITY ZONES: Find order blocks, FVGs, stop-hunt zones BELOW Entry 1 (LONG) or ABOVE Entry 1 (SHORT)
+   - SUPPORT/RESISTANCE: Identify key support levels (LONG) or resistance levels (SHORT) for Entry 2
+   - VOLUME ANALYSIS: Check volume profile and OI behavior at potential Entry 2 zones
+   - STRUCTURAL CONFIRMATION: Entry 2 must align with HTF structure and market structure (BOS/CHoCH)
+   
+   ENTRY 2 OPTIMIZATION PROCESS (Priority Order):
+   1. FIRST PRIORITY: Analyze market structure to identify ALL institutional zones below Entry 1 (LONG) or above Entry 1 (SHORT)
+      - Order blocks, FVGs, support/resistance levels, reversal points
+      - These are the PRIMARY candidates for Entry 2
+   
+   2. SECOND PRIORITY: Check if original Entry 2 is ALREADY at one of these institutional zones
+      - If YES and well-positioned → KEEP it (set suggested_second_entry_price to null)
+      - If NO → Find the BEST institutional zone from your analysis
+   
+   3. THIRD PRIORITY: If multiple institutional zones exist, choose the BEST one based on:
+      - Closest to Entry 1 (but still realistic spacing)
+      - Strongest support/resistance level
+      - Best volume/OI confirmation
+      - Best alignment with market structure
+   
+   4. LAST PRIORITY (ONLY IF NO INSTITUTIONAL ZONES FOUND): Use spacing calculations as fallback
+      - Only use spacing if NO institutional zones are identified
+      - Spacing must be realistic (not too far) - Entry 2 must fill before trade closes
+      - SPACING GUIDELINES (Maximum realistic spacing - LAST RESORT):
+        * 1H timeframe: 1.0-1.5x ATR spacing (tight, fills quickly)
+        * 2H timeframe: 1.2-1.8x ATR spacing (moderate, still fills reliably)
+        * 4H timeframe: 1.5-2.0x ATR spacing (wider but still realistic)
+        * Daily timeframe: 2.0-2.5x ATR spacing (widest, but must still be fillable)
+        * Percentage fallback (if ATR not available):
+          - 1H: 2-3% spacing (tight)
+          - 2H: 3-4% spacing (moderate)
+          - 4H: 4-5% spacing (wider but realistic)
+          - Daily: 5-7% spacing (widest realistic)
+   
+   OPTIMIZATION RULES:
    - LONG: Entry 2 should be BELOW Entry 1 (at another institutional zone or confirmation level)
    - SHORT: Entry 2 should be ABOVE Entry 1 (at another institutional zone or confirmation level)
-   - MUST also be at an institutional liquidity zone (order block, FVG, or support/resistance)
-   - EVALUATE: Is original Entry 2 at an institutional zone? (If not, REPLACE with optimal zone)
-   - STRUCTURAL CONFIRMATION: Entry 2 must align with HTF structure and market structure (BOS/CHoCH)
-   - SPACING CALCULATION (Based on Technical Analysis - NOT hardcoded):
-     * PREFERRED METHOD: Use ATR-based spacing (1.5-2.5x ATR) - adapts to volatility
-       - 1H timeframe: 1.5-2.0x ATR spacing (tighter, faster moves)
-       - 2H timeframe: 2.0-2.5x ATR spacing (wider, larger moves)
-       - 4H timeframe: 2.5-3.5x ATR spacing (even wider, much larger moves)
-       - Daily timeframe: 3.0-4.0x ATR spacing (widest, largest moves)
-     * ALTERNATIVE METHOD: If ATR not available, use timeframe-aware spacing:
-       - 1H timeframe: 3-5% spacing
-       - 2H timeframe: 5-8% spacing (larger moves, wider spacing needed)
-       - 4H timeframe: 7-12% spacing (even larger moves, wider spacing needed)
-       - Daily timeframe: 10-15% spacing
-     * STRUCTURAL METHOD: If another institutional zone exists (order block, FVG, support/resistance), use that level regardless of percentage
-   - If Entry 2 is missing or poorly positioned, calculate optimal Entry 2 at institutional zone using technical analysis
-   - If Entry 2 is NOT at institutional zone, REPLACE it with optimal Entry 2 (set suggested_second_entry_price)
-   - If Entry 2 IS at institutional zone, keep it (set suggested_second_entry_price to null)
-   - Entry 2 can be optimized independently of Entry 1 - validate both separately
-   - Ensure good spacing between Entry 1 and Entry 2 for proper DCA strategy - spacing adapts to timeframe and volatility
+   - MUST be at an institutional liquidity zone (order block, FVG, support/resistance, reversal point)
+   - ALWAYS prioritize institutional zones FIRST - spacing is LAST RESORT
+   - If original Entry 2 IS at institutional zone, KEEP it (set suggested_second_entry_price to null)
+   - If original Entry 2 is NOT at institutional zone, find the BEST institutional zone using technical analysis
+   - If Entry 2 is missing, perform FULL technical analysis to find optimal Entry 2 at institutional zone
+   - Entry 2 can be optimized independently of Entry 1 - validate both separately with full technical analysis
+   - NEVER use spacing calculations if institutional zones are available - always use the zone
 
 3. STOP LOSS (INSTITUTIONAL RISK MANAGEMENT):
    - LONG: SL should be BELOW entry (below order block, below liquidity pool, or 1.5-2.5x ATR below)
@@ -2321,13 +2357,13 @@ If setup is weak, counter-trend, or lacks institutional confirmation, MODIFY or 
             # Add price suggestions if found
             if suggested_entry or suggested_entry2 or suggested_sl or suggested_tp:
                 if suggested_entry:
-                    validation_result['suggested_entry_price'] = suggested_entry
+                validation_result['suggested_entry_price'] = suggested_entry
                 if suggested_entry2:
                     validation_result['suggested_second_entry_price'] = suggested_entry2
                 if suggested_sl:
-                    validation_result['suggested_stop_loss'] = suggested_sl
+                validation_result['suggested_stop_loss'] = suggested_sl
                 if suggested_tp:
-                    validation_result['suggested_take_profit'] = suggested_tp
+                validation_result['suggested_take_profit'] = suggested_tp
                 if price_reasoning:
                     validation_result['price_suggestion_reasoning'] = price_reasoning
         
@@ -2712,21 +2748,22 @@ def create_limit_order(signal_data):
                         atr_val = safe_float(indicators.get('atr'), default=None) if indicators else None
                         
                         if atr_val and atr_val > 0:
-                            # ATR-based spacing (PREFERRED) - adapts to volatility
+                            # ATR-based spacing (PREFERRED) - realistic for 20x leverage, $10 entries
+                            # Spacing must be tight enough to fill before trade closes
                             if '1H' in timeframe_str:
-                                atr_multiplier = 1.75  # 1.5-2.0x ATR range, use 1.75x as default
+                                atr_multiplier = 1.25  # 1.0-1.5x ATR range, use 1.25x as default (tight, fills quickly)
                             elif '2H' in timeframe_str:
-                                atr_multiplier = 2.25  # 2.0-2.5x ATR range, use 2.25x as default
+                                atr_multiplier = 1.5   # 1.2-1.8x ATR range, use 1.5x as default (moderate, still fills reliably)
                             elif '4H' in timeframe_str:
-                                atr_multiplier = 3.0   # 2.5-3.5x ATR range, use 3.0x as default
+                                atr_multiplier = 1.75  # 1.5-2.0x ATR range, use 1.75x as default (wider but realistic)
                             elif '1D' in timeframe_str or 'DAILY' in timeframe_str:
-                                atr_multiplier = 3.5   # 3.0-4.0x ATR range, use 3.5x as default
+                                atr_multiplier = 2.25  # 2.0-2.5x ATR range, use 2.25x as default (widest but fillable)
                             else:
                                 # Default to 2H spacing if timeframe unknown
-                                atr_multiplier = 2.25
+                                atr_multiplier = 1.5
                             
                             spacing = atr_val * atr_multiplier
-                            if signal_side == 'LONG':
+                        if signal_side == 'LONG':
                                 optimized_entry2 = opt_prices['entry_price'] - spacing
                             else:  # SHORT
                                 optimized_entry2 = opt_prices['entry_price'] + spacing
@@ -2735,23 +2772,24 @@ def create_limit_order(signal_data):
                             logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (based on Entry 1 optimization, {spacing_pct:.2f}% spacing using {atr_multiplier}x ATR = ${atr_val:,.8f} for {timeframe_str} timeframe)")
                         else:
                             # Timeframe-aware percentage spacing (fallback if ATR not available)
+                            # Realistic spacing for 20x leverage, $10 entries - tight enough to fill
                             if '1H' in timeframe_str:
-                                spacing_pct = 4.0  # 3-5% range, use 4% as default
+                                spacing_pct = 2.5  # 2-3% range, use 2.5% as default (tight, fills quickly)
                             elif '2H' in timeframe_str:
-                                spacing_pct = 6.5  # 5-8% range, use 6.5% as default
+                                spacing_pct = 3.5  # 3-4% range, use 3.5% as default (moderate, still fills reliably)
                             elif '4H' in timeframe_str:
-                                spacing_pct = 9.5  # 7-12% range, use 9.5% as default
+                                spacing_pct = 4.5  # 4-5% range, use 4.5% as default (wider but realistic)
                             elif '1D' in timeframe_str or 'DAILY' in timeframe_str:
-                                spacing_pct = 12.5  # 10-15% range, use 12.5% as default
+                                spacing_pct = 6.0  # 5-7% range, use 6% as default (widest but fillable)
                             else:
                                 # Default to 2H spacing if timeframe unknown
-                                spacing_pct = 6.5
+                                spacing_pct = 3.5
                             
                             if signal_side == 'LONG':
                                 # Entry 2 should be lower than Entry 1
                                 optimized_entry2 = opt_prices['entry_price'] * (1 - spacing_pct / 100)
-                            else:  # SHORT
-                                # Entry 2 should be higher than Entry 1
+                        else:  # SHORT
+                            # Entry 2 should be higher than Entry 1
                                 optimized_entry2 = opt_prices['entry_price'] * (1 + spacing_pct / 100)
                             opt_prices['second_entry_price'] = optimized_entry2
                             logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (based on Entry 1 optimization, {spacing_pct:.2f}% spacing for {timeframe_str} timeframe - ATR not available, using timeframe-aware spacing)")
