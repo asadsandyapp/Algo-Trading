@@ -87,6 +87,7 @@ BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET', '')
 BINANCE_TESTNET = os.getenv('BINANCE_TESTNET', 'false').lower() == 'true'
 BINANCE_SUB_ACCOUNT_EMAIL = os.getenv('BINANCE_SUB_ACCOUNT_EMAIL', '')  # For sub-account trading
 SLACK_WEBHOOK_URL = os.getenv('SLACK_WEBHOOK_URL', '')  # Slack webhook URL for error notifications
+SLACK_SIGNAL_WEBHOOK_URL = os.getenv('SLACK_SIGNAL_WEBHOOK_URL', '')  # Slack webhook URL for signal notifications (set via environment variable)
 
 # AI Validation Configuration
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
@@ -277,6 +278,126 @@ def send_slack_alert(error_type, message, details=None, symbol=None, severity='E
         # Silently fail - don't break the service if Slack is down
         logger.debug(f"Error preparing Slack notification: {e}")
 
+def send_signal_notification(symbol, signal_side, timeframe, confidence_score, risk_level, 
+                             entry1_price, entry2_price, stop_loss, take_profit, 
+                             tp1_price=None, use_single_tp=False, validation_result=None):
+    """
+    Send a beautiful signal notification to Slack signal channel after order is opened
+    
+    Args:
+        symbol: Trading symbol (e.g., 'BTCUSDT')
+        signal_side: 'LONG' or 'SHORT'
+        timeframe: Trading timeframe (e.g., '1H', '4H')
+        confidence_score: AI confidence score (0-100)
+        risk_level: Risk level from AI validation ('LOW', 'MEDIUM', 'HIGH')
+        entry1_price: Primary entry price
+        entry2_price: DCA entry price (optional)
+        stop_loss: Stop loss price
+        take_profit: Take profit price
+        validation_result: Full validation result dict (optional)
+    """
+    if not SLACK_SIGNAL_WEBHOOK_URL:
+        return  # Skip if webhook URL not configured
+    
+    try:
+        # Determine signal strength emoji and text based on confidence score
+        if confidence_score >= 80:
+            strength_emoji = '🔥'
+            strength_text = 'VERY STRONG'
+        elif confidence_score >= 65:
+            strength_emoji = '✅'
+            strength_text = 'STRONG'
+        elif confidence_score >= 50:
+            strength_emoji = '⚡'
+            strength_text = 'MODERATE'
+        else:
+            strength_emoji = '⚠️'
+            strength_text = 'WEAK'
+        
+        # Determine side emoji
+        side_emoji = '📈' if signal_side == 'LONG' else '📉'
+        
+        # Determine risk level emoji
+        risk_emoji_map = {
+            'LOW': '🟢',
+            'MEDIUM': '🟡',
+            'HIGH': '🔴'
+        }
+        risk_emoji = risk_emoji_map.get(risk_level, '⚪')
+        
+        # Build the message
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
+        environment = 'TESTNET' if BINANCE_TESTNET else 'PRODUCTION'
+        
+        # Format prices
+        entry2_str = f'${entry2_price:,.8f}' if entry2_price else 'N/A'
+        stop_loss_str = f'${stop_loss:,.8f}' if stop_loss else 'N/A'
+        tp1_str = f'${tp1_price:,.8f}' if tp1_price else 'N/A'
+        tp2_str = f'${take_profit:,.8f}' if take_profit else 'N/A'
+        
+        # Format the message with beautiful structure
+        slack_message = f"""{side_emoji} *NEW {signal_side} SIGNAL - ORDER OPENED*
+
+*Symbol:* `{symbol}`
+*Timeframe:* `{timeframe}`
+*Environment:* {environment}
+*Time:* {timestamp}
+
+*Signal Strength:* {strength_emoji} {strength_text} ({confidence_score:.1f}%)
+*Risk Level:* {risk_emoji} {risk_level}
+
+*Entry Prices:*
+  • Entry 1: `${entry1_price:,.8f}`
+  • Entry 2: {entry2_str}
+
+*Risk Management:*
+  • Stop Loss: {stop_loss_str}"""
+        
+        # Add TP information based on strategy
+        if use_single_tp:
+            slack_message += f"""
+  • Take Profit (100%): {tp2_str} - Main TP (High Confidence: {confidence_score:.1f}%)"""
+        else:
+            slack_message += f"""
+  • Take Profit 1 (70%): {tp1_str} - {TP1_PERCENT}% profit
+  • Take Profit 2 (30%): {tp2_str} - Original/AI TP (Lower Confidence: {confidence_score:.1f}%)"""
+        
+        slack_message += "\n\n"
+        
+        # Add AI reasoning if available (single line only)
+        if validation_result and validation_result.get('reasoning'):
+            reasoning = validation_result.get('reasoning', '')
+            # Convert to single line by replacing newlines with spaces
+            reasoning = ' '.join(reasoning.split())
+            # Truncate if too long (keep it concise for single line)
+            if len(reasoning) > 200:
+                reasoning = reasoning[:200] + "..."
+            slack_message += f"*AI Analysis:* {reasoning}\n"
+        
+        # Send to Slack (non-blocking in a thread)
+        def send_async():
+            try:
+                payload = {'text': slack_message}
+                response = requests.post(
+                    SLACK_SIGNAL_WEBHOOK_URL,
+                    json=payload,
+                    headers={'Content-Type': 'application/json'},
+                    timeout=5
+                )
+                response.raise_for_status()
+                logger.info(f"✅ Signal notification sent to Slack for {symbol}")
+            except Exception as e:
+                # Don't log Slack errors to avoid infinite loops
+                logger.debug(f"Failed to send Slack signal notification: {e}")
+        
+        # Send in background thread to avoid blocking
+        thread = threading.Thread(target=send_async, daemon=True)
+        thread.start()
+        
+    except Exception as e:
+        # Silently fail - don't break the service if Slack is down
+        logger.debug(f"Error preparing Slack signal notification: {e}")
+
 # Initialize Binance client
 try:
     if BINANCE_TESTNET:
@@ -316,23 +437,40 @@ ENTRY_SIZE_USD = float(os.getenv('ENTRY_SIZE_USD', '10.0'))  # Default: $10 per 
 LEVERAGE = int(os.getenv('LEVERAGE', '20'))  # Default: 20X leverage
 TOTAL_ENTRIES = 2  # Primary entry + DCA entry
 
+# TP1 and TP2 Configuration
+TP1_PERCENT = float(os.getenv('TP1_PERCENT', '4.0'))  # Default: 4.0% profit for TP1 (calculated from Entry 1 only)
+TP1_SPLIT = float(os.getenv('TP1_SPLIT', '70.0'))  # Default: 70% of position closes at TP1
+TP2_SPLIT = float(os.getenv('TP2_SPLIT', '30.0'))  # Default: 30% of position closes at TP2 (remaining)
+TP_HIGH_CONFIDENCE_THRESHOLD = float(os.getenv('TP_HIGH_CONFIDENCE_THRESHOLD', '90.0'))  # If confidence >= 90%, use single TP
+
+# Risk Management Configuration
+ENABLE_RISK_VALIDATION = os.getenv('ENABLE_RISK_VALIDATION', 'true').lower() == 'true'  # Enable/disable risk validation
+MAX_RISK_PERCENT = float(os.getenv('MAX_RISK_PERCENT', '20.0'))  # Default: 20% of account (includes pending orders) - High threshold to avoid rejecting good signals
+ENABLE_TRAILING_STOP_LOSS = os.getenv('ENABLE_TRAILING_STOP_LOSS', 'true').lower() == 'true'  # Enable trailing SL after TP1
+TRAILING_SL_BREAKEVEN_PERCENT = float(os.getenv('TRAILING_SL_BREAKEVEN_PERCENT', '0.5'))  # Move SL to 0.5% profit after TP1
+
+# Account balance cache (to reduce API calls)
+account_balance_cache = {'balance': None, 'timestamp': 0}
+BALANCE_CACHE_TTL = 60  # Cache balance for 1 minute
+
 # Track active trades per symbol
 active_trades = {}  # {symbol: {'primary_filled': bool, 'dca_filled': bool, 'position_open': bool, 
-                    #           'primary_order_id': int, 'dca_order_id': int, 'tp_order_id': int, 'sl_order_id': int,
+                    #           'primary_order_id': int, 'dca_order_id': int, 'tp1_order_id': int, 'tp2_order_id': int, 'sl_order_id': int,
+                    #           'tp1_price': float, 'tp2_price': float, 'tp1_quantity': float, 'tp2_quantity': float,
                     #           'exit_processed': bool, 'last_exit_time': float}}
 
 # Track recent EXIT events to prevent duplicate processing
 recent_exits = {}  # {symbol: timestamp}
 EXIT_COOLDOWN = 30
 
-# Helper function to create TP order for a symbol (can be called from anywhere)
+# Helper function to create TP orders for a symbol (can be called from anywhere)
 def delayed_tp_creation(symbol, delay_seconds=5):
-    """Helper function to create TP order after a delay (allows Binance to update position)"""
+    """Helper function to create TP orders after a delay (allows Binance to update position)"""
     def _create():
         time.sleep(delay_seconds)
-        if symbol in active_trades and 'tp_price' in active_trades[symbol]:
+        if symbol in active_trades:
             logger.info(f"🔄 Delayed TP check for {symbol} (after {delay_seconds}s delay)")
-            create_tp_if_needed(symbol, active_trades[symbol])
+            create_tp1_tp2_if_needed(symbol, active_trades[symbol])
     
     thread = threading.Thread(target=_create, daemon=True)
     thread.start()
@@ -613,6 +751,399 @@ def create_tp_if_needed(symbol, trade_info):
         return False
 
 
+def create_single_tp_order(symbol, tp_price, tp_quantity, tp_side, trade_info, tp_number=1):
+    """Helper function to create a single TP order (used for both TP1 and TP2)
+    
+    Args:
+        symbol: Trading symbol
+        tp_price: Take profit price
+        tp_quantity: Quantity to close at this TP
+        tp_side: 'SELL' for LONG, 'BUY' for SHORT
+        trade_info: Trade info dict
+        tp_number: 1 for TP1, 2 for TP2 (for logging)
+    
+    Returns:
+        order_id if successful, None if failed
+    """
+    try:
+        # Get symbol info
+        exchange_info = client.futures_exchange_info()
+        symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+        if not symbol_info:
+            logger.error(f"Symbol info not found for {symbol}")
+            return None
+            
+        price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+        tick_size = float(price_filter['tickSize']) if price_filter else 0.01
+        tp_price = format_price_precision(tp_price, tick_size)
+        
+        # Format quantity precision
+        lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+        if lot_size_filter:
+            step_size = float(lot_size_filter['stepSize'])
+            tp_quantity = format_quantity_precision(tp_quantity, step_size)
+        
+        # Get position info
+        positions = client.futures_position_information(symbol=symbol)
+        position_to_use = None
+        for position in positions:
+            position_amt = float(position.get('positionAmt', 0))
+            if abs(position_amt) > 0:
+                position_to_use = position
+                break
+        
+        if not position_to_use:
+            return None  # No position exists
+        
+        # Detect position mode
+        try:
+            is_hedge_mode = get_position_mode(symbol)
+        except:
+            is_hedge_mode = False
+        
+        position_side = position_to_use.get('positionSide', 'BOTH')
+        working_type = trade_info.get('tp_working_type', 'MARK_PRICE')
+        
+        logger.info(f"🔄 Creating TP{tp_number} order for {symbol}: price={tp_price}, qty={tp_quantity}, side={tp_side}, workingType={working_type}")
+        
+        # Try using quantity with reduceOnly=True (required for partial closes)
+        tp_params = {
+            'symbol': symbol,
+            'side': tp_side,
+            'type': 'TAKE_PROFIT_MARKET',
+            'timeInForce': 'GTC',
+            'quantity': tp_quantity,
+            'stopPrice': tp_price,
+            'workingType': working_type,
+            'reduceOnly': True,  # Required for partial position closes
+        }
+        
+        # Add positionSide only if in hedge mode
+        if is_hedge_mode and position_side != 'BOTH':
+            tp_params['positionSide'] = position_side
+        
+        # Try to create the order
+        try:
+            tp_order = client.futures_create_order(**tp_params)
+            order_id = tp_order.get('orderId')
+            logger.info(f"✅ TP{tp_number} order created successfully: Order ID {order_id} @ {tp_price} for {symbol} (qty: {tp_quantity})")
+            return order_id
+        except BinanceAPIException as e:
+            if e.code == -1106 or 'reduceonly' in str(e).lower():
+                # Try without reduceOnly
+                try:
+                    tp_params_no_reduce = tp_params.copy()
+                    del tp_params_no_reduce['reduceOnly']
+                    tp_order = client.futures_create_order(**tp_params_no_reduce)
+                    order_id = tp_order.get('orderId')
+                    logger.info(f"✅ TP{tp_number} order created successfully (without reduceOnly): Order ID {order_id} @ {tp_price} for {symbol} (qty: {tp_quantity})")
+                    return order_id
+                except Exception as e2:
+                    logger.error(f"❌ Failed to create TP{tp_number} order for {symbol}: {e2}")
+                    return None
+            else:
+                logger.error(f"❌ Failed to create TP{tp_number} order for {symbol}: {e.message} (Code: {e.code})")
+                return None
+    except Exception as e:
+        logger.error(f"❌ Error creating TP{tp_number} order for {symbol}: {e}", exc_info=True)
+        return None
+
+
+def create_tp1_tp2_if_needed(symbol, trade_info):
+    """Create TP orders if position exists and TPs are stored but not created yet
+    High Confidence (>=90%): Single TP (100% of position at main TP)
+    Lower Confidence (<90%): TP1 + TP2 (70% at TP1, 30% at TP2)
+    """
+    # Check if using single TP mode
+    use_single_tp = trade_info.get('use_single_tp', False)
+    
+    if use_single_tp:
+        # Single TP mode: Only TP2 exists (main TP)
+        if 'tp2_price' not in trade_info or not trade_info.get('tp2_price'):
+            return False  # TP not configured
+    else:
+        # TP1 + TP2 mode: Both TPs exist
+        if 'tp1_price' not in trade_info or 'tp2_price' not in trade_info:
+            return False  # TPs not configured
+    
+    # Check existing TP orders
+    tp1_exists = False
+    tp2_exists = False
+    
+    if not use_single_tp:
+        # TP1 + TP2 mode: Check both
+        if 'tp1_order_id' in trade_info:
+            try:
+                open_orders = client.futures_get_open_orders(symbol=symbol)
+                existing_tp1 = [o for o in open_orders if o.get('orderId') == trade_info['tp1_order_id']]
+                if existing_tp1:
+                    tp1_exists = True
+                else:
+                    logger.info(f"TP1 order {trade_info['tp1_order_id']} no longer exists for {symbol}")
+                    del trade_info['tp1_order_id']
+            except Exception as e:
+                logger.warning(f"Error checking TP1 order status for {symbol}: {e}")
+    
+    # Check TP2 (always exists, either as main TP or as TP2)
+    if 'tp2_order_id' in trade_info:
+        try:
+            open_orders = client.futures_get_open_orders(symbol=symbol)
+            existing_tp2 = [o for o in open_orders if o.get('orderId') == trade_info['tp2_order_id']]
+            if existing_tp2:
+                tp2_exists = True
+            else:
+                logger.info(f"TP2 order {trade_info['tp2_order_id']} no longer exists for {symbol}")
+                del trade_info['tp2_order_id']
+        except Exception as e:
+            logger.warning(f"Error checking TP2 order status for {symbol}: {e}")
+    
+    # If all required TPs exist, we're done
+    if use_single_tp:
+        if tp2_exists:
+            return True
+    else:
+        if tp1_exists and tp2_exists:
+            return True
+    
+    # Check if position exists
+    try:
+        positions = client.futures_position_information(symbol=symbol)
+        position_to_use = None
+        for position in positions:
+            position_amt = float(position.get('positionAmt', 0))
+            if abs(position_amt) > 0:
+                position_to_use = position
+                break
+        
+        if not position_to_use:
+            return False  # No position exists yet
+        
+        # Get TP details
+        tp_side = trade_info.get('tp_side', 'SELL')
+        
+        if use_single_tp:
+            # Single TP mode: Only create TP2 (main TP)
+            tp2_price = trade_info['tp2_price']
+            tp2_quantity = trade_info.get('tp2_quantity', 0)
+            
+            if not tp2_exists and tp2_price and tp2_quantity > 0:
+                tp2_order_id = create_single_tp_order(symbol, tp2_price, tp2_quantity, tp_side, trade_info, tp_number=2)
+                if tp2_order_id:
+                    trade_info['tp2_order_id'] = tp2_order_id
+                    logger.info(f"✅ Main TP order created and stored for {symbol} (Single TP mode)")
+                    # Clean up stored price
+                    if 'tp2_price' in trade_info:
+                        del trade_info['tp2_price']
+                    if 'tp2_quantity' in trade_info:
+                        del trade_info['tp2_quantity']
+                    return True
+        else:
+            # TP1 + TP2 mode: Create both
+            tp1_price = trade_info.get('tp1_price')
+            tp2_price = trade_info['tp2_price']
+            tp1_quantity = trade_info.get('tp1_quantity', 0)
+            tp2_quantity = trade_info.get('tp2_quantity', 0)
+            
+            # Create TP1 if it doesn't exist
+            if not tp1_exists and tp1_price and tp1_quantity > 0:
+                tp1_order_id = create_single_tp_order(symbol, tp1_price, tp1_quantity, tp_side, trade_info, tp_number=1)
+                if tp1_order_id:
+                    trade_info['tp1_order_id'] = tp1_order_id
+                    logger.info(f"✅ TP1 order created and stored for {symbol}")
+                else:
+                    logger.warning(f"⚠️ Failed to create TP1 order for {symbol}")
+            
+            # Create TP2 if it doesn't exist
+            if not tp2_exists and tp2_price and tp2_quantity > 0:
+                tp2_order_id = create_single_tp_order(symbol, tp2_price, tp2_quantity, tp_side, trade_info, tp_number=2)
+                if tp2_order_id:
+                    trade_info['tp2_order_id'] = tp2_order_id
+                    logger.info(f"✅ TP2 order created and stored for {symbol}")
+                else:
+                    logger.warning(f"⚠️ Failed to create TP2 order for {symbol}")
+            
+            # If both orders created successfully, clean up stored prices (but keep order IDs)
+            if 'tp1_order_id' in trade_info and 'tp2_order_id' in trade_info:
+                if 'tp1_price' in trade_info:
+                    del trade_info['tp1_price']
+                if 'tp2_price' in trade_info:
+                    del trade_info['tp2_price']
+                if 'tp1_quantity' in trade_info:
+                    del trade_info['tp1_quantity']
+                if 'tp2_quantity' in trade_info:
+                    del trade_info['tp2_quantity']
+                return True
+        
+        return False
+        
+    except Exception as e:
+        logger.error(f"❌ Error creating TP1/TP2 orders for {symbol}: {e}", exc_info=True)
+        return False
+
+
+def update_trailing_stop_loss(symbol, trade_info, position):
+    """Update stop loss to breakeven/profit after TP1 is filled (trailing stop loss)
+    
+    Args:
+        symbol: Trading symbol
+        trade_info: Trade info dict
+        position: Position data from Binance
+    
+    Returns:
+        bool: True if SL was updated, False otherwise
+    """
+    if not ENABLE_TRAILING_STOP_LOSS:
+        return False
+    
+    # Only apply trailing SL if TP1 was filled (for TP1+TP2 mode)
+    if trade_info.get('use_single_tp', False):
+        return False  # Single TP mode doesn't need trailing SL
+    
+    # Check if TP1 order was filled
+    tp1_order_id = trade_info.get('tp1_order_id')
+    if not tp1_order_id:
+        return False  # TP1 not created yet
+    
+    # Check if TP1 order still exists (if not, it was filled)
+    try:
+        open_orders = client.futures_get_open_orders(symbol=symbol)
+        tp1_still_exists = any(o.get('orderId') == tp1_order_id for o in open_orders)
+        
+        if tp1_still_exists:
+            return False  # TP1 not filled yet, no trailing SL needed
+        
+        # TP1 was filled - check if we already moved SL
+        if trade_info.get('sl_moved_to_breakeven', False):
+            return False  # Already moved SL, no need to update again
+        
+    except Exception as e:
+        logger.warning(f"Error checking TP1 status for {symbol}: {e}")
+        return False
+    
+    # TP1 was filled - calculate new stop loss (breakeven + small profit)
+    try:
+        # Get position details
+        position_amt = float(position.get('positionAmt', 0))
+        entry_price = float(position.get('entryPrice', 0))
+        mark_price = float(position.get('markPrice', 0))
+        
+        if abs(position_amt) == 0 or entry_price <= 0:
+            return False  # Invalid position data
+        
+        # Get original stop loss and entry prices
+        original_sl = safe_float(trade_info.get('original_stop_loss'), default=0)
+        original_entry1 = safe_float(trade_info.get('original_entry1'), default=entry_price)
+        original_entry2 = safe_float(trade_info.get('original_entry2'), default=entry_price)
+        
+        # Calculate average entry (for breakeven calculation)
+        if original_entry2 and original_entry2 > 0 and original_entry2 != original_entry1:
+            avg_entry = (original_entry1 + original_entry2) / 2
+        else:
+            avg_entry = original_entry1
+        
+        # Determine position side
+        is_long = position_amt > 0
+        
+        # Calculate new stop loss: breakeven + small profit (0.5% default)
+        breakeven_profit_percent = TRAILING_SL_BREAKEVEN_PERCENT / 100.0
+        
+        if is_long:
+            new_sl_price = avg_entry * (1 + breakeven_profit_percent)
+            # Ensure new SL is above current mark price (safety check)
+            if new_sl_price > mark_price:
+                new_sl_price = mark_price * 0.999  # Slightly below current price
+        else:  # SHORT
+            new_sl_price = avg_entry * (1 - breakeven_profit_percent)
+            # Ensure new SL is below current mark price (safety check)
+            if new_sl_price < mark_price:
+                new_sl_price = mark_price * 1.001  # Slightly above current price
+        
+        # Get symbol info for precision
+        exchange_info = client.futures_exchange_info()
+        symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+        if not symbol_info:
+            return False
+        
+        price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+        tick_size = float(price_filter['tickSize']) if price_filter else 0.01
+        new_sl_price = format_price_precision(new_sl_price, tick_size)
+        
+        # Get current stop loss order
+        current_sl_id = trade_info.get('sl_order_id')
+        current_sl_price = safe_float(trade_info.get('current_sl_price'), default=0)
+        
+        # Only update if new SL is better than current SL
+        if is_long:
+            sl_needs_update = new_sl_price > current_sl_price
+        else:  # SHORT
+            sl_needs_update = new_sl_price < current_sl_price or current_sl_price == 0
+        
+        if not sl_needs_update:
+            return False  # Current SL is already better
+        
+        # Cancel old stop loss if exists
+        if current_sl_id:
+            try:
+                client.futures_cancel_order(symbol=symbol, orderId=current_sl_id)
+                logger.info(f"🔄 Cancelled old stop loss order {current_sl_id} for {symbol}")
+            except Exception as e:
+                logger.warning(f"Error cancelling old SL for {symbol}: {e}")
+        
+        # Create new stop loss at breakeven + profit
+        sl_side = 'SELL' if is_long else 'BUY'
+        position_side = position.get('positionSide', 'BOTH')
+        
+        try:
+            is_hedge_mode = get_position_mode(symbol)
+        except:
+            is_hedge_mode = False
+        
+        sl_params = {
+            'symbol': symbol,
+            'side': sl_side,
+            'type': 'STOP_MARKET',
+            'timeInForce': 'GTC',
+            'stopPrice': new_sl_price,
+            'closePosition': True,  # Close entire remaining position
+            'workingType': 'MARK_PRICE',
+        }
+        
+        if is_hedge_mode and position_side != 'BOTH':
+            sl_params['positionSide'] = position_side
+        
+        new_sl_order = client.futures_create_order(**sl_params)
+        new_sl_id = new_sl_order.get('orderId')
+        
+        # Update trade info
+        trade_info['sl_order_id'] = new_sl_id
+        trade_info['current_sl_price'] = new_sl_price
+        trade_info['sl_moved_to_breakeven'] = True
+        trade_info['tp1_filled'] = True  # Mark TP1 as filled
+        
+        logger.info(f"✅ Trailing stop loss updated for {symbol}: Moved SL to breakeven+profit @ ${new_sl_price:,.8f} "
+                   f"(Original SL: ${original_sl:,.8f}, Entry: ${avg_entry:,.8f})")
+        
+        # Send Slack notification
+        send_slack_alert(
+            error_type="Trailing Stop Loss Updated",
+            message=f"TP1 filled - Stop loss moved to breakeven+{TRAILING_SL_BREAKEVEN_PERCENT}% profit",
+            details={
+                'Original_SL': f"${original_sl:,.8f}",
+                'New_SL': f"${new_sl_price:,.8f}",
+                'Entry_Price': f"${avg_entry:,.8f}",
+                'TP1_Filled': True
+            },
+            symbol=symbol,
+            severity='INFO'
+        )
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating trailing stop loss for {symbol}: {e}", exc_info=True)
+        return False
+
+
 # Background thread to create TP orders when positions exist
 # This mimics Binance UI behavior: TP is "set" when creating limit order, but placed when order fills
 # Optimized to minimize API calls and stay within Binance rate limits
@@ -629,13 +1160,13 @@ def create_missing_tp_orders():
     while True:
         try:
             # Optimized intervals to reduce API calls while still being effective:
-            # - First 4 checks (1 minute): Every 15 seconds to catch newly filled orders quickly
-            # - Next 10 checks (5 minutes): Every 30 seconds for active monitoring
+            # - First 4 checks (4 minutes): Every 1 minute to catch newly filled orders quickly
+            # - Next 10 checks (20 minutes): Every 2 minutes for active monitoring
             # - After that: Every 5 minutes for ongoing checks
             if check_count < 4:
-                sleep_time = 15  # Check every 15 seconds for first minute
+                sleep_time = 60  # Check every 1 minute for first 4 minutes
             elif check_count < 14:
-                sleep_time = 30  # Check every 30 seconds for next 5 minutes
+                sleep_time = 120  # Check every 2 minutes for next 20 minutes
             else:
                 sleep_time = 300  # Then check every 5 minutes (reduces API calls significantly)
             
@@ -644,35 +1175,70 @@ def create_missing_tp_orders():
             
             try:
                 # Only check symbols that have stored TP details (optimization: skip symbols without TP config)
-                symbols_to_check = [s for s, info in active_trades.items() if 'tp_price' in info]
+                # Check for symbols with TP configured (either single TP or TP1+TP2)
+                symbols_to_check = []
+                for s, info in active_trades.items():
+                    if info.get('use_single_tp', False):
+                        # Single TP mode: only need tp2_price
+                        if 'tp2_price' in info and info.get('tp2_price'):
+                            symbols_to_check.append(s)
+                    else:
+                        # TP1+TP2 mode: need both
+                        if 'tp1_price' in info and 'tp2_price' in info:
+                            symbols_to_check.append(s)
                 
                 if not symbols_to_check:
                     # No symbols with stored TP details - skip API calls entirely
                     continue
                 
                 # Get ALL open positions from Binance (single API call)
+                # This single call is used for BOTH TP creation AND trailing stop loss checks
                 all_positions = client.futures_position_information()
                 positions_dict = {p['symbol']: p for p in all_positions if abs(float(p.get('positionAmt', 0))) > 0}
+                
+                # Check trailing stop loss for ALL positions (uses same position data - no extra API call!)
+                # This runs BEFORE TP creation check to use the same position data
+                if ENABLE_TRAILING_STOP_LOSS and positions_dict:
+                    for symbol, position in positions_dict.items():
+                        if symbol in active_trades:
+                            try:
+                                trade_info = active_trades[symbol]
+                                # Only check if we have TP1 configured (TP1+TP2 mode)
+                                if not trade_info.get('use_single_tp', False):
+                                    update_trailing_stop_loss(symbol, trade_info, position)
+                            except Exception as e:
+                                logger.debug(f"Error checking trailing SL for {symbol}: {e}")
                 
                 if not positions_dict:
                     # No open positions - but check if there are pending orders before cleaning up TP
                     # If orders are pending, keep TP details and wait for order to fill
                     for symbol in list(symbols_to_check):
-                        if symbol in active_trades and 'tp_price' in active_trades[symbol]:
+                        use_single_tp = active_trades.get(symbol, {}).get('use_single_tp', False)
+                        has_tp = False
+                        if use_single_tp:
+                            has_tp = 'tp2_price' in active_trades.get(symbol, {}) and active_trades[symbol].get('tp2_price')
+                        else:
+                            has_tp = ('tp1_price' in active_trades.get(symbol, {}) or 'tp2_price' in active_trades.get(symbol, {}))
+                        
+                        if symbol in active_trades and has_tp:
                             # Check if there are pending orders for this symbol
                             try:
                                 has_orders, open_orders = check_existing_orders(symbol, log_result=False)
                                 if has_orders:
                                     # There are pending orders - keep TP details and wait for order to fill
-                                    logger.debug(f"⏳ Background thread: Keeping TP for {symbol} (pending orders, waiting for fill)")
+                                    logger.debug(f"⏳ Background thread: Keeping TP1/TP2 for {symbol} (pending orders, waiting for fill)")
                                     continue  # Don't clean up - order might fill soon
                                 else:
                                     # No orders and no position - clean up TP details
-                                    logger.info(f"🧹 Background thread: Cleaning up stored TP for {symbol} (no position and no pending orders)")
-                                    if 'tp_price' in active_trades[symbol]:
-                                        del active_trades[symbol]['tp_price']
-                                    if 'tp_quantity' in active_trades[symbol]:
-                                        del active_trades[symbol]['tp_quantity']
+                                    logger.info(f"🧹 Background thread: Cleaning up stored TP1/TP2 for {symbol} (no position and no pending orders)")
+                                    if 'tp1_price' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp1_price']
+                                    if 'tp2_price' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp2_price']
+                                    if 'tp1_quantity' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp1_quantity']
+                                    if 'tp2_quantity' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp2_quantity']
                                     if 'tp_working_type' in active_trades[symbol]:
                                         del active_trades[symbol]['tp_working_type']
                             except Exception as e:
@@ -717,12 +1283,16 @@ def create_missing_tp_orders():
                                 continue  # Don't clean up - order might fill soon
                             else:
                                 # No orders and no position - clean up TP details
-                                logger.info(f"🧹 Background thread: Cleaning up stored TP for {symbol} (no position and no pending orders)")
+                                logger.info(f"🧹 Background thread: Cleaning up stored TP1/TP2 for {symbol} (no position and no pending orders)")
                                 if symbol in active_trades:
-                                    if 'tp_price' in active_trades[symbol]:
-                                        del active_trades[symbol]['tp_price']
-                                    if 'tp_quantity' in active_trades[symbol]:
-                                        del active_trades[symbol]['tp_quantity']
+                                    if 'tp1_price' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp1_price']
+                                    if 'tp2_price' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp2_price']
+                                    if 'tp1_quantity' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp1_quantity']
+                                    if 'tp2_quantity' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp2_quantity']
                                     if 'tp_working_type' in active_trades[symbol]:
                                         del active_trades[symbol]['tp_working_type']
                         except Exception as e:
@@ -736,31 +1306,55 @@ def create_missing_tp_orders():
                     position_amt = float(position.get('positionAmt', 0))
                     
                     try:
-                        # Check if TP order already exists (don't log every check to reduce spam)
+                        # Check if TP orders already exist (don't log every check to reduce spam)
                         has_orders, open_orders = check_existing_orders(symbol, log_result=False)
-                        existing_tp = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
+                        existing_tps = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
                         
-                        if existing_tp:
-                            # TP already exists, ensure it's tracked in active_trades
-                            if symbol in active_trades:
-                                active_trades[symbol]['tp_order_id'] = existing_tp[0].get('orderId')
-                                # Clean up stored TP details since TP is now active
-                                if 'tp_price' in active_trades[symbol]:
-                                    del active_trades[symbol]['tp_price']
-                                if 'tp_quantity' in active_trades[symbol]:
-                                    del active_trades[symbol]['tp_quantity']
-                                if 'tp_working_type' in active_trades[symbol]:
-                                    del active_trades[symbol]['tp_working_type']
-                            continue  # TP exists, skip
+                        use_single_tp = active_trades.get(symbol, {}).get('use_single_tp', False)
                         
-                        # No TP order exists - we have stored TP details, create TP order
-                        trade_info = active_trades[symbol]
-                        logger.info(f"🔄 Background thread: Position exists for {symbol} with stored TP details - creating TP order")
-                        success = create_tp_if_needed(symbol, trade_info)
-                        if success:
-                            logger.info(f"✅ Background thread: TP order created successfully for {symbol}")
+                        if use_single_tp:
+                            # Single TP mode: only need 1 TP order
+                            if len(existing_tps) >= 1:
+                                if symbol in active_trades:
+                                    active_trades[symbol]['tp2_order_id'] = existing_tps[0].get('orderId')
+                                    # Clean up stored TP details
+                                    if 'tp2_price' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp2_price']
+                                    if 'tp2_quantity' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp2_quantity']
+                                    if 'tp_working_type' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp_working_type']
+                                continue  # TP exists, skip
                         else:
-                            logger.warning(f"⚠️ Background thread: Failed to create TP for {symbol} (check logs for details)")
+                            # TP1+TP2 mode: need 2 TP orders
+                            if len(existing_tps) >= 2:
+                                if symbol in active_trades:
+                                    if len(existing_tps) >= 1:
+                                        active_trades[symbol]['tp1_order_id'] = existing_tps[0].get('orderId')
+                                    if len(existing_tps) >= 2:
+                                        active_trades[symbol]['tp2_order_id'] = existing_tps[1].get('orderId')
+                                    # Clean up stored TP details
+                                    if 'tp1_price' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp1_price']
+                                    if 'tp2_price' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp2_price']
+                                    if 'tp1_quantity' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp1_quantity']
+                                    if 'tp2_quantity' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp2_quantity']
+                                    if 'tp_working_type' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp_working_type']
+                                continue  # Both TPs exist, skip
+                        
+                        # No TP orders exist - we have stored TP details, create TP1 and TP2 orders
+                        trade_info = active_trades[symbol]
+                        logger.info(f"🔄 Background thread: Position exists for {symbol} with stored TP details - creating TP1 and TP2 orders")
+                        success = create_tp1_tp2_if_needed(symbol, trade_info)
+                        if success:
+                            logger.info(f"✅ Background thread: TP1 and TP2 orders created successfully for {symbol}")
+                        else:
+                            logger.warning(f"⚠️ Background thread: Failed to create TP1/TP2 for {symbol} (check logs for details)")
+                        
                     
                     except Exception as e:
                         logger.error(f"Error processing position {symbol}: {e}", exc_info=True)
@@ -771,6 +1365,19 @@ def create_missing_tp_orders():
                             symbol=symbol,
                             severity='WARNING'
                         )
+                
+                # Check trailing stop loss for ALL positions (not just those with TP details)
+                # This runs after TP creation check, uses same position data (no extra API call!)
+                if ENABLE_TRAILING_STOP_LOSS and positions_dict:
+                    for symbol, position in positions_dict.items():
+                        if symbol in active_trades:
+                            try:
+                                trade_info = active_trades[symbol]
+                                # Only check if we have TP1 configured (TP1+TP2 mode)
+                                if not trade_info.get('use_single_tp', False):
+                                    update_trailing_stop_loss(symbol, trade_info, position)
+                            except Exception as e:
+                                logger.debug(f"Error checking trailing SL for {symbol}: {e}")
                 
                 # Also check for positions without stored TP details - calculate TP from position
                 for symbol, position in positions_dict.items():
@@ -1242,6 +1849,188 @@ def format_price_precision(price, tick_size):
         price = float(int(price))
     
     return price
+
+
+def get_account_balance(cached=True):
+    """Get account balance with caching to reduce API calls
+    
+    Args:
+        cached: If True, use cached balance if available and fresh
+    
+    Returns:
+        float: Account balance in USD, or None if error
+    """
+    global account_balance_cache
+    
+    current_time = time.time()
+    
+    # Check cache if enabled
+    if cached and account_balance_cache['balance'] is not None:
+        if current_time - account_balance_cache['timestamp'] < BALANCE_CACHE_TTL:
+            return account_balance_cache['balance']
+    
+    try:
+        account = client.futures_account()
+        balance = float(account.get('totalWalletBalance', 0))
+        
+        # Update cache
+        account_balance_cache['balance'] = balance
+        account_balance_cache['timestamp'] = current_time
+        
+        return balance
+    except Exception as e:
+        logger.warning(f"Failed to get account balance: {e}")
+        # Return cached value if available, even if stale
+        if account_balance_cache['balance'] is not None:
+            logger.info(f"Using cached account balance: ${account_balance_cache['balance']:,.2f}")
+            return account_balance_cache['balance']
+        return None
+
+
+def calculate_trade_risk(entry_price, stop_loss, quantity, signal_side):
+    """Calculate risk for a single trade
+    
+    Args:
+        entry_price: Entry price
+        stop_loss: Stop loss price
+        quantity: Position quantity
+        signal_side: 'LONG' or 'SHORT'
+    
+    Returns:
+        float: Risk in USD
+    """
+    if not entry_price or not stop_loss or not quantity:
+        return 0.0
+    
+    if signal_side == 'LONG':
+        risk_per_unit = abs(entry_price - stop_loss)
+    else:  # SHORT
+        risk_per_unit = abs(stop_loss - entry_price)
+    
+    risk_usd = risk_per_unit * quantity
+    return risk_usd
+
+
+def calculate_total_risk_including_pending(symbol, entry_price, stop_loss, quantity, signal_side):
+    """Calculate total risk including current trade and all pending orders
+    
+    Args:
+        symbol: Trading symbol (for current trade)
+        entry_price: Entry price for current trade
+        stop_loss: Stop loss for current trade
+        quantity: Quantity for current trade
+        signal_side: 'LONG' or 'SHORT' for current trade
+    
+    Returns:
+        dict: {
+            'current_trade_risk': float,
+            'pending_orders_risk': float,
+            'total_risk': float,
+            'account_balance': float,
+            'risk_percent': float,
+            'pending_orders': list
+        }
+    """
+    try:
+        # Get account balance (cached)
+        account_balance = get_account_balance()
+        if account_balance is None or account_balance <= 0:
+            logger.warning("Cannot calculate risk: Account balance not available")
+            return None
+        
+        # Calculate current trade risk
+        current_trade_risk = calculate_trade_risk(entry_price, stop_loss, quantity, signal_side)
+        
+        # Get all open orders to calculate pending risk
+        pending_orders_risk = 0.0
+        pending_orders = []
+        
+        try:
+            all_orders = client.futures_get_open_orders()
+            
+            for order in all_orders:
+                order_symbol = order.get('symbol', '')
+                order_side = order.get('side', '')
+                order_type = order.get('type', '')
+                order_price = safe_float(order.get('price'), default=0)
+                order_qty = safe_float(order.get('origQty'), default=0)
+                
+                # Only count LIMIT orders (pending entries)
+                if order_type == 'LIMIT' and order_price > 0 and order_qty > 0:
+                    # Get stop loss for this order from active_trades
+                    order_risk = 0.0
+                    if order_symbol in active_trades:
+                        trade_info = active_trades[order_symbol]
+                        sl_price = safe_float(trade_info.get('stop_loss'), default=0)
+                        if sl_price > 0:
+                            # Determine side from order
+                            order_signal_side = 'LONG' if order_side == 'BUY' else 'SHORT'
+                            order_risk = calculate_trade_risk(order_price, sl_price, order_qty, order_signal_side)
+                    
+                    if order_risk > 0:
+                        pending_orders_risk += order_risk
+                        pending_orders.append({
+                            'symbol': order_symbol,
+                            'side': order_side,
+                            'price': order_price,
+                            'quantity': order_qty,
+                            'risk': order_risk
+                        })
+        except Exception as e:
+            logger.warning(f"Error calculating pending orders risk: {e}")
+        
+        # Calculate total risk
+        total_risk = current_trade_risk + pending_orders_risk
+        risk_percent = (total_risk / account_balance) * 100 if account_balance > 0 else 0
+        
+        return {
+            'current_trade_risk': current_trade_risk,
+            'pending_orders_risk': pending_orders_risk,
+            'total_risk': total_risk,
+            'account_balance': account_balance,
+            'risk_percent': risk_percent,
+            'pending_orders': pending_orders
+        }
+    except Exception as e:
+        logger.error(f"Error calculating total risk: {e}", exc_info=True)
+        return None
+
+
+def validate_risk_per_trade(symbol, entry_price, stop_loss, quantity, signal_side):
+    """Validate if trade risk is within acceptable limits
+    
+    Args:
+        symbol: Trading symbol
+        entry_price: Entry price
+        stop_loss: Stop loss price
+        quantity: Position quantity
+        signal_side: 'LONG' or 'SHORT'
+    
+    Returns:
+        tuple: (is_valid: bool, risk_info: dict or None, error_message: str or None)
+    """
+    risk_info = calculate_total_risk_including_pending(symbol, entry_price, stop_loss, quantity, signal_side)
+    
+    if risk_info is None:
+        # If we can't calculate risk, allow trade (fail-open)
+        logger.warning(f"Could not calculate risk for {symbol}, allowing trade (fail-open)")
+        return True, None, None
+    
+    risk_percent = risk_info['risk_percent']
+    
+    if risk_percent > MAX_RISK_PERCENT:
+        error_msg = (f"Trade risk {risk_percent:.2f}% exceeds maximum {MAX_RISK_PERCENT}% "
+                    f"(Current trade: ${risk_info['current_trade_risk']:.2f}, "
+                    f"Pending orders: ${risk_info['pending_orders_risk']:.2f}, "
+                    f"Total: ${risk_info['total_risk']:.2f} of ${risk_info['account_balance']:.2f} account)")
+        logger.warning(f"🚫 Risk validation REJECTED for {symbol}: {error_msg}")
+        return False, risk_info, error_msg
+    
+    logger.info(f"✅ Risk validation PASSED for {symbol}: {risk_percent:.2f}% risk "
+               f"(Current: ${risk_info['current_trade_risk']:.2f}, "
+               f"Pending: ${risk_info['pending_orders_risk']:.2f}, "
+               f"Total: ${risk_info['total_risk']:.2f} of ${risk_info['account_balance']:.2f} account)")
+    return True, risk_info, None
 
 
 def calculate_quantity(entry_price, symbol_info):
@@ -3108,6 +3897,45 @@ def create_limit_order(signal_data):
         primary_quantity = calculate_quantity(primary_entry_price, symbol_info)
         dca_quantity = calculate_quantity(dca_entry_price, symbol_info) if dca_entry_price else primary_quantity
         
+        # Risk Validation: Check if trade risk is within acceptable limits
+        # This includes risk from pending orders (orders waiting to fill)
+        # Can be disabled via ENABLE_RISK_VALIDATION=false if needed
+        if ENABLE_RISK_VALIDATION and stop_loss and stop_loss > 0:
+            is_valid_risk, risk_info, risk_error = validate_risk_per_trade(
+                symbol, primary_entry_price, stop_loss, primary_quantity, signal_side
+            )
+            
+            if not is_valid_risk:
+                logger.error(f"❌ Risk validation FAILED for {symbol}: {risk_error}")
+                send_slack_alert(
+                    error_type="Risk Validation Failed",
+                    message=risk_error,
+                    details={
+                        'Risk_Percent': f"{risk_info['risk_percent']:.2f}%",
+                        'Max_Risk_Percent': f"{MAX_RISK_PERCENT}%",
+                        'Current_Trade_Risk': f"${risk_info['current_trade_risk']:.2f}",
+                        'Pending_Orders_Risk': f"${risk_info['pending_orders_risk']:.2f}",
+                        'Total_Risk': f"${risk_info['total_risk']:.2f}",
+                        'Account_Balance': f"${risk_info['account_balance']:.2f}",
+                        'Pending_Orders_Count': len(risk_info['pending_orders'])
+                    },
+                    symbol=symbol,
+                    severity='WARNING'
+                )
+                return {
+                    'success': False,
+                    'error': f'Risk validation failed: {risk_error}',
+                    'risk_info': risk_info
+                }
+            
+            # Log risk info if available
+            if risk_info:
+                logger.info(f"💰 Risk Validation: {risk_info['risk_percent']:.2f}% of account "
+                          f"(${risk_info['total_risk']:.2f} total risk: ${risk_info['current_trade_risk']:.2f} current + "
+                          f"${risk_info['pending_orders_risk']:.2f} pending from {len(risk_info['pending_orders'])} orders)")
+        elif not ENABLE_RISK_VALIDATION:
+            logger.debug(f"Risk validation disabled - skipping risk check for {symbol}")
+        
         # Initialize active trades tracking
         if symbol not in active_trades:
             active_trades[symbol] = {
@@ -3117,8 +3945,19 @@ def create_limit_order(signal_data):
                 'primary_order_id': None,
                 'dca_order_id': None,
                 'tp_order_id': None,
-                'sl_order_id': None
+                'sl_order_id': None,
+                'original_stop_loss': None,
+                'original_entry1': None,
+                'original_entry2': None,
+                'current_sl_price': None,
+                'sl_moved_to_breakeven': False,
+                'tp1_filled': False
             }
+        
+        # Store original prices for trailing stop loss
+        active_trades[symbol]['original_stop_loss'] = stop_loss
+        active_trades[symbol]['original_entry1'] = primary_entry_price
+        active_trades[symbol]['original_entry2'] = dca_entry_price if dca_entry_price else None
         
         current_time = time.time()
         order_results = []
@@ -3146,36 +3985,126 @@ def create_limit_order(signal_data):
                 active_trades[symbol]['position_open'] = True
                 logger.info(f"✅ PRIMARY entry order created successfully: Order ID {primary_order_result.get('orderId')}")
                 
-                # Store TP order details immediately (like Binance UI - TP is "set" but pending until position exists)
-                # The background thread will create the TP order as soon as the limit order fills and position opens
-                DEFAULT_TP_PERCENT = 0.021  # 2.1% profit (used when TP not provided)
+                # Smart TP Strategy: Based on AI Confidence Score
+                # High Confidence (>=90%): Use single TP (main TP from signal) - trust the signal completely
+                # Lower Confidence (<90%): Use TP1 + TP2 strategy - secure profits early
                 
-                if take_profit and take_profit > 0:
-                    # Use TP from webhook
-                    tp_side = 'SELL' if side == 'BUY' else 'BUY'
-                    tp_price = format_price_precision(take_profit, tick_size)
+                confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
+                use_single_tp = confidence_score >= TP_HIGH_CONFIDENCE_THRESHOLD
+                
+                # Calculate entry price for TP calculation
+                # TP1: Always use Entry 1 price only (4% from Entry 1)
+                # TP2: Use average if Entry 2 provided, otherwise Entry 1 only
+                entry_price_for_tp1 = primary_entry_price  # Always Entry 1 for TP1
+                
+                if dca_entry_price and dca_entry_price > 0:
+                    avg_entry_price = (primary_entry_price + dca_entry_price) / 2
+                    entry_price_for_tp2 = avg_entry_price  # Average for TP2
                 else:
-                    # Calculate TP with 2.1% profit when not provided
-                    if side == 'BUY':  # LONG position
-                        tp_price = entry_price * (1 + DEFAULT_TP_PERCENT)
-                        tp_side = 'SELL'
-                    else:  # SHORT position
-                        tp_price = entry_price * (1 - DEFAULT_TP_PERCENT)
-                        tp_side = 'BUY'
-                    tp_price = format_price_precision(tp_price, tick_size)
-                    logger.info(f"📊 TP not provided in webhook - calculating with {DEFAULT_TP_PERCENT*100}% profit: {tp_price}")
+                    # Entry 2 not provided - use Entry 1 for TP2 as well
+                    entry_price_for_tp2 = primary_entry_price
+                    logger.info(f"📊 Entry 2 not provided - using Entry 1 price for TP2 calculation: ${entry_price_for_tp2:,.8f}")
                 
+                tp_side = 'SELL' if side == 'BUY' else 'BUY'
                 total_qty = primary_quantity + (dca_quantity if dca_entry_price else 0)
                 
-                # Store TP details in active_trades[symbol] - will be created automatically when position exists
-                # TP is stored in memory: active_trades[symbol]['tp_price'], ['tp_side'], ['tp_quantity'], ['tp_working_type']
-                # Background thread checks ALL positions every 15s (first 2 min) then every 2 min
-                active_trades[symbol]['tp_price'] = tp_price
-                active_trades[symbol]['tp_side'] = tp_side
-                active_trades[symbol]['tp_quantity'] = total_qty
-                active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
-                logger.info(f"📝 TP order configured and stored in active_trades[{symbol}]: price={tp_price}, side={tp_side}, qty={total_qty}, workingType=MARK_PRICE")
-                logger.info(f"   → TP will be created automatically when position opens (background thread checks every 15s/2min)")
+                if use_single_tp:
+                    # HIGH CONFIDENCE: Use single TP (main TP from signal)
+                    if take_profit and take_profit > 0:
+                        main_tp_price = format_price_precision(take_profit, tick_size)
+                    else:
+                        # If no TP provided, calculate a conservative TP
+                        default_tp_percent = 0.05  # 5% profit for high confidence
+                        if side == 'BUY':  # LONG position
+                            main_tp_price = entry_price_for_tp2 * (1 + default_tp_percent)
+                        else:  # SHORT position
+                            main_tp_price = entry_price_for_tp2 * (1 - default_tp_percent)
+                        main_tp_price = format_price_precision(main_tp_price, tick_size)
+                        logger.info(f"📊 High confidence signal ({confidence_score:.1f}%) - TP not provided, calculating with {default_tp_percent*100}% profit: {main_tp_price}")
+                    
+                    # Store as single TP (100% of position)
+                    active_trades[symbol]['tp1_price'] = None  # No TP1
+                    active_trades[symbol]['tp2_price'] = main_tp_price  # Use TP2 as main TP
+                    active_trades[symbol]['tp_side'] = tp_side
+                    active_trades[symbol]['tp1_quantity'] = 0  # No TP1
+                    active_trades[symbol]['tp2_quantity'] = total_qty  # 100% at main TP
+                    active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
+                    active_trades[symbol]['use_single_tp'] = True  # Flag for single TP mode
+                    logger.info(f"📝 HIGH CONFIDENCE ({confidence_score:.1f}%) - Single TP configured for {symbol}:")
+                    logger.info(f"   → Main TP: @ ${main_tp_price:,.8f} (closes 100% = {total_qty} of position)")
+                    logger.info(f"   → Strategy: Trusting signal completely - using single TP")
+                else:
+                    # LOWER CONFIDENCE: Use TP1 + TP2 strategy (secure profits early)
+                    # Calculate TP1: 3-4% profit from Entry 1 ONLY (not average)
+                    tp1_percent = TP1_PERCENT / 100.0
+                    if side == 'BUY':  # LONG position
+                        tp1_price = entry_price_for_tp1 * (1 + tp1_percent)  # Use Entry 1 only
+                    else:  # SHORT position
+                        tp1_price = entry_price_for_tp1 * (1 - tp1_percent)  # Use Entry 1 only
+                    tp1_price = format_price_precision(tp1_price, tick_size)
+                    logger.info(f"📊 TP1 calculated: {TP1_PERCENT}% from Entry 1 (${primary_entry_price:,.8f}) = ${tp1_price:,.8f}")
+                    
+                    # TP2: Use the TP from webhook (or AI-optimized TP)
+                    if take_profit and take_profit > 0:
+                        tp2_price = format_price_precision(take_profit, tick_size)
+                    else:
+                        # If no TP provided, calculate a default TP2 (higher than TP1)
+                        default_tp2_percent = 0.055  # 5.5% profit
+                        if side == 'BUY':  # LONG position
+                            tp2_price = entry_price_for_tp2 * (1 + default_tp2_percent)
+                        else:  # SHORT position
+                            tp2_price = entry_price_for_tp2 * (1 - default_tp2_percent)
+                        tp2_price = format_price_precision(tp2_price, tick_size)
+                        logger.info(f"📊 TP2 not provided in webhook - calculating with {default_tp2_percent*100}% profit: {tp2_price}")
+                    
+                    # Calculate TP1 and TP2 quantities based on split percentages
+                    tp1_quantity = total_qty * (TP1_SPLIT / 100.0)  # 70% of position
+                    tp2_quantity = total_qty * (TP2_SPLIT / 100.0)  # 30% of position
+                    
+                    # Store TP1 and TP2 details
+                    active_trades[symbol]['tp1_price'] = tp1_price
+                    active_trades[symbol]['tp2_price'] = tp2_price
+                    active_trades[symbol]['tp_side'] = tp_side
+                    active_trades[symbol]['tp1_quantity'] = tp1_quantity
+                    active_trades[symbol]['tp2_quantity'] = tp2_quantity
+                    active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
+                    active_trades[symbol]['use_single_tp'] = False  # Flag for TP1+TP2 mode
+                    logger.info(f"📝 LOWER CONFIDENCE ({confidence_score:.1f}%) - TP1 + TP2 configured for {symbol}:")
+                    logger.info(f"   → TP1: {TP1_PERCENT}% profit @ ${tp1_price:,.8f} (closes {TP1_SPLIT}% = {tp1_quantity} of position)")
+                    logger.info(f"   → TP2: @ ${tp2_price:,.8f} (closes {TP2_SPLIT}% = {tp2_quantity} of position)")
+                    logger.info(f"   → Strategy: Securing profits early with TP1, letting TP2 run")
+                
+                logger.info(f"   → TPs will be created automatically when position opens (background thread checks every 1min/2min)")
+                
+                # Send signal notification to Slack
+                try:
+                    timeframe = signal_data.get('timeframe', 'Unknown')
+                    confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
+                    risk_level = validation_result.get('risk_level', 'MEDIUM') if validation_result else 'MEDIUM'
+                    # Get TP prices for notification
+                    if use_single_tp:
+                        main_tp = active_trades[symbol].get('tp2_price')
+                        tp1_for_notif = None
+                    else:
+                        main_tp = active_trades[symbol].get('tp2_price')
+                        tp1_for_notif = active_trades[symbol].get('tp1_price')
+                    
+                    send_signal_notification(
+                        symbol=symbol,
+                        signal_side=signal_side,
+                        timeframe=timeframe,
+                        confidence_score=confidence_score,
+                        risk_level=risk_level,
+                        entry1_price=primary_entry_price,
+                        entry2_price=dca_entry_price,
+                        stop_loss=stop_loss,
+                        take_profit=main_tp,  # Main TP (TP2 in dual mode, or single TP in high confidence)
+                        tp1_price=tp1_for_notif,  # TP1 (only in dual mode)
+                        use_single_tp=use_single_tp,  # Flag for notification formatting
+                        validation_result=validation_result
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to send signal notification: {e}")
                         
             except BinanceAPIException as e:
                 logger.error(f"❌ Failed to create PRIMARY entry order: {e.message} (Code: {e.code})")
@@ -3252,11 +4181,11 @@ def create_limit_order(signal_data):
             quantity = primary_quantity
             entry_type = "PRIMARY"
             
-            # Check if position exists and create TP immediately (in case entry filled quickly)
+            # Check if position exists and create TP1 and TP2 immediately (in case entry filled quickly)
             # Also schedule a delayed retry in case Binance hasn't updated position yet
-            if symbol in active_trades and 'tp_price' in active_trades[symbol]:
+            if symbol in active_trades and 'tp1_price' in active_trades[symbol] and 'tp2_price' in active_trades[symbol]:
                 # Immediate check
-                create_tp_if_needed(symbol, active_trades[symbol])
+                create_tp1_tp2_if_needed(symbol, active_trades[symbol])
                 # Delayed retry (5 seconds) in case position updates are delayed
                 delayed_tp_creation(symbol, delay_seconds=5)
                 # Another delayed retry (15 seconds) for slower fills
@@ -3315,11 +4244,11 @@ def create_limit_order(signal_data):
             quantity = dca_quantity
             entry_type = "DCA"
             
-            # When DCA entry alert comes, check if position exists and create TP immediately
+            # When DCA entry alert comes, check if position exists and create TP1/TP2 immediately
             # This handles the case where an entry filled and TradingView sent DCA fill alert
-            if symbol in active_trades and 'tp_price' in active_trades[symbol]:
-                logger.info(f"DCA entry alert received - checking for position to create TP immediately")
-                create_tp_if_needed(symbol, active_trades[symbol])
+            if symbol in active_trades and 'tp1_price' in active_trades[symbol] and 'tp2_price' in active_trades[symbol]:
+                logger.info(f"DCA entry alert received - checking for position to create TP1/TP2 immediately")
+                create_tp1_tp2_if_needed(symbol, active_trades[symbol])
         
         # Cleanup closed positions periodically
         if len(active_trades) > 100:
@@ -3334,11 +4263,11 @@ def create_limit_order(signal_data):
         
         logger.info(f"{entry_type} order(s) created successfully: {order_results}")
         
-        # After creating orders, check if position exists and create TP immediately
+        # After creating orders, check if position exists and create TP1/TP2 immediately
         # This handles cases where entry filled between webhook calls
-        if symbol in active_trades and 'tp_price' in active_trades[symbol]:
-            logger.info(f"Checking for position to create TP order immediately")
-            create_tp_if_needed(symbol, active_trades[symbol])
+        if symbol in active_trades and 'tp1_price' in active_trades[symbol] and 'tp2_price' in active_trades[symbol]:
+            logger.info(f"Checking for position to create TP1/TP2 orders immediately")
+            create_tp1_tp2_if_needed(symbol, active_trades[symbol])
         
         # For DCA entry: Create TP order if not exists (using same TP price from primary entry)
         if is_dca_entry and take_profit and take_profit > 0:
