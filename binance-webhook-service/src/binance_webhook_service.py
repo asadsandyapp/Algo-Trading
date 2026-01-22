@@ -3468,6 +3468,9 @@ def create_limit_order(signal_data):
         take_profit = safe_float(signal_data.get('take_profit'), default=None)
         second_entry_price = safe_float(signal_data.get('second_entry_price'), default=None)
         
+        # Extract indicators if available (for ATR-based Entry 2 calculation)
+        indicators = signal_data.get('indicators', {})
+        
         reduce_only = signal_data.get('reduce_only', False)
         order_subtype = signal_data.get('order_subtype', 'primary_entry')
         
