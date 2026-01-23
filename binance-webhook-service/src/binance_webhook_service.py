@@ -92,7 +92,7 @@ SLACK_SIGNAL_WEBHOOK_URL = os.getenv('SLACK_SIGNAL_WEBHOOK_URL', '')  # Slack we
 # AI Validation Configuration
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 ENABLE_AI_VALIDATION = os.getenv('ENABLE_AI_VALIDATION', 'true').lower() == 'true'
-AI_VALIDATION_MIN_CONFIDENCE = float(os.getenv('AI_VALIDATION_MIN_CONFIDENCE', '50'))
+AI_VALIDATION_MIN_CONFIDENCE = float(os.getenv('AI_VALIDATION_MIN_CONFIDENCE', '55'))
 ENABLE_AI_PRICE_SUGGESTIONS = os.getenv('ENABLE_AI_PRICE_SUGGESTIONS', 'true').lower() == 'true'  # Manual review mode
 
 # Initialize Gemini API if available and configured
@@ -2232,6 +2232,7 @@ def validate_signal_with_ai(signal_data):
     stop_loss = safe_float(signal_data.get('stop_loss'), default=None)
     take_profit = safe_float(signal_data.get('take_profit'), default=None)
     timeframe = signal_data.get('timeframe', 'Unknown')
+    quality_score = safe_float(signal_data.get('quality_score'), default=None)  # Script's quality score (6-17)
     
     # Extract indicator values from TradingView script (if provided)
     indicators = signal_data.get('indicators', {})
@@ -2810,7 +2811,8 @@ Signal Details:
 - Entry Price 2 (DCA): ${(f'{second_entry_price:,.8f}' if second_entry_price is not None and second_entry_price > 0 else 'N/A (not provided)')}
 - Stop Loss: ${(f'{stop_loss:,.8f}' if stop_loss is not None and stop_loss > 0 else 'N/A (not provided)')}
 - Take Profit: ${(f'{take_profit:,.8f}' if take_profit is not None and take_profit > 0 else 'N/A (not provided)')}
-- Risk/Reward Ratio: {(f'{risk_reward_ratio:.2f}' if risk_reward_ratio is not None else 'N/A')}{market_info}{indicator_info}
+- Risk/Reward Ratio: {(f'{risk_reward_ratio:.2f}' if risk_reward_ratio is not None else 'N/A')}
+- Quality Score (from script): {(f'{quality_score:.0f}/17' if quality_score is not None else 'N/A')} (Script requires 6-8+ to send alert){market_info}{indicator_info}
 
 ═══════════════════════════════════════════════════════════════
 STEP 4: DETAILED TRADINGVIEW INDICATOR ANALYSIS (SECOND DECISION MAKER)
@@ -2934,33 +2936,93 @@ DECISION MAKER 2: TRADINGVIEW INDICATORS (from Step 4)
 - How many indicators contradict the signal? (Count them)
 - What is the overall indicator alignment? (Strong/Moderate/Weak)
 
-COMBINATION FORMULA (TRADINGVIEW INDICATORS ARE PRIMARY - 70% WEIGHT):
-1. Start with base confidence: 60% (signals are pre-filtered by TradingView script)
-2. TradingView indicator impact (PRIMARY - 70% weight):
-   - 8+ indicators support: +25-35% (EXCELLENT alignment)
-   - 6-7 indicators support: +15-25% (GOOD alignment)
-   - 4-5 indicators support: +5-15% (ACCEPTABLE alignment)
-   - 2-3 indicators support: -5-10% (WEAK alignment, but still approve if R/R is good)
-   - 0-1 indicators support: -15-25% (POOR alignment, reject only if R/R < 0.5)
-3. Add YOUR market analysis impact (SECONDARY - 30% weight):
-   - Signal aligns with YOUR prediction: +5-10%
-   - Signal partially aligns: +0-5%
-   - Signal contradicts YOUR prediction: -5-15% (but don't reject if indicators are strong)
-4. Final confidence = Base + TradingView indicators (70%) + Market analysis (30%)
-5. Clamp final score between 0-100%
+═══════════════════════════════════════════════════════════════
+GURU LEVEL CONFIDENCE FORMULA (MATCHES SCRIPT'S STRICT FILTERING)
+═══════════════════════════════════════════════════════════════
 
-DECISION RULES (MORE LENIENT - FOCUS ON INDICATORS):
-- If final confidence >= 40%: APPROVE (TradingView script already filtered signals)
-- If final confidence 30-39%: APPROVE with low confidence (unless R/R < 0.5 AND indicators contradict)
-- If final confidence < 30%: REJECT only if MULTIPLE red flags (poor R/R + weak indicators + strong counter-trend)
+CRITICAL UNDERSTANDING: The TradingView script ONLY sends alerts when:
+- Quality Score >= 6-8 out of 17 factors (depending on market conditions)
+- ALL 4 confirmations met (SMV, Supertrend, Fear & Greed, Relative Volume)
+- Multiple technical conditions aligned (breaker blocks, wick touches, perfect/strong formations)
+- This means signals are ALREADY HIGHLY FILTERED - they passed strict quality gates
 
-REASONING REQUIREMENT:
+GURU LEVEL CONFIDENCE FORMULA (Reflects Script's Quality System):
+
+1. BASE CONFIDENCE: 75% (signals already passed 6-8+ quality factors)
+   - Script requires 6-8/17 quality factors = signals are pre-filtered for quality
+   - Base confidence reflects that signals are already high quality
+
+2. TRADINGVIEW INDICATOR IMPACT (PRIMARY - 75% weight):
+   Count indicators that SUPPORT vs CONTRADICT the signal:
+   
+   INDICATOR COUNTING (Count each indicator individually):
+   - RSI: Supports if aligned (LONG: RSI < 50, SHORT: RSI > 50)
+   - MACD Line: Supports if aligned (LONG: Line > Signal, SHORT: Line < Signal)
+   - MACD Histogram: Supports if aligned (LONG: Hist > 0, SHORT: Hist < 0)
+   - Stochastic K: Supports if aligned (LONG: K < 50, SHORT: K > 50)
+   - Stochastic D: Supports if aligned (LONG: D < 50, SHORT: D > 50)
+   - EMA200: Supports if aligned (LONG: Price > EMA200, SHORT: Price < EMA200)
+   - Supertrend: Supports if aligned (LONG: Bullish, SHORT: Bearish)
+   - Relative Volume: Supports if high (>70%) or normal with increasing volume
+   - Volume Ratio: Supports if > 1.5x (strong confirmation)
+   - OBV: Supports if aligned (LONG: Rising, SHORT: Falling)
+   - Smart Money: Supports if aligned (LONG: Buying, SHORT: Selling)
+   - Bollinger Bands: Supports if price at bands (LONG: Lower band, SHORT: Upper band)
+   - Divergence: Supports if aligned (LONG: Bullish Div, SHORT: Bearish Div)
+   - At Bottom/Top: Supports if aligned (LONG: At Bottom, SHORT: At Top)
+   - MFI: Supports if aligned (LONG: MFI < 50, SHORT: MFI > 50)
+   
+   INDICATOR IMPACT (Based on support count):
+   - 10+ indicators support: +15-20% (EXCELLENT - script's perfect formations)
+   - 8-9 indicators support: +10-15% (VERY GOOD - script's strong formations)
+   - 6-7 indicators support: +5-10% (GOOD - script's minimum quality threshold)
+   - 4-5 indicators support: +0-5% (ACCEPTABLE - still passed script's filters)
+   - 2-3 indicators support: -5-10% (WEAK - rare, but script still sent it)
+   - 0-1 indicators support: -10-15% (POOR - very rare, only reject if R/R < 0.5)
+
+3. MARKET ANALYSIS IMPACT (SECONDARY - 25% weight):
+   - Signal aligns with YOUR prediction: +3-8%
+   - Signal partially aligns: +0-3%
+   - Signal contradicts YOUR prediction: -3-10% (but don't reject if indicators are strong)
+
+4. FINAL CONFIDENCE CALCULATION:
+   Final = Base (75%) + Indicator Impact (75% weight) + Market Analysis (25% weight)
+   Clamp between 0-100%
+
+5. QUALITY SCORE REFLECTION (If quality_score provided in signal):
+   - Quality Score 12-17: +5-10% bonus (very high quality from script)
+   - Quality Score 10-11: +3-5% bonus (high quality)
+   - Quality Score 8-9: +0-3% bonus (good quality - script's minimum)
+   - Quality Score 6-7: Base confidence (acceptable - script's minimum for sideways markets)
+
+DECISION RULES (GURU LEVEL - MATCHES SCRIPT'S STRICTNESS):
+- If final confidence >= 55%: APPROVE (matches AI_VALIDATION_MIN_CONFIDENCE threshold)
+- If final confidence 50-54%: APPROVE with caution (script sent it, but lower confidence)
+- If final confidence 45-49%: APPROVE only if R/R >= 1.0 AND 6+ indicators support
+- If final confidence < 45%: REJECT only if MULTIPLE red flags:
+  * R/R < 0.5 AND
+  * 5+ indicators contradict AND
+  * Strong counter-trend (>5% against signal direction) AND
+  * Price at very unfavorable level
+
+IMPORTANT: Since the script only sends alerts when 6-8+ quality factors align, signals are ALREADY HIGH QUALITY. 
+Only reject if there are MAJOR red flags that the script might have missed (very rare).
+
+REASONING REQUIREMENT (GURU LEVEL):
 In your reasoning, EXPLICITLY mention:
-1. YOUR market analysis conclusion
-2. TradingView indicator alignment
-3. How you combined both to reach final confidence
+1. YOUR market analysis conclusion (trend, support/resistance, volume)
+2. TradingView indicator alignment (COUNT each indicator: SUPPORT/CONTRADICT/NEUTRAL)
+3. Quality Score reflection (if provided: 6-8 = minimum threshold, 10+ = high quality)
+4. How you combined all factors to reach final confidence
 
-Remember: TRADINGVIEW INDICATORS ARE PRIMARY (70% weight) - they come from a proven script with 65% win rate. Market analysis is SECONDARY (30% weight) - use it to fine-tune confidence, not to reject good indicator setups.
+INDICATOR COUNTING EXAMPLE:
+"Indicator Alignment: 9/15 indicators support LONG. Supporting: RSI 28 (oversold), MACD bullish (Line > Signal, Hist > 0), Stochastic oversold (K=18, D=22), Supertrend bullish, Relative Volume 75% (high), OBV rising, Smart Money buying, At Bottom flag, MFI 25 (oversold). Contradicting: EMA200 (price below), Bollinger Bands (price at middle). Neutral: Divergence (none). Net: 9 support, 2 contradict, 4 neutral = STRONG alignment."
+
+Remember: 
+- TRADINGVIEW INDICATORS ARE PRIMARY (75% weight) - script only sends when 6-8+ quality factors align
+- Market analysis is SECONDARY (25% weight) - use it to fine-tune confidence
+- Base confidence is 75% because signals already passed script's strict quality gates
+- Only reject if MAJOR red flags (very rare - script already filtered for quality)
 
 Respond in JSON format ONLY with this exact structure:
 {{
@@ -2989,7 +3051,7 @@ Your reasoning MUST be STRUCTURED and show ACTUAL TECHNICAL ANALYSIS. Follow thi
    - "Entry 1 Analysis: [Is Entry 1 at $X optimal? Check if it's at support/resistance from market_data. If not optimal, suggest better level and explain why]"
    - "Entry 2 Analysis: [Is Entry 2 at $Y optimal? Check support/resistance levels. If not optimal, suggest better level]"
    - "Stop Loss Analysis: [Is SL at $Z optimal? Check lower timeframe support/resistance from market_data['lower_timeframe_levels']. Is it too tight/wide?]"
-   - "Take Profit Analysis: [Is TP at $W optimal? Check lower timeframe resistance/support. CRITICAL: Is TP achievable within 4-12 hours? Calculate distance from entry (X%). For 2H signals: 3-6% is realistic, >8% is too far. For 4H signals: 4-8% is realistic, >12% is too far. If TP is too far, suggest closer level that will be hit. Explain why this TP level will be reached within 4-12 hours.]"
+   - "Take Profit Analysis: [Is TP at $W optimal? Check lower timeframe resistance. Is it realistic?]"
    - "Risk/Reward: [Calculate actual R/R ratio. Entry $X, SL $Y, TP $Z = R/R 1:X.X]"
 
 3. TRADINGVIEW INDICATOR CONFIRMATION (Count and analyze):
@@ -3160,64 +3222,46 @@ CRITICAL: Signals are based on 2H/4H timeframes.
      * When suggesting new SL, explain WHY original SL needs adjustment in price_suggestion_reasoning
      * NEVER suggest SL that is the same as Entry 2 - this is a critical error
 
-4. TAKE PROFIT (REALISTIC & ACHIEVABLE TARGET - MUST HIT WITHIN 4-12 HOURS):
-   CRITICAL: TP must be set at a level you are CONFIDENT price will reach within 4-12 hours.
-   Many trades go into profit but reverse just before TP - set TP at realistic, achievable levels.
-   
+4. TAKE PROFIT (INSTITUTIONAL TARGET ALIGNMENT - EVALUATE ORIGINAL TP FIRST):
    - STEP 1: EVALUATE THE ORIGINAL TP from the signal:
-     * Check if original TP is ACHIEVABLE within 4-12 hours (consider timeframe: 2H signals = 2-6 candles, 4H signals = 1-3 candles)
-     * Check if original TP is at a realistic support/resistance level on LOWER TIMEFRAMES (15m, 1h) - these are more achievable
-     * Check if original TP is TOO FAR (price might reverse before reaching it) - if >8% for 2H or >12% for 4H, it's likely too aggressive
-     * Check if original TP gives acceptable RR (≥ 1:1 minimum, prefer ≥ 1:2)
-     * Consider momentum: If momentum is strong, TP can be further. If momentum is weak, TP should be closer.
-     * Consider volatility: High volatility = wider TP acceptable, Low volatility = tighter TP needed
+     * Check if original TP is at a realistic support/resistance level (check lower timeframes: 15m, 1h)
+     * Check if original TP is achievable (not too far - typically 3-15% from entry is realistic)
+     * Check if original TP gives RR ≥ 1:3 (minimum requirement)
+     * Check if original TP aligns with market structure and liquidity objectives
    
    - STEP 2: DECISION - Keep or Optimize:
-     * If original TP is GOOD (achievable within 4-12h, at lower timeframe support/resistance, realistic distance): KEEP IT (set suggested_take_profit to null)
-     * If original TP is TOO AGGRESSIVE (too far, won't hit within 4-12h, price will reverse before reaching): Suggest CLOSER TP at nearest lower timeframe level
-     * If original TP is TOO CONSERVATIVE (too close, will hit quickly but leaves profit on table): Suggest HIGHER TP ONLY if momentum/trend is strong and level is achievable
-     * If original TP is at HTF level (too far, 20-30% away): REPLACE with nearest LTF (15m, 1h) level that's achievable
+     * If original TP is GOOD (realistic, achievable, RR ≥ 1:3, at support/resistance): KEEP IT (set suggested_take_profit to null)
+     * If original TP is TOO AGGRESSIVE (won't hit, too far, unrealistic): Suggest LOWER TP (only if technically justified)
+     * If original TP is TOO CONSERVATIVE (leaves profit on table, can go further): Suggest HIGHER TP (only if technically justified)
+     * If original TP gives RR < 1:3: Find nearest level that achieves RR ≥ 1:3 (only if technically justified)
      * DO NOT suggest changes just to make a 1-2% adjustment - only change if technically justified
    
-   - STEP 3: If optimization needed (SOLID TECHNICAL REASON), use LOWER TIMEFRAMES (15m, 1h):
-     * CRITICAL: Use LOWER TIMEFRAME levels (15m, 1h) for TP - these are MORE ACHIEVABLE within 4-12 hours
+   - STEP 3: If optimization needed (SOLID TECHNICAL REASON):
+     * MAXIMUM distance: Keep within 1-2% of original to ensure orders FILL (this is a LIMIT, not a requirement)
+     * Only suggest if new TP is clearly better AND within 1-2% of original
+   
+   - STEP 3: If optimization needed, use LOWER TIMEFRAMES (15m, 1h):
      * Check market_data['lower_timeframe_levels']['15m']['resistance_levels'] and market_data['lower_timeframe_levels']['1h']['resistance_levels'] for LONG
      * Check market_data['lower_timeframe_levels']['15m']['support_levels'] and market_data['lower_timeframe_levels']['1h']['support_levels'] for SHORT
-     * LONG: Find nearest resistance level ABOVE entry on 15m/1h (typically 3-6% from entry for 2H, 4-8% for 4H)
-     * SHORT: Find nearest support level BELOW entry on 15m/1h (typically 3-6% from entry for 2H, 4-8% for 4H)
-     * TP DISTANCE GUIDELINES (based on timeframe and momentum):
-       - 2H timeframe: 3-6% from entry (strong momentum: up to 8%)
-       - 4H timeframe: 4-8% from entry (strong momentum: up to 12%)
-       - DO NOT set TP >12% away - price will likely reverse before reaching it
-     * TP should be at a level where you are CONFIDENT price will reach within 4-12 hours
-     * Consider: If price needs to move 10%+ to reach TP, it's likely too far and will reverse
-     * Prefer closer, achievable TP over distant, unlikely TP - better to secure profit than miss it
+     * LONG: Find nearest resistance level ABOVE entry (within 1-2% of original TP, typically 3-8% from entry, max 15% if structure requires)
+     * SHORT: Find nearest support level BELOW entry (within 1-2% of original TP, typically 3-8% from entry, max 15% if structure requires)
+     * TP should be REALISTIC and ACHIEVABLE - not 20-30% away
+     * DO NOT suggest very wide TP (15%+) unless absolutely necessary for RR ≥ 1:3
    
-   - CRITICAL RULES FOR TP PLACEMENT:
-     * ALWAYS use LOWER TIMEFRAME (15m, 1h) support/resistance for TP - NOT HTF levels
-     * TP must be ACHIEVABLE within 4-12 hours - consider the signal timeframe (2H = 2-6 candles, 4H = 1-3 candles)
-     * If original TP is >8% away for 2H or >12% away for 4H, it's likely TOO FAR - suggest closer level
-     * If momentum is weak or trend is conflicting, set TP CLOSER (3-5% for 2H, 4-6% for 4H)
-     * If momentum is strong and trend is aligned, TP can be further (5-8% for 2H, 6-10% for 4H)
+   - CRITICAL RULES:
      * ALWAYS evaluate original TP first - don't blindly suggest new TP
-     * If original TP is good (achievable, at LTF level, realistic distance), KEEP IT (set suggested_take_profit to null)
-     * Only suggest new TP if original is clearly problematic (too far, at HTF level, won't hit within 4-12h)
-     * When suggesting new TP, explain WHY in price_suggestion_reasoning: "Original TP at $X is too far (Y% away) and likely won't hit within 4-12h. Suggesting closer TP at $Z (W% away) based on 1h resistance level."
+     * If original TP is good OR within 1-2% of optimal level, KEEP IT (set suggested_take_profit to null)
+     * Only suggest new TP if original is clearly problematic AND new TP is within 1-2% of original
+     * When suggesting new TP, explain WHY original TP needs adjustment in price_suggestion_reasoning
 
-CALCULATION METHOD (Realistic & Achievable Approach):
+CALCULATION METHOD (Institutional Approach):
 - IDENTIFY INSTITUTIONAL ZONES: Order blocks, FVGs, liquidity pools, stop-hunt zones
 - VALIDATE STRUCTURE: HTF → LTF alignment, BOS/CHoCH, swing points (HTF for trend direction, LTF for precise levels)
 - CALCULATE ENTRY: At institutional liquidity zone (order block, FVG, or liquidity pool) - can use HTF for direction
 - CALCULATE SL: At NEAREST support/resistance on LTF (15m, 1h) - NOT HTF (HTF SL would be too wide)
-- CALCULATE TP: At NEAREST resistance/support on LTF (15m, 1h) that is ACHIEVABLE within 4-12 HOURS
-  * CRITICAL: TP must be at a level price will reach within 4-12 hours
-  * For 2H signals: TP should be 3-6% away (strong momentum: up to 8%)
-  * For 4H signals: TP should be 4-8% away (strong momentum: up to 12%)
-  * DO NOT use HTF targets (20-30% away) - price will reverse before reaching them
-  * Use LTF (15m, 1h) levels - these are more achievable and realistic
-  * Consider momentum: Strong momentum = TP can be further, Weak momentum = TP should be closer
-- VALIDATE RR: Must be ≥ 1:1 (minimum), prefer ≥ 1:2, excellent if ≥ 1:3
-- CRITICAL: HTF is for TREND DIRECTION and ENTRY optimization, LTF (15m, 1h) is for SL/TP placement (tighter, more achievable within 4-12 hours)
+- CALCULATE TP: At NEAREST resistance/support on LTF (15m, 1h) - NOT HTF targets (HTF targets are too far, 20-30% away)
+- VALIDATE RR: Must be ≥ 1:3 (if not, modify or discard)
+- CRITICAL: HTF is for TREND DIRECTION and ENTRY optimization, LTF (15m, 1h) is for SL/TP placement (tighter, more achievable)
 
 FINAL VALIDATION (CRITICAL - CHECK BEFORE RETURNING):
 Before returning your response, VALIDATE that:
@@ -3694,7 +3738,13 @@ If setup is weak, counter-trend, or lacks institutional confirmation, MODIFY or 
                         diff_pct = ((suggested_entry2 - original_entry2) / original_entry2 * 100) if original_entry2 else 0
                         applied = optimized_prices.get('second_entry_price', original_entry2)
                         applied_diff = ((applied - original_entry2) / original_entry2 * 100) if original_entry2 else 0
-                        status = "✅ APPLIED" if applied != original_entry2 else "❌ REJECTED (worse)"
+                        # Status: APPLIED if changed, KEPT if matches original (not rejected)
+                        if applied != original_entry2:
+                            status = "✅ APPLIED"
+                        elif abs(diff_pct) < 0.01:  # Matches original (within 0.01%)
+                            status = "✅ KEPT (matches original)"
+                        else:
+                            status = "❌ REJECTED (worse)"
                         logger.info(f"   │ 📍 Entry 2:    Original=${original_entry2:,.8f}  →  AI=${suggested_entry2:,.8f} ({diff_pct:+.2f}%)  →  Applied=${applied:,.8f} ({applied_diff:+.2f}%) {status} │")
                     else:
                         applied = optimized_prices.get('second_entry_price')
@@ -3773,6 +3823,7 @@ def create_limit_order(signal_data):
         event = signal_data.get('event')
         signal_side = signal_data.get('signal_side')
         symbol = format_symbol(signal_data.get('symbol', ''))
+        timeframe = signal_data.get('timeframe', 'Unknown')  # Extract timeframe early for rejection notifications
         
         # Safely parse prices (handles None, "null" string, and invalid values)
         entry_price = safe_float(signal_data.get('entry_price'), default=None)
@@ -3825,8 +3876,14 @@ def create_limit_order(signal_data):
                 }
             
             confidence_score = validation_result.get('confidence_score', 100.0)
-            if confidence_score < AI_VALIDATION_MIN_CONFIDENCE:
-                rejection_reason = f"Confidence score {confidence_score:.1f}% is below minimum threshold of {AI_VALIDATION_MIN_CONFIDENCE}%"
+            # More lenient threshold: If AI explicitly approves (is_valid=True) and confidence is close to threshold (within 5%), approve it
+            # This handles cases where AI says "APPROVE" but confidence is slightly below threshold due to scoring formula
+            confidence_threshold = AI_VALIDATION_MIN_CONFIDENCE
+            if validation_result.get('is_valid', True) and confidence_score >= (confidence_threshold - 5.0):
+                # AI approved and confidence is within 5% of threshold - approve it
+                logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (within 5% of threshold {confidence_threshold}%, AI explicitly approved)")
+            elif confidence_score < confidence_threshold:
+                rejection_reason = f"Confidence score {confidence_score:.1f}% is below minimum threshold of {confidence_threshold}%"
                 logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
                 logger.info(f"   Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
                 logger.info(f"   Risk Level: {validation_result.get('risk_level', 'UNKNOWN')}")
@@ -3846,7 +3903,7 @@ def create_limit_order(signal_data):
                 
                 return {
                     'success': False,
-                    'error': f'Signal confidence {confidence_score:.1f}% below minimum {AI_VALIDATION_MIN_CONFIDENCE}%',
+                    'error': f'Signal confidence {confidence_score:.1f}% below minimum {confidence_threshold}%',
                     'validation_result': validation_result
                 }
             
