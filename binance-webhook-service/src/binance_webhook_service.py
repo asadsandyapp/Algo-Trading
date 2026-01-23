@@ -2574,13 +2574,23 @@ YOUR ANALYSIS APPROACH (INSTITUTIONAL METHODOLOGY):
 8. EIGHTH: Combine YOUR institutional analysis with TradingView indicators - both must align
 
 IMPORTANT CONTEXT:
-- This signal comes from a TradingView indicator that already filters signals (65% win rate)
-- Your job is to VALIDATE signals, not reject everything - the script already did filtering
-- You have REAL-TIME market data - use it to assess trend, volume, and price position
-- Think practically: Does this signal have merit based on indicators and market data?
-- Focus on TradingView indicators (PRIMARY) and basic market data (SECONDARY)
+- This signal comes from a TradingView indicator that already filters signals (65% win rate, quality score ≥ 7)
+- Your job is to PERFORM TECHNICAL ANALYSIS and OPTIMIZE PRICES, not just validate
+- You have REAL-TIME market data with support/resistance levels - USE IT for technical analysis
+- You MUST analyze Entry 1, Entry 2, Stop Loss, and Take Profit prices using the market data provided
+- Check if prices are at optimal support/resistance levels from market_data
+- If prices are not optimal, suggest better levels based on technical analysis
+- Focus on TradingView indicators (PRIMARY - 70%) and technical market analysis (SECONDARY - 30%)
 - Accept RR ≥ 1:1 (good setups), prefer RR ≥ 1:2 (better), excellent if RR ≥ 1:3
 - Only reject if MULTIPLE red flags: poor R/R (< 0.5) AND weak indicators AND strong counter-trend
+
+MANDATORY ANALYSIS REQUIREMENTS:
+1. You MUST analyze Entry 1 price: Is it at support/resistance from market_data? If not, suggest optimal level
+2. You MUST analyze Entry 2 price: Is it at support/resistance? If not, suggest optimal level  
+3. You MUST analyze Stop Loss: Check lower timeframe support/resistance from market_data['lower_timeframe_levels']
+4. You MUST analyze Take Profit: Check lower timeframe support/resistance levels
+5. You MUST calculate actual Risk/Reward ratio and validate it
+6. Your reasoning MUST show this analysis - do NOT just count indicators
 
 ═══════════════════════════════════════════════════════════════
 STEP 1: INSTITUTIONAL MULTI-TIMEFRAME & MARKET STRUCTURE ANALYSIS
@@ -2647,15 +2657,34 @@ Think like the whale/institution you are - see liquidity, order flow, and market
    - What is the Risk/Reward ratio? (Accept if ≥ 1:1, good if ≥ 1:2, excellent if ≥ 1:3)
 
 ═══════════════════════════════════════════════════════════════
-STEP 2: INSTITUTIONAL ENTRY & TARGET OPTIMIZATION (CRITICAL - WHALE METHODOLOGY)
+STEP 2: TECHNICAL PRICE ANALYSIS & OPTIMIZATION (MANDATORY)
 ═══════════════════════════════════════════════════════════════
 
+CRITICAL: You MUST analyze and optimize ALL prices using the market_data provided below.
+The market_data contains REAL support/resistance levels - USE THEM for your analysis.
+
+USE THE PROVIDED MARKET DATA FOR TECHNICAL ANALYSIS (check the market_data section above):
+- Support Level: Use market_data['support_level'] or market_data['recent_low']
+- Resistance Level: Use market_data['resistance_level'] or market_data['recent_high']
+- Lower Timeframe Support (15m): Check market_data['lower_timeframe_levels']['15m']['support_levels'] if available
+- Lower Timeframe Resistance (15m): Check market_data['lower_timeframe_levels']['15m']['resistance_levels'] if available
+- Lower Timeframe Support (1h): Check market_data['lower_timeframe_levels']['1h']['support_levels'] if available
+- Lower Timeframe Resistance (1h): Check market_data['lower_timeframe_levels']['1h']['resistance_levels'] if available
+
+CRITICAL: When analyzing prices, REFERENCE the actual support/resistance levels from the market_data section above.
+Do NOT just say "price is at support" - specify which level (e.g., "Entry 1 at $0.627 is near 1h resistance level $0.631").
+
+MANDATORY PRICE ANALYSIS (You MUST analyze each price):
+1. Entry 1: Compare original Entry 1 price with support/resistance levels from market_data
+2. Entry 2: Compare original Entry 2 price with support/resistance levels
+3. Stop Loss: Use lower timeframe support/resistance (15m, 1h) for optimal SL placement
+4. Take Profit: Use lower timeframe support/resistance (15m, 1h) for optimal TP placement
+
 As an institutional trader/whale, you MUST optimize ALL prices based on:
-- Multi-timeframe structure (HTF → LTF alignment)
-- Market structure (BOS, CHoCH, swing points)
-- Liquidity zones (order blocks, FVGs, stop-hunt zones)
-- Institutional entry zones (NOT based on closeness to current price)
-- Minimum RR ≥ 1:3 requirement (if can't achieve, modify or discard)
+- Support/resistance levels from market_data (PRIMARY - use these actual levels)
+- Lower timeframe levels (15m, 1h) for SL/TP placement
+- Market structure alignment
+- Risk/Reward ratio validation (prefer ≥ 1:2, minimum ≥ 1:1)
 
 CRITICAL: Entry optimization is based on TECHNICAL & STRUCTURAL CONFIRMATION, NOT on closeness to current price.
 Entries must be placed ONLY at HIGH-PROBABILITY INSTITUTIONAL LIQUIDITY ZONES.
@@ -2937,7 +2966,7 @@ Respond in JSON format ONLY with this exact structure:
 {{
     "is_valid": true/false,
     "confidence_score": 0-100,
-    "reasoning": "MUST mention: (1) TradingView indicator alignment (PRIMARY - count how many support vs contradict), (2) Market data analysis (trend, volume, price position), (3) Risk/Reward validation, (4) Final conclusion. Example: 'TradingView indicators show 7 out of 10 indicators support LONG direction. RSI at 45 indicates neutral-bullish, MACD shows bullish momentum (histogram positive), Stochastic at 35 indicates oversold recovery, Volume is high (75th percentile), Supertrend is bullish. Market data shows short-term uptrend (+2.3%), price is mid-range, volume is increasing. Risk/Reward ratio is 1:2.5 which is acceptable. Combined analysis gives 72% confidence - APPROVE.'",
+    "reasoning": "STRUCTURED format required: (1) Technical Market Analysis: Analyze trend alignment, price position vs support/resistance from market_data, volume confirmation. (2) Price Optimization Analysis: Evaluate Entry 1, Entry 2, SL, TP using support/resistance levels from market_data - are they optimal? If not, explain why and what would be better. (3) TradingView Indicator Confirmation: Count indicators supporting/contradicting, list key confirmations with values. (4) Final Decision: Combined analysis = confidence score. Example: 'Market Structure: Short-term DOWN (-0.3%), medium-term UP (+0.7%), conflicting trends. Price Position: Entry at $0.627 is at 71.5% of range, above SMA20 ($0.617) and SMA50. Entry 1 Analysis: Entry 1 at $0.627 is near resistance level $0.631, not optimal for SHORT. Better entry would be at resistance $0.631. Entry 2 Analysis: Entry 2 at $0.634 is above Entry 1 (correct for SHORT) but could be optimized to $0.631 resistance. Stop Loss Analysis: SL at $0.657 is 4.8% from entry, above 1h resistance $0.655 - optimal placement. Take Profit Analysis: TP at $0.593 is 5.5% from entry, near 1h support $0.595 - optimal. Risk/Reward: Entry $0.627, SL $0.657, TP $0.593 = R/R 1:1.16. Indicator Alignment: 7/11 indicators support SHORT. Key: Supertrend bearish, At Top flag, Stochastic overbought (75.7/89.8). Conflicts: MACD histogram positive (bullish), RSI neutral. Combined: Market structure mixed but price at top with bearish indicators = 65% confidence. APPROVE.'",
     "risk_level": "LOW" or "MEDIUM" or "HIGH",
     "suggested_entry_price": <number> or null,
     "suggested_second_entry_price": <number> or null,
@@ -2946,14 +2975,32 @@ Respond in JSON format ONLY with this exact structure:
     "price_suggestion_reasoning": "Why these prices are suggested (if different from original)"
 }}
 
-REASONING REQUIREMENT (Practical Analysis - Focus on Available Data):
-Your reasoning should be PRACTICAL and based on AVAILABLE DATA. Mention:
-1. TRADINGVIEW INDICATOR ANALYSIS (PRIMARY): "TradingView indicators show X out of Y indicators support this direction. Specifically: RSI at [value] indicates..., MACD shows..., Volume/OI behavior suggests..., [list key supporting indicators]..."
-2. MARKET DATA ANALYSIS (SECONDARY): "Market data shows [trend direction], price is [position relative to support/resistance], volume is [status]. This [aligns/partially aligns/contradicts] the signal because..."
-3. RISK/REWARD VALIDATION: "Risk/Reward ratio is [value]. Entry at $X, Stop Loss at $Y, Take Profit at $Z. This provides [adequate/good/excellent] risk management..."
-4. FINAL CONCLUSION: "Combining TradingView indicator analysis (X indicators support) with market data validation (trend/volume/position), I conclude this signal has [confidence level]% confidence. [Approve/Reject] because..."
+REASONING REQUIREMENT (STRUCTURED TECHNICAL ANALYSIS - MANDATORY):
+Your reasoning MUST be STRUCTURED and show ACTUAL TECHNICAL ANALYSIS. Follow this EXACT format (do NOT repeat information):
 
-Think practically - TradingView script already filtered signals. Your job is to validate based on indicators and basic market data, not to require perfect institutional-level analysis that isn't available. Focus on what you CAN analyze: indicators, trend, volume, R/R ratio.
+1. TECHNICAL MARKET ANALYSIS (Use the market data provided):
+   - "Market Structure: [Analyze trend from market_data - short/medium/long-term trends, are they aligned?]"
+   - "Price Position: [Current price vs support/resistance levels from market_data. Entry price at $X is [above/below/at] support level $Y / resistance level $Z]"
+   - "Volume Analysis: [Volume status, volume trend from market_data. Is volume confirming or diverging?]"
+   - "Moving Averages: [Price vs SMA20/SMA50 from market_data. What does this indicate?]"
+   - "Market Direction Prediction: [Based on YOUR analysis of market_data, where is price likely to go? UP/DOWN/SIDEWAYS]"
+
+2. PRICE OPTIMIZATION ANALYSIS (MANDATORY - Analyze each price):
+   - "Entry 1 Analysis: [Is Entry 1 at $X optimal? Check if it's at support/resistance from market_data. If not optimal, suggest better level and explain why]"
+   - "Entry 2 Analysis: [Is Entry 2 at $Y optimal? Check support/resistance levels. If not optimal, suggest better level]"
+   - "Stop Loss Analysis: [Is SL at $Z optimal? Check lower timeframe support/resistance from market_data['lower_timeframe_levels']. Is it too tight/wide?]"
+   - "Take Profit Analysis: [Is TP at $W optimal? Check lower timeframe resistance/support. CRITICAL: Is TP achievable within 4-12 hours? Calculate distance from entry (X%). For 2H signals: 3-6% is realistic, >8% is too far. For 4H signals: 4-8% is realistic, >12% is too far. If TP is too far, suggest closer level that will be hit. Explain why this TP level will be reached within 4-12 hours.]"
+   - "Risk/Reward: [Calculate actual R/R ratio. Entry $X, SL $Y, TP $Z = R/R 1:X.X]"
+
+3. TRADINGVIEW INDICATOR CONFIRMATION (Count and analyze):
+   - "Indicator Alignment: [X out of Y indicators support [direction]. Key confirmations: [list 3-4 most important indicators with their values and what they indicate]"
+   - "Indicator Conflicts: [List any indicators that contradict and explain why]"
+
+4. FINAL DECISION:
+   - "Combined Analysis: [Your market analysis + indicator alignment = confidence score]"
+   - "Decision: [APPROVE/REJECT] because [specific reason based on technical analysis, not just indicator count]"
+
+CRITICAL: Do NOT just count indicators. You MUST analyze the market data (trend, support/resistance, volume) and evaluate each price (Entry 1, Entry 2, SL, TP) using the technical levels provided in market_data.
 
 Note: If you want to suggest price optimizations (based on institutional zones, NOT closeness to price), include the suggested_* fields. Otherwise, you may omit them or set them to null.
 
@@ -3113,46 +3160,64 @@ CRITICAL: Signals are based on 2H/4H timeframes.
      * When suggesting new SL, explain WHY original SL needs adjustment in price_suggestion_reasoning
      * NEVER suggest SL that is the same as Entry 2 - this is a critical error
 
-4. TAKE PROFIT (INSTITUTIONAL TARGET ALIGNMENT - EVALUATE ORIGINAL TP FIRST):
+4. TAKE PROFIT (REALISTIC & ACHIEVABLE TARGET - MUST HIT WITHIN 4-12 HOURS):
+   CRITICAL: TP must be set at a level you are CONFIDENT price will reach within 4-12 hours.
+   Many trades go into profit but reverse just before TP - set TP at realistic, achievable levels.
+   
    - STEP 1: EVALUATE THE ORIGINAL TP from the signal:
-     * Check if original TP is at a realistic support/resistance level (check lower timeframes: 15m, 1h)
-     * Check if original TP is achievable (not too far - typically 3-15% from entry is realistic)
-     * Check if original TP gives RR ≥ 1:3 (minimum requirement)
-     * Check if original TP aligns with market structure and liquidity objectives
+     * Check if original TP is ACHIEVABLE within 4-12 hours (consider timeframe: 2H signals = 2-6 candles, 4H signals = 1-3 candles)
+     * Check if original TP is at a realistic support/resistance level on LOWER TIMEFRAMES (15m, 1h) - these are more achievable
+     * Check if original TP is TOO FAR (price might reverse before reaching it) - if >8% for 2H or >12% for 4H, it's likely too aggressive
+     * Check if original TP gives acceptable RR (≥ 1:1 minimum, prefer ≥ 1:2)
+     * Consider momentum: If momentum is strong, TP can be further. If momentum is weak, TP should be closer.
+     * Consider volatility: High volatility = wider TP acceptable, Low volatility = tighter TP needed
    
    - STEP 2: DECISION - Keep or Optimize:
-     * If original TP is GOOD (realistic, achievable, RR ≥ 1:3, at support/resistance): KEEP IT (set suggested_take_profit to null)
-     * If original TP is TOO AGGRESSIVE (won't hit, too far, unrealistic): Suggest LOWER TP (only if technically justified)
-     * If original TP is TOO CONSERVATIVE (leaves profit on table, can go further): Suggest HIGHER TP (only if technically justified)
-     * If original TP gives RR < 1:3: Find nearest level that achieves RR ≥ 1:3 (only if technically justified)
+     * If original TP is GOOD (achievable within 4-12h, at lower timeframe support/resistance, realistic distance): KEEP IT (set suggested_take_profit to null)
+     * If original TP is TOO AGGRESSIVE (too far, won't hit within 4-12h, price will reverse before reaching): Suggest CLOSER TP at nearest lower timeframe level
+     * If original TP is TOO CONSERVATIVE (too close, will hit quickly but leaves profit on table): Suggest HIGHER TP ONLY if momentum/trend is strong and level is achievable
+     * If original TP is at HTF level (too far, 20-30% away): REPLACE with nearest LTF (15m, 1h) level that's achievable
      * DO NOT suggest changes just to make a 1-2% adjustment - only change if technically justified
    
-   - STEP 3: If optimization needed (SOLID TECHNICAL REASON):
-     * MAXIMUM distance: Keep within 1-2% of original to ensure orders FILL (this is a LIMIT, not a requirement)
-     * Only suggest if new TP is clearly better AND within 1-2% of original
-   
-   - STEP 3: If optimization needed, use LOWER TIMEFRAMES (15m, 1h):
+   - STEP 3: If optimization needed (SOLID TECHNICAL REASON), use LOWER TIMEFRAMES (15m, 1h):
+     * CRITICAL: Use LOWER TIMEFRAME levels (15m, 1h) for TP - these are MORE ACHIEVABLE within 4-12 hours
      * Check market_data['lower_timeframe_levels']['15m']['resistance_levels'] and market_data['lower_timeframe_levels']['1h']['resistance_levels'] for LONG
      * Check market_data['lower_timeframe_levels']['15m']['support_levels'] and market_data['lower_timeframe_levels']['1h']['support_levels'] for SHORT
-     * LONG: Find nearest resistance level ABOVE entry (within 1-2% of original TP, typically 3-8% from entry, max 15% if structure requires)
-     * SHORT: Find nearest support level BELOW entry (within 1-2% of original TP, typically 3-8% from entry, max 15% if structure requires)
-     * TP should be REALISTIC and ACHIEVABLE - not 20-30% away
-     * DO NOT suggest very wide TP (15%+) unless absolutely necessary for RR ≥ 1:3
+     * LONG: Find nearest resistance level ABOVE entry on 15m/1h (typically 3-6% from entry for 2H, 4-8% for 4H)
+     * SHORT: Find nearest support level BELOW entry on 15m/1h (typically 3-6% from entry for 2H, 4-8% for 4H)
+     * TP DISTANCE GUIDELINES (based on timeframe and momentum):
+       - 2H timeframe: 3-6% from entry (strong momentum: up to 8%)
+       - 4H timeframe: 4-8% from entry (strong momentum: up to 12%)
+       - DO NOT set TP >12% away - price will likely reverse before reaching it
+     * TP should be at a level where you are CONFIDENT price will reach within 4-12 hours
+     * Consider: If price needs to move 10%+ to reach TP, it's likely too far and will reverse
+     * Prefer closer, achievable TP over distant, unlikely TP - better to secure profit than miss it
    
-   - CRITICAL RULES:
+   - CRITICAL RULES FOR TP PLACEMENT:
+     * ALWAYS use LOWER TIMEFRAME (15m, 1h) support/resistance for TP - NOT HTF levels
+     * TP must be ACHIEVABLE within 4-12 hours - consider the signal timeframe (2H = 2-6 candles, 4H = 1-3 candles)
+     * If original TP is >8% away for 2H or >12% away for 4H, it's likely TOO FAR - suggest closer level
+     * If momentum is weak or trend is conflicting, set TP CLOSER (3-5% for 2H, 4-6% for 4H)
+     * If momentum is strong and trend is aligned, TP can be further (5-8% for 2H, 6-10% for 4H)
      * ALWAYS evaluate original TP first - don't blindly suggest new TP
-     * If original TP is good OR within 1-2% of optimal level, KEEP IT (set suggested_take_profit to null)
-     * Only suggest new TP if original is clearly problematic AND new TP is within 1-2% of original
-     * When suggesting new TP, explain WHY original TP needs adjustment in price_suggestion_reasoning
+     * If original TP is good (achievable, at LTF level, realistic distance), KEEP IT (set suggested_take_profit to null)
+     * Only suggest new TP if original is clearly problematic (too far, at HTF level, won't hit within 4-12h)
+     * When suggesting new TP, explain WHY in price_suggestion_reasoning: "Original TP at $X is too far (Y% away) and likely won't hit within 4-12h. Suggesting closer TP at $Z (W% away) based on 1h resistance level."
 
-CALCULATION METHOD (Institutional Approach):
+CALCULATION METHOD (Realistic & Achievable Approach):
 - IDENTIFY INSTITUTIONAL ZONES: Order blocks, FVGs, liquidity pools, stop-hunt zones
 - VALIDATE STRUCTURE: HTF → LTF alignment, BOS/CHoCH, swing points (HTF for trend direction, LTF for precise levels)
 - CALCULATE ENTRY: At institutional liquidity zone (order block, FVG, or liquidity pool) - can use HTF for direction
 - CALCULATE SL: At NEAREST support/resistance on LTF (15m, 1h) - NOT HTF (HTF SL would be too wide)
-- CALCULATE TP: At NEAREST resistance/support on LTF (15m, 1h) - NOT HTF targets (HTF targets are too far, 20-30% away)
-- VALIDATE RR: Must be ≥ 1:3 (if not, modify or discard)
-- CRITICAL: HTF is for TREND DIRECTION and ENTRY optimization, LTF (15m, 1h) is for SL/TP placement (tighter, more achievable)
+- CALCULATE TP: At NEAREST resistance/support on LTF (15m, 1h) that is ACHIEVABLE within 4-12 HOURS
+  * CRITICAL: TP must be at a level price will reach within 4-12 hours
+  * For 2H signals: TP should be 3-6% away (strong momentum: up to 8%)
+  * For 4H signals: TP should be 4-8% away (strong momentum: up to 12%)
+  * DO NOT use HTF targets (20-30% away) - price will reverse before reaching them
+  * Use LTF (15m, 1h) levels - these are more achievable and realistic
+  * Consider momentum: Strong momentum = TP can be further, Weak momentum = TP should be closer
+- VALIDATE RR: Must be ≥ 1:1 (minimum), prefer ≥ 1:2, excellent if ≥ 1:3
+- CRITICAL: HTF is for TREND DIRECTION and ENTRY optimization, LTF (15m, 1h) is for SL/TP placement (tighter, more achievable within 4-12 hours)
 
 FINAL VALIDATION (CRITICAL - CHECK BEFORE RETURNING):
 Before returning your response, VALIDATE that:
