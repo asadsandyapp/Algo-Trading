@@ -467,7 +467,7 @@ def send_signal_notification(symbol, signal_side, timeframe, confidence_score, r
         if entry2_price:
             slack_message += f"\n  • Order 3: {entry2_str} - $10.00 (Entry 2)"
         
-        slack_message += f"\n  • Total Investment: ${total_investment:.2f}"
+        slack_message += f"""
 
 *Risk Management:*
   • Stop Loss: {stop_loss_str}"""
@@ -4759,33 +4759,33 @@ def create_limit_order(signal_data):
             if order3_quantity:
                 total_qty += order3_quantity
             logger.info(f"📊 Total position size: {total_qty} (Order 1: {order1_quantity}, Order 2: {order2_quantity if order2_quantity else 0}, Order 3: {order3_quantity if order3_quantity else 0})")
-                
-                if use_single_tp:
-                    # HIGH CONFIDENCE: Use single TP (main TP from signal)
-                    if take_profit and take_profit > 0:
-                        main_tp_price = format_price_precision(take_profit, tick_size)
-                    else:
-                        # If no TP provided, calculate a conservative TP
-                        default_tp_percent = 0.05  # 5% profit for high confidence
-                        if side == 'BUY':  # LONG position
-                            main_tp_price = entry_price_for_tp2 * (1 + default_tp_percent)
-                        else:  # SHORT position
-                            main_tp_price = entry_price_for_tp2 * (1 - default_tp_percent)
-                        main_tp_price = format_price_precision(main_tp_price, tick_size)
-                        logger.info(f"📊 High confidence signal ({confidence_score:.1f}%) - TP not provided, calculating with {default_tp_percent*100}% profit: {main_tp_price}")
-                    
-                    # Store as single TP (100% of position)
-                    active_trades[symbol]['tp1_price'] = None  # No TP1
-                    active_trades[symbol]['tp2_price'] = main_tp_price  # Use TP2 as main TP
-                    active_trades[symbol]['tp_side'] = tp_side
-                    active_trades[symbol]['tp1_quantity'] = 0  # No TP1
-                    active_trades[symbol]['tp2_quantity'] = total_qty  # 100% at main TP
-                    active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
-                    active_trades[symbol]['use_single_tp'] = True  # Flag for single TP mode
-                    logger.info(f"📝 HIGH CONFIDENCE ({confidence_score:.1f}%) - Single TP configured for {symbol}:")
-                    logger.info(f"   → Main TP: @ ${main_tp_price:,.8f} (closes 100% = {total_qty} of position)")
-                    logger.info(f"   → Strategy: Trusting signal completely - using single TP")
+            
+            if use_single_tp:
+                # HIGH CONFIDENCE: Use single TP (main TP from signal)
+                if take_profit and take_profit > 0:
+                    main_tp_price = format_price_precision(take_profit, tick_size)
                 else:
+                    # If no TP provided, calculate a conservative TP
+                    default_tp_percent = 0.05  # 5% profit for high confidence
+                    if side == 'BUY':  # LONG position
+                        main_tp_price = entry_price_for_tp2 * (1 + default_tp_percent)
+                    else:  # SHORT position
+                        main_tp_price = entry_price_for_tp2 * (1 - default_tp_percent)
+                    main_tp_price = format_price_precision(main_tp_price, tick_size)
+                    logger.info(f"📊 High confidence signal ({confidence_score:.1f}%) - TP not provided, calculating with {default_tp_percent*100}% profit: {main_tp_price}")
+                
+                # Store as single TP (100% of position)
+                active_trades[symbol]['tp1_price'] = None  # No TP1
+                active_trades[symbol]['tp2_price'] = main_tp_price  # Use TP2 as main TP
+                active_trades[symbol]['tp_side'] = tp_side
+                active_trades[symbol]['tp1_quantity'] = 0  # No TP1
+                active_trades[symbol]['tp2_quantity'] = total_qty  # 100% at main TP
+                active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
+                active_trades[symbol]['use_single_tp'] = True  # Flag for single TP mode
+                logger.info(f"📝 HIGH CONFIDENCE ({confidence_score:.1f}%) - Single TP configured for {symbol}:")
+                logger.info(f"   → Main TP: @ ${main_tp_price:,.8f} (closes 100% = {total_qty} of position)")
+                logger.info(f"   → Strategy: Trusting signal completely - using single TP")
+            else:
                     # LOWER CONFIDENCE: Use TP1 + TP2 strategy (secure profits early)
                     # Calculate TP1: 3-4% profit from Entry 1 ONLY (not average)
                     tp1_percent = TP1_PERCENT / 100.0
