@@ -278,6 +278,100 @@ def send_slack_alert(error_type, message, details=None, symbol=None, severity='E
         # Silently fail - don't break the service if Slack is down
         logger.debug(f"Error preparing Slack notification: {e}")
 
+def send_signal_rejection_notification(symbol, signal_side, timeframe, entry_price, 
+                                       rejection_reason, confidence_score=None, risk_level=None, 
+                                       validation_result=None):
+    """
+    Send a rejection notification to Slack exception channel when signal is rejected
+    
+    Args:
+        symbol: Trading symbol (e.g., 'BTCUSDT')
+        signal_side: 'LONG' or 'SHORT'
+        timeframe: Trading timeframe (e.g., '1H', '4H')
+        entry_price: Entry price from signal
+        rejection_reason: Reason for rejection
+        confidence_score: AI confidence score if available
+        risk_level: Risk level if available
+        validation_result: Full validation result dict (optional)
+    """
+    if not SLACK_WEBHOOK_URL:
+        return  # Skip if webhook URL not configured
+    
+    try:
+        # Determine side emoji
+        side_emoji = '📈' if signal_side == 'LONG' else '📉'
+        
+        # Build the message
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
+        environment = 'TESTNET' if BINANCE_TESTNET else 'PRODUCTION'
+        
+        # Format symbol consistently (remove .P suffix if present, uppercase)
+        formatted_symbol = symbol.replace('.P', '').upper()
+        # Format timeframe consistently (uppercase, ensure proper format)
+        formatted_timeframe = timeframe.upper() if timeframe else 'N/A'
+        
+        # Format entry price consistently
+        entry_str = f'${entry_price:,.8f}' if entry_price else 'N/A'
+        
+        # Build rejection message
+        slack_message = f"""🚫 *SIGNAL REJECTED - AI VALIDATION FAILED*
+
+*Symbol:* `{formatted_symbol}`
+*Timeframe:* `{formatted_timeframe}`
+*Side:* {side_emoji} {signal_side}
+*Environment:* {environment}
+*Time:* {timestamp}
+
+*Signal Details:*
+  • Entry Price: {entry_str}"""
+        
+        if confidence_score is not None:
+            slack_message += f"\n  • Confidence Score: {confidence_score:.1f}% (Threshold: {AI_VALIDATION_MIN_CONFIDENCE}%)"
+        
+        if risk_level:
+            risk_emoji_map = {
+                'LOW': '🟢',
+                'MEDIUM': '🟡',
+                'HIGH': '🔴'
+            }
+            risk_emoji = risk_emoji_map.get(risk_level, '⚪')
+            slack_message += f"\n  • Risk Level: {risk_emoji} {risk_level}"
+        
+        slack_message += f"\n\n*Rejection Reason:*\n{rejection_reason}"
+        
+        # Add AI reasoning if available (truncated)
+        if validation_result and validation_result.get('reasoning'):
+            reasoning = validation_result.get('reasoning', '')
+            # Convert to single line
+            reasoning = ' '.join(reasoning.split())
+            # Truncate if too long
+            if len(reasoning) > 500:
+                reasoning = reasoning[:497] + "..."
+            slack_message += f"\n\n*AI Analysis:* {reasoning}"
+        
+        # Send to Slack (non-blocking in a thread)
+        def send_async():
+            try:
+                payload = {'text': slack_message}
+                response = requests.post(
+                    SLACK_WEBHOOK_URL,
+                    json=payload,
+                    headers={'Content-Type': 'application/json'},
+                    timeout=5
+                )
+                response.raise_for_status()
+                logger.info(f"✅ Rejection notification sent to Slack for {symbol}")
+            except Exception as e:
+                logger.debug(f"Failed to send Slack rejection notification: {e}")
+        
+        # Send in background thread to avoid blocking
+        thread = threading.Thread(target=send_async, daemon=True)
+        thread.start()
+        
+    except Exception as e:
+        logger.debug(f"Error preparing Slack rejection notification: {e}")
+
+
 def send_signal_notification(symbol, signal_side, timeframe, confidence_score, risk_level, 
                              entry1_price, entry2_price, stop_loss, take_profit, 
                              tp1_price=None, use_single_tp=False, validation_result=None):
@@ -329,17 +423,23 @@ def send_signal_notification(symbol, signal_side, timeframe, confidence_score, r
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
         environment = 'TESTNET' if BINANCE_TESTNET else 'PRODUCTION'
         
-        # Format prices
+        # Format symbol consistently (remove .P suffix if present, uppercase)
+        formatted_symbol = symbol.replace('.P', '').upper()
+        # Format timeframe consistently (uppercase, ensure proper format)
+        formatted_timeframe = timeframe.upper() if timeframe else 'N/A'
+        
+        # Format prices consistently (all with same format: $X,XXX.XXXXXXXX)
+        entry1_str = f'${entry1_price:,.8f}' if entry1_price else 'N/A'
         entry2_str = f'${entry2_price:,.8f}' if entry2_price else 'N/A'
         stop_loss_str = f'${stop_loss:,.8f}' if stop_loss else 'N/A'
         tp1_str = f'${tp1_price:,.8f}' if tp1_price else 'N/A'
         tp2_str = f'${take_profit:,.8f}' if take_profit else 'N/A'
         
-        # Format the message with beautiful structure
+        # Format the message with beautiful structure (consistent formatting)
         slack_message = f"""{side_emoji} *NEW {signal_side} SIGNAL - ORDER OPENED*
 
-*Symbol:* `{symbol}`
-*Timeframe:* `{timeframe}`
+*Symbol:* `{formatted_symbol}`
+*Timeframe:* `{formatted_timeframe}`
 *Environment:* {environment}
 *Time:* {timestamp}
 
@@ -347,7 +447,7 @@ def send_signal_notification(symbol, signal_side, timeframe, confidence_score, r
 *Risk Level:* {risk_emoji} {risk_level}
 
 *Entry Prices:*
-  • Entry 1: `${entry1_price:,.8f}`
+  • Entry 1: {entry1_str}
   • Entry 2: {entry2_str}
 
 *Risk Management:*
@@ -2474,13 +2574,13 @@ YOUR ANALYSIS APPROACH (INSTITUTIONAL METHODOLOGY):
 8. EIGHTH: Combine YOUR institutional analysis with TradingView indicators - both must align
 
 IMPORTANT CONTEXT:
-- This signal comes from a TradingView indicator that already filters signals
-- The system has a 65% win rate, but you're the institutional expert - validate or improve it
-- You have REAL-TIME market data - analyze it like the whale/institution you are
-- Think critically: Would YOU (as a whale/institution) take this trade?
-- Entries must be at institutional liquidity zones, NOT based on closeness to current price
-- Minimum RR ≥ 1:3 required - if setup can't achieve this, modify or discard
-- If setup is weak, counter-trend, or lacks institutional confirmation, modify or discard entirely
+- This signal comes from a TradingView indicator that already filters signals (65% win rate)
+- Your job is to VALIDATE signals, not reject everything - the script already did filtering
+- You have REAL-TIME market data - use it to assess trend, volume, and price position
+- Think practically: Does this signal have merit based on indicators and market data?
+- Focus on TradingView indicators (PRIMARY) and basic market data (SECONDARY)
+- Accept RR ≥ 1:1 (good setups), prefer RR ≥ 1:2 (better), excellent if RR ≥ 1:3
+- Only reject if MULTIPLE red flags: poor R/R (< 0.5) AND weak indicators AND strong counter-trend
 
 ═══════════════════════════════════════════════════════════════
 STEP 1: INSTITUTIONAL MULTI-TIMEFRAME & MARKET STRUCTURE ANALYSIS
@@ -2537,14 +2637,14 @@ Think like the whale/institution you are - see liquidity, order flow, and market
    - DIVERGENCE: Price vs indicators divergence? (Divergence = potential reversal)
    - MARKET TEMPERATURE: Is the market ready for a move? (Hot = high probability, Cold = low probability)
 
-7. YOUR INSTITUTIONAL MARKET DIRECTION PREDICTION:
-   Based on YOUR INSTITUTIONAL/WHALE ANALYSIS (multi-timeframe + market structure + liquidity):
+7. YOUR MARKET DIRECTION PREDICTION (Based on Available Data):
+   Based on AVAILABLE MARKET DATA (trend, volume, price position, support/resistance):
    - What direction is the market MOST LIKELY to move? (UP/DOWN/SIDEWAYS)
-   - How CONFIDENT are you? (Very High/High/Medium/Low) - Be honest based on institutional analysis
-   - What are the KEY INSTITUTIONAL FACTORS? (BOS/CHoCH, liquidity zones, order blocks, OI, funding)
-   - What are the RISKS? (Counter-trend, weak structure, no liquidity zones)
-   - Would YOU (as a whale/institution) take this trade? (Yes/No/Maybe - be honest)
-   - Can this achieve minimum RR ≥ 1:3? (If not, modify or discard)
+   - How CONFIDENT are you? (High/Medium/Low) - Be honest based on available data
+   - What are the KEY FACTORS? (Trend alignment, volume confirmation, price position, support/resistance)
+   - What are the RISKS? (Counter-trend, weak volume, unfavorable price position)
+   - Does this signal align with market direction? (Yes/Partial/No)
+   - What is the Risk/Reward ratio? (Accept if ≥ 1:1, good if ≥ 1:2, excellent if ≥ 1:3)
 
 ═══════════════════════════════════════════════════════════════
 STEP 2: INSTITUTIONAL ENTRY & TARGET OPTIMIZATION (CRITICAL - WHALE METHODOLOGY)
@@ -2762,8 +2862,9 @@ INDICATOR ANALYSIS GUIDE (Analyze Each Value Individually):
 
 10. Risk/Reward: 
    - APPROVE if R/R >= 1.0 (even 1:1 is acceptable for good setups)
-   - Only REJECT if R/R < 0.5 AND multiple indicators are bearish
-   - R/R between 0.5-1.0: Evaluate based on indicator alignment above
+   - APPROVE if R/R >= 0.8 AND 4+ indicators support (acceptable R/R with good indicator alignment)
+   - Only REJECT if R/R < 0.5 AND multiple indicators contradict (poor R/R + weak indicators)
+   - R/R between 0.5-0.8: Approve if 5+ indicators support (good indicator alignment compensates for lower R/R)
 
 INDICATOR COUNTING METHOD:
 - Go through EACH indicator value provided above
@@ -2780,11 +2881,13 @@ SIGNAL QUALITY SCORING:
 - QUESTIONABLE (40-49%): Mixed signals but not clearly bad (still approve if above threshold)
 - POOR (0-39%): Multiple indicators contradict signal + poor R/R + low volume
 
-REJECTION CRITERIA (only reject if MULTIPLE red flags):
+REJECTION CRITERIA (only reject if MULTIPLE red flags - be lenient):
 - Risk/Reward < 0.5 AND
-- Signal contradicts STRONG trend (>3% against signal direction) AND
-- Price at unfavorable level (LONG at resistance, SHORT at support) AND
-- Multiple indicators contradict signal (6+ indicators against signal direction)
+- Signal contradicts STRONG trend (>5% against signal direction) AND
+- Price at VERY unfavorable level (LONG at strong resistance, SHORT at strong support) AND
+- Multiple indicators STRONGLY contradict signal (7+ indicators against signal direction)
+
+IMPORTANT: If TradingView script sent this signal, it likely has merit. Only reject if ALL of the above conditions are met. When in doubt, APPROVE (the script already filtered signals).
 
 ═══════════════════════════════════════════════════════════════
 FINAL DECISION PROCESS (COMBINE BOTH DECISION MAKERS EQUALLY):
@@ -2802,25 +2905,25 @@ DECISION MAKER 2: TRADINGVIEW INDICATORS (from Step 4)
 - How many indicators contradict the signal? (Count them)
 - What is the overall indicator alignment? (Strong/Moderate/Weak)
 
-COMBINATION FORMULA:
-1. Start with base confidence: 50%
-2. Add YOUR market analysis impact:
-   - Signal aligns with YOUR prediction: +20-30%
-   - Signal partially aligns: +10-20%
-   - Signal contradicts YOUR prediction: -20-30%
-3. Add TradingView indicator impact:
-   - 8+ indicators support: +20-30%
-   - 6-7 indicators support: +10-20%
-   - 4-5 indicators support: +0-10%
-   - 2-3 indicators support: -10-20%
-   - 0-1 indicators support: -20-30%
-4. Final confidence = Base + YOUR analysis + Indicators
+COMBINATION FORMULA (TRADINGVIEW INDICATORS ARE PRIMARY - 70% WEIGHT):
+1. Start with base confidence: 60% (signals are pre-filtered by TradingView script)
+2. TradingView indicator impact (PRIMARY - 70% weight):
+   - 8+ indicators support: +25-35% (EXCELLENT alignment)
+   - 6-7 indicators support: +15-25% (GOOD alignment)
+   - 4-5 indicators support: +5-15% (ACCEPTABLE alignment)
+   - 2-3 indicators support: -5-10% (WEAK alignment, but still approve if R/R is good)
+   - 0-1 indicators support: -15-25% (POOR alignment, reject only if R/R < 0.5)
+3. Add YOUR market analysis impact (SECONDARY - 30% weight):
+   - Signal aligns with YOUR prediction: +5-10%
+   - Signal partially aligns: +0-5%
+   - Signal contradicts YOUR prediction: -5-15% (but don't reject if indicators are strong)
+4. Final confidence = Base + TradingView indicators (70%) + Market analysis (30%)
 5. Clamp final score between 0-100%
 
-DECISION RULES:
-- If final confidence >= 50%: APPROVE
-- If final confidence 30-49%: APPROVE with low confidence (or REJECT if very weak)
-- If final confidence < 30%: REJECT
+DECISION RULES (MORE LENIENT - FOCUS ON INDICATORS):
+- If final confidence >= 40%: APPROVE (TradingView script already filtered signals)
+- If final confidence 30-39%: APPROVE with low confidence (unless R/R < 0.5 AND indicators contradict)
+- If final confidence < 30%: REJECT only if MULTIPLE red flags (poor R/R + weak indicators + strong counter-trend)
 
 REASONING REQUIREMENT:
 In your reasoning, EXPLICITLY mention:
@@ -2828,13 +2931,13 @@ In your reasoning, EXPLICITLY mention:
 2. TradingView indicator alignment
 3. How you combined both to reach final confidence
 
-Remember: BOTH sources are EQUAL decision makers. Don't favor one over the other!
+Remember: TRADINGVIEW INDICATORS ARE PRIMARY (70% weight) - they come from a proven script with 65% win rate. Market analysis is SECONDARY (30% weight) - use it to fine-tune confidence, not to reject good indicator setups.
 
 Respond in JSON format ONLY with this exact structure:
 {{
     "is_valid": true/false,
     "confidence_score": 0-100,
-    "reasoning": "MUST mention: (1) Your institutional multi-timeframe & market structure analysis (HTF → LTF, BOS/CHoCH, liquidity zones), (2) TradingView indicator alignment, (3) Entry 1 AND Entry 2 optimization based on institutional zones (not closeness to price), (4) RR validation (≥ 1:3). Example: 'Based on my 20+ years of institutional trading experience, analyzing multi-timeframe structure (HTF bullish, CTF bullish, LTF bullish), market structure shows bullish BOS with CHoCH confirmed. Liquidity zones identified at $X (order block) and $Y (FVG). Original Entry 1 at $Z is not at institutional zone, optimal Entry 1 identified at $X (order block). Original Entry 2 at $W is not at institutional zone, optimal Entry 2 identified at $Y (FVG) with proper spacing. RR 1:3.5. TradingView indicators confirm with 7 out of 10 indicators supporting LONG. Combined institutional analysis gives strong confidence.'",
+    "reasoning": "MUST mention: (1) TradingView indicator alignment (PRIMARY - count how many support vs contradict), (2) Market data analysis (trend, volume, price position), (3) Risk/Reward validation, (4) Final conclusion. Example: 'TradingView indicators show 7 out of 10 indicators support LONG direction. RSI at 45 indicates neutral-bullish, MACD shows bullish momentum (histogram positive), Stochastic at 35 indicates oversold recovery, Volume is high (75th percentile), Supertrend is bullish. Market data shows short-term uptrend (+2.3%), price is mid-range, volume is increasing. Risk/Reward ratio is 1:2.5 which is acceptable. Combined analysis gives 72% confidence - APPROVE.'",
     "risk_level": "LOW" or "MEDIUM" or "HIGH",
     "suggested_entry_price": <number> or null,
     "suggested_second_entry_price": <number> or null,
@@ -2843,26 +2946,26 @@ Respond in JSON format ONLY with this exact structure:
     "price_suggestion_reasoning": "Why these prices are suggested (if different from original)"
 }}
 
-REASONING REQUIREMENT (Think Like the Institutional Whale/Trader You Are):
-Your reasoning MUST reflect your institutional/whale-level expertise. Mention:
-1. YOUR INSTITUTIONAL MARKET ANALYSIS: "Based on my 20+ years of institutional trading experience, analyzing multi-timeframe structure (HTF → LTF), market structure (BOS/CHoCH), liquidity pools, order blocks, and institutional behavior, I observe..."
-2. MARKET STRUCTURE & LIQUIDITY: "Market structure shows [BOS/CHoCH status]. Liquidity zones identified at [levels]. Order blocks/FVGs present at [zones]. This aligns/contradicts the signal because..."
-3. TRADINGVIEW INDICATOR ALIGNMENT: "TradingView indicators show X out of Y indicators support this direction. Specifically: RSI at [value] indicates..., MACD shows..., Volume/OI behavior suggests..."
-4. ENTRY OPTIMIZATION: "Original entry at $X is [at/not at] institutional liquidity zone. Optimal institutional entry identified at $Y (order block/FVG/liquidity pool) because..."
-5. YOUR INSTITUTIONAL CONCLUSION: "Combining my institutional-level multi-timeframe analysis, market structure validation, liquidity zone identification, and indicator confirmation, as a whale/trader who consistently achieves 200% monthly returns with minimum RR ≥ 1:3, I conclude..."
+REASONING REQUIREMENT (Practical Analysis - Focus on Available Data):
+Your reasoning should be PRACTICAL and based on AVAILABLE DATA. Mention:
+1. TRADINGVIEW INDICATOR ANALYSIS (PRIMARY): "TradingView indicators show X out of Y indicators support this direction. Specifically: RSI at [value] indicates..., MACD shows..., Volume/OI behavior suggests..., [list key supporting indicators]..."
+2. MARKET DATA ANALYSIS (SECONDARY): "Market data shows [trend direction], price is [position relative to support/resistance], volume is [status]. This [aligns/partially aligns/contradicts] the signal because..."
+3. RISK/REWARD VALIDATION: "Risk/Reward ratio is [value]. Entry at $X, Stop Loss at $Y, Take Profit at $Z. This provides [adequate/good/excellent] risk management..."
+4. FINAL CONCLUSION: "Combining TradingView indicator analysis (X indicators support) with market data validation (trend/volume/position), I conclude this signal has [confidence level]% confidence. [Approve/Reject] because..."
 
-Think like the institutional whale/trader you are - analyze market structure, liquidity, and order flow. Entries must be at institutional zones, not arbitrary prices. Minimum RR ≥ 1:3 required.
+Think practically - TradingView script already filtered signals. Your job is to validate based on indicators and basic market data, not to require perfect institutional-level analysis that isn't available. Focus on what you CAN analyze: indicators, trend, volume, R/R ratio.
 
 Note: If you want to suggest price optimizations (based on institutional zones, NOT closeness to price), include the suggested_* fields. Otherwise, you may omit them or set them to null.
 
-Confidence Score Guidelines (Institutional Standards):
-- 80-100: Excellent signal, strong institutional confirmation, RR ≥ 1:3, clear setup at liquidity zones
-- 60-79: Good signal, acceptable institutional confirmation, RR ≥ 1:3, reasonable setup
-- 50-59: Acceptable signal, some institutional confirmation, RR ≥ 1:3, minor concerns
-- 40-49: Questionable signal, weak institutional confirmation, RR < 1:3 or no liquidity zones
-- 0-39: Poor signal, counter-trend, no institutional confirmation, RR < 1:3, reject or discard
+Confidence Score Guidelines (Practical Standards - Focus on TradingView Indicators):
+- 80-100: Excellent signal, 7+ indicators support, RR ≥ 1:1, strong trend alignment
+- 60-79: Good signal, 5-6 indicators support, RR ≥ 1:1, acceptable trend alignment
+- 50-59: Acceptable signal, 4-5 indicators support, RR ≥ 1:1, minor concerns but still valid
+- 40-49: Questionable signal, 3-4 indicators support, RR ≥ 0.8, mixed signals but approve if R/R acceptable
+- 30-39: Weak signal, 2-3 indicators support, RR ≥ 0.5, approve only if not strongly counter-trend
+- 0-29: Poor signal, 0-1 indicators support OR RR < 0.5, reject only if multiple red flags
 
-Remember: If setup is weak, counter-trend, or lacks institutional confirmation, MODIFY or DISCARD entirely. Minimum RR ≥ 1:3 required.
+Remember: TradingView script already filters signals (65% win rate). Your job is to VALIDATE, not reject everything. Approve signals with 4+ indicator support and RR ≥ 1:1. Only reject if MULTIPLE red flags (poor R/R < 0.5 AND weak indicators AND strong counter-trend).
 
 PRICE OPTIMIZATION (Institutional Methodology - Based on Structure & Liquidity):
 You MUST calculate and suggest optimized prices using INSTITUTIONAL METHODOLOGY:
@@ -3635,7 +3738,21 @@ def create_limit_order(signal_data):
             
             # Check if signal is valid and meets confidence threshold
             if not validation_result.get('is_valid', True):
-                logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {validation_result.get('reasoning', 'No reasoning provided')}")
+                rejection_reason = validation_result.get('reasoning', 'Signal validation failed - AI determined signal is invalid')
+                logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
+                
+                # Send rejection notification to Slack exception channel
+                send_signal_rejection_notification(
+                    symbol=symbol,
+                    signal_side=signal_side,
+                    timeframe=timeframe,
+                    entry_price=entry_price,
+                    rejection_reason=f"Signal validation failed - AI determined signal is invalid.\n\n{rejection_reason}",
+                    confidence_score=validation_result.get('confidence_score'),
+                    risk_level=validation_result.get('risk_level'),
+                    validation_result=validation_result
+                )
+                
                 return {
                     'success': False,
                     'error': 'Signal validation failed',
@@ -3644,9 +3761,24 @@ def create_limit_order(signal_data):
             
             confidence_score = validation_result.get('confidence_score', 100.0)
             if confidence_score < AI_VALIDATION_MIN_CONFIDENCE:
-                logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: Confidence score {confidence_score:.1f}% is below minimum threshold of {AI_VALIDATION_MIN_CONFIDENCE}%")
+                rejection_reason = f"Confidence score {confidence_score:.1f}% is below minimum threshold of {AI_VALIDATION_MIN_CONFIDENCE}%"
+                logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
                 logger.info(f"   Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
                 logger.info(f"   Risk Level: {validation_result.get('risk_level', 'UNKNOWN')}")
+                
+                # Send rejection notification to Slack exception channel
+                full_reason = f"{rejection_reason}\n\n{validation_result.get('reasoning', 'No detailed reasoning provided')}"
+                send_signal_rejection_notification(
+                    symbol=symbol,
+                    signal_side=signal_side,
+                    timeframe=timeframe,
+                    entry_price=entry_price,
+                    rejection_reason=full_reason,
+                    confidence_score=confidence_score,
+                    risk_level=validation_result.get('risk_level'),
+                    validation_result=validation_result
+                )
+                
                 return {
                     'success': False,
                     'error': f'Signal confidence {confidence_score:.1f}% below minimum {AI_VALIDATION_MIN_CONFIDENCE}%',
