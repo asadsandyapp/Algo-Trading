@@ -374,7 +374,8 @@ def send_signal_rejection_notification(symbol, signal_side, timeframe, entry_pri
 
 def send_signal_notification(symbol, signal_side, timeframe, confidence_score, risk_level, 
                              entry1_price, entry2_price, stop_loss, take_profit, 
-                             tp1_price=None, use_single_tp=False, validation_result=None):
+                             tp1_price=None, use_single_tp=False, validation_result=None,
+                             optimized_entry1_price=None):
     """
     Send a beautiful signal notification to Slack signal channel after order is opened
     
@@ -384,10 +385,11 @@ def send_signal_notification(symbol, signal_side, timeframe, confidence_score, r
         timeframe: Trading timeframe (e.g., '1H', '4H')
         confidence_score: AI confidence score (0-100)
         risk_level: Risk level from AI validation ('LOW', 'MEDIUM', 'HIGH')
-        entry1_price: Primary entry price
-        entry2_price: DCA entry price (optional)
+        entry1_price: Original Entry 1 price (Order 1: $10)
+        entry2_price: Entry 2 price (Order 3: $10, optional)
         stop_loss: Stop loss price
         take_profit: Take profit price
+        optimized_entry1_price: Optimized Entry 1 price (Order 2: $5, optional)
         validation_result: Full validation result dict (optional)
     """
     if not SLACK_SIGNAL_WEBHOOK_URL:
@@ -430,13 +432,21 @@ def send_signal_notification(symbol, signal_side, timeframe, confidence_score, r
         
         # Format prices consistently (all with same format: $X,XXX.XXXXXXXX)
         entry1_str = f'${entry1_price:,.8f}' if entry1_price else 'N/A'
+        optimized_entry1_str = f'${optimized_entry1_price:,.8f}' if optimized_entry1_price else None
         entry2_str = f'${entry2_price:,.8f}' if entry2_price else 'N/A'
         stop_loss_str = f'${stop_loss:,.8f}' if stop_loss else 'N/A'
         tp1_str = f'${tp1_price:,.8f}' if tp1_price else 'N/A'
         tp2_str = f'${take_profit:,.8f}' if take_profit else 'N/A'
         
+        # Calculate total investment
+        total_investment = 10.0  # Order 1
+        if optimized_entry1_price:
+            total_investment += 5.0  # Order 2
+        if entry2_price:
+            total_investment += 10.0  # Order 3
+        
         # Format the message with beautiful structure (consistent formatting)
-        slack_message = f"""{side_emoji} *NEW {signal_side} SIGNAL - ORDER OPENED*
+        slack_message = f"""{side_emoji} *NEW {signal_side} SIGNAL - ORDERS OPENED*
 
 *Symbol:* `{formatted_symbol}`
 *Timeframe:* `{formatted_timeframe}`
@@ -446,9 +456,18 @@ def send_signal_notification(symbol, signal_side, timeframe, confidence_score, r
 *Signal Strength:* {strength_emoji} {strength_text} ({confidence_score:.1f}%)
 *Risk Level:* {risk_emoji} {risk_level}
 
-*Entry Prices:*
-  • Entry 1: {entry1_str}
-  • Entry 2: {entry2_str}
+*Entry Orders:*
+  • Order 1: {entry1_str} - $10.00 (Original Entry 1)"""
+        
+        # Add Order 2 if optimized Entry 1 exists
+        if optimized_entry1_str:
+            slack_message += f"\n  • Order 2: {optimized_entry1_str} - $5.00 (AI Optimized Entry 1)"
+        
+        # Add Order 3 if Entry 2 exists
+        if entry2_price:
+            slack_message += f"\n  • Order 3: {entry2_str} - $10.00 (Entry 2)"
+        
+        slack_message += f"\n  • Total Investment: ${total_investment:.2f}"
 
 *Risk Management:*
   • Stop Loss: {stop_loss_str}"""
@@ -497,6 +516,110 @@ def send_signal_notification(symbol, signal_side, timeframe, confidence_score, r
     except Exception as e:
         # Silently fail - don't break the service if Slack is down
         logger.debug(f"Error preparing Slack signal notification: {e}")
+
+def send_exit_notification(symbol, signal_side, timeframe, exit_price, entry_prices=None, 
+                           pnl=None, pnl_percent=None, reason=None):
+    """
+    Send exit notification to Slack signal channel when position is closed
+    
+    Args:
+        symbol: Trading symbol (e.g., 'BTCUSDT')
+        signal_side: 'LONG' or 'SHORT'
+        timeframe: Trading timeframe (e.g., '1H', '4H')
+        exit_price: Price at which position was closed
+        entry_prices: Dict with 'entry1', 'entry2', 'optimized_entry1' prices (optional)
+        pnl: Profit/Loss in USD (optional)
+        pnl_percent: Profit/Loss percentage (optional)
+        reason: Reason for exit (e.g., 'TP Hit', 'SL Hit', 'Manual Exit') (optional)
+    """
+    if not SLACK_SIGNAL_WEBHOOK_URL:
+        return  # Skip if webhook URL not configured
+    
+    try:
+        # Determine side emoji
+        side_emoji = '📈' if signal_side == 'LONG' else '📉'
+        
+        # Determine P&L emoji and text
+        if pnl is not None:
+            pnl_emoji = '💰' if pnl >= 0 else '📉'
+            pnl_text = f"+${abs(pnl):.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
+            if pnl_percent is not None:
+                pnl_text += f" ({'+' if pnl_percent >= 0 else ''}{pnl_percent:.2f}%)"
+        else:
+            pnl_emoji = '📊'
+            pnl_text = 'N/A'
+        
+        # Build the message
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
+        environment = 'TESTNET' if BINANCE_TESTNET else 'PRODUCTION'
+        
+        # Format symbol consistently (remove .P suffix if present, uppercase)
+        formatted_symbol = symbol.replace('.P', '').upper()
+        # Format timeframe consistently (uppercase, ensure proper format)
+        formatted_timeframe = timeframe.upper() if timeframe else 'N/A'
+        
+        # Format prices consistently (all with same format: $X,XXX.XXXXXXXX)
+        exit_str = f'${exit_price:,.8f}' if exit_price else 'N/A'
+        
+        # Format the message with beautiful structure
+        slack_message = f"""{side_emoji} *{signal_side} POSITION CLOSED - EXIT*
+
+*Symbol:* `{formatted_symbol}`
+*Timeframe:* `{formatted_timeframe}`
+*Environment:* {environment}
+*Time:* {timestamp}
+
+*Exit Details:*
+  • Exit Price: {exit_str}"""
+        
+        # Add reason if provided
+        if reason:
+            slack_message += f"\n  • Reason: {reason}"
+        
+        # Add entry prices if available
+        if entry_prices:
+            slack_message += "\n\n*Entry Prices:*"
+            if entry_prices.get('entry1'):
+                entry1_str = f'${entry_prices["entry1"]:,.8f}'
+                slack_message += f"\n  • Order 1: {entry1_str} - $10.00 (Original Entry 1)"
+            
+            if entry_prices.get('optimized_entry1'):
+                opt_entry1_str = f'${entry_prices["optimized_entry1"]:,.8f}'
+                slack_message += f"\n  • Order 2: {opt_entry1_str} - $5.00 (AI Optimized Entry 1)"
+            
+            if entry_prices.get('entry2'):
+                entry2_str = f'${entry_prices["entry2"]:,.8f}'
+                slack_message += f"\n  • Order 3: {entry2_str} - $10.00 (Entry 2)"
+        
+        # Add P&L if available
+        if pnl is not None:
+            slack_message += f"\n\n*Profit/Loss:* {pnl_emoji} {pnl_text}"
+        
+        slack_message += "\n"
+        
+        # Send to Slack (non-blocking in a thread)
+        def send_async():
+            try:
+                payload = {'text': slack_message}
+                response = requests.post(
+                    SLACK_SIGNAL_WEBHOOK_URL,
+                    json=payload,
+                    headers={'Content-Type': 'application/json'},
+                    timeout=5
+                )
+                response.raise_for_status()
+                logger.info(f"✅ Exit notification sent to Slack for {symbol}")
+            except Exception as e:
+                # Don't log Slack errors to avoid infinite loops
+                logger.debug(f"Failed to send Slack exit notification: {e}")
+        
+        # Send in background thread to avoid blocking
+        thread = threading.Thread(target=send_async, daemon=True)
+        thread.start()
+        
+    except Exception as e:
+        # Silently fail - don't break the service if Slack is down
+        logger.debug(f"Error preparing Slack exit notification: {e}")
 
 # Initialize Binance client
 try:
@@ -554,10 +677,13 @@ account_balance_cache = {'balance': None, 'timestamp': 0}
 BALANCE_CACHE_TTL = 60  # Cache balance for 1 minute
 
 # Track active trades per symbol
-active_trades = {}  # {symbol: {'primary_filled': bool, 'dca_filled': bool, 'position_open': bool, 
-                    #           'primary_order_id': int, 'dca_order_id': int, 'tp1_order_id': int, 'tp2_order_id': int, 'sl_order_id': int,
+active_trades = {}  # {symbol: {'primary_filled': bool, 'dca_filled': bool, 'optimized_entry1_filled': bool, 'position_open': bool, 
+                    #           'primary_order_id': int, 'dca_order_id': int, 'optimized_entry1_order_id': int, 'tp1_order_id': int, 'tp2_order_id': int, 'sl_order_id': int,
                     #           'tp1_price': float, 'tp2_price': float, 'tp1_quantity': float, 'tp2_quantity': float,
                     #           'exit_processed': bool, 'last_exit_time': float}}
+                    # Order 1: $10 at original Entry 1 (primary_order_id)
+                    # Order 2: $5 at optimized Entry 1 (optimized_entry1_order_id, optional)
+                    # Order 3: $10 at Entry 2 (dca_order_id, optional)
 
 # Track recent EXIT events to prevent duplicate processing
 recent_exits = {}  # {symbol: timestamp}
@@ -1363,14 +1489,18 @@ def create_missing_tp_orders():
                             # Also check if we have tracked order IDs for this symbol
                             has_tracked_orders = False
                             if symbol in active_trades:
-                                # Check if we have primary or DCA order IDs tracked
-                                if 'primary_order_id' in active_trades[symbol] or 'dca_order_id' in active_trades[symbol]:
+                                # Check if we have any order IDs tracked (Order 1, Order 2, or Order 3)
+                                if ('primary_order_id' in active_trades[symbol] or 
+                                    'dca_order_id' in active_trades[symbol] or 
+                                    'optimized_entry1_order_id' in active_trades[symbol]):
                                     # Verify these specific orders still exist
                                     tracked_order_ids = []
                                     if 'primary_order_id' in active_trades[symbol]:
                                         tracked_order_ids.append(active_trades[symbol]['primary_order_id'])
                                     if 'dca_order_id' in active_trades[symbol]:
                                         tracked_order_ids.append(active_trades[symbol]['dca_order_id'])
+                                    if 'optimized_entry1_order_id' in active_trades[symbol]:
+                                        tracked_order_ids.append(active_trades[symbol]['optimized_entry1_order_id'])
                                     
                                     # Check if any tracked orders still exist
                                     if tracked_order_ids:
@@ -2133,10 +2263,18 @@ def validate_risk_per_trade(symbol, entry_price, stop_loss, quantity, signal_sid
     return True, risk_info, None
 
 
-def calculate_quantity(entry_price, symbol_info):
-    """Calculate quantity based on entry size and leverage"""
+def calculate_quantity(entry_price, symbol_info, entry_size_usd=None):
+    """Calculate quantity based on entry size and leverage
+    
+    Args:
+        entry_price: Entry price for the order
+        symbol_info: Symbol information from Binance
+        entry_size_usd: Custom entry size in USD (defaults to ENTRY_SIZE_USD if not provided)
+    """
+    # Use custom entry size if provided, otherwise use default
+    size_usd = entry_size_usd if entry_size_usd is not None else ENTRY_SIZE_USD
     # Position value = Entry size * Leverage (e.g., $10 * 20X = $200)
-    position_value = ENTRY_SIZE_USD * LEVERAGE
+    position_value = size_usd * LEVERAGE
     
     # Quantity = Position value / Entry price
     quantity = position_value / entry_price
@@ -3984,6 +4122,12 @@ def create_limit_order(signal_data):
             except Exception as e:
                 logger.warning(f"Error canceling TP/SL orders: {e}")
             
+            # Initialize variables for exit notification
+            exit_price = None
+            entry_prices = None
+            total_pnl = 0.0
+            total_pnl_percent = 0.0
+            
             # Check for ANY open position (don't filter by signal_side - close all positions)
             # Get ALL positions first, then filter by symbol (more reliable than filtering in API call)
             try:
@@ -3999,6 +4143,23 @@ def create_limit_order(signal_data):
                         positions_to_close.append(position)
                         logger.info(f"Found open position for {symbol}: {position_amt} @ {position.get('entryPrice')} (side: {position.get('positionSide', 'BOTH')})")
                 
+                # Get current market price for exit notification (always try to get it)
+                try:
+                    ticker = client.futures_symbol_ticker(symbol=symbol)
+                    exit_price = float(ticker.get('price', 0))
+                except Exception as e:
+                    logger.warning(f"Could not get current price for {symbol}: {e}")
+                    exit_price = None
+                
+                # Get entry prices and trade info from active_trades for notification
+                if symbol in active_trades:
+                    trade_info = active_trades[symbol]
+                    entry_prices = {
+                        'entry1': trade_info.get('original_entry1'),
+                        'entry2': trade_info.get('original_entry2'),
+                        'optimized_entry1': None  # We don't store this separately, but could calculate if needed
+                    }
+                
                 if positions_to_close:
                     # Get symbol info for quantity precision (once, outside loop)
                     exchange_info = client.futures_exchange_info()
@@ -4011,6 +4172,9 @@ def create_limit_order(signal_data):
                     
                     # Close ALL positions for this symbol
                     logger.info(f"Closing {len(positions_to_close)} position(s) at market price for {symbol}")
+                    total_pnl = 0.0
+                    total_pnl_percent = 0.0
+                    
                     for position in positions_to_close:
                         position_amt = float(position.get('positionAmt', 0))
                         position_side_binance = position.get('positionSide', 'BOTH')
@@ -4044,6 +4208,21 @@ def create_limit_order(signal_data):
                         try:
                             result = client.futures_create_order(**close_params_with_reduce)
                             logger.info(f"✅ Position closed successfully: {result}")
+                            
+                            # Calculate P&L if we have entry price and exit price
+                            position_entry_price = float(position.get('entryPrice', 0))
+                            if position_entry_price > 0 and exit_price and exit_price > 0:
+                                # Calculate P&L based on position side
+                                if position_amt > 0:  # LONG position
+                                    pnl_percent = ((exit_price - position_entry_price) / position_entry_price) * 100
+                                else:  # SHORT position
+                                    pnl_percent = ((position_entry_price - exit_price) / position_entry_price) * 100
+                                
+                                # Calculate P&L in USD (approximate based on position size)
+                                position_value = abs(position_amt) * position_entry_price
+                                pnl_usd = (pnl_percent / 100) * (position_value / LEVERAGE)  # Divide by leverage to get margin used
+                                total_pnl += pnl_usd
+                                total_pnl_percent = pnl_percent  # Use last position's percentage
                         except BinanceAPIException as e:
                             # If reduceOnly is not accepted, try without it
                             if e.code == -1106 or 'reduceonly' in str(e).lower():
@@ -4081,6 +4260,31 @@ def create_limit_order(signal_data):
                     symbol=symbol,
                     severity='ERROR'
                 )
+            
+            # Send exit notification to Slack before cleaning up tracking
+            try:
+                timeframe = signal_data.get('timeframe', 'Unknown')
+                # Determine exit reason
+                reason = signal_data.get('exit_reason', 'Manual Exit')
+                if not reason or reason == '':
+                    reason = 'Manual Exit'
+                
+                # Send notification with P&L if available
+                pnl = total_pnl if total_pnl != 0 else None
+                pnl_percent = total_pnl_percent if total_pnl_percent != 0 else None
+                
+                send_exit_notification(
+                    symbol=symbol,
+                    signal_side=signal_side,
+                    timeframe=timeframe,
+                    exit_price=exit_price,
+                    entry_prices=entry_prices,
+                    pnl=pnl,
+                    pnl_percent=pnl_percent,
+                    reason=reason
+                )
+            except Exception as e:
+                logger.debug(f"Failed to send exit notification: {e}")
             
             # Clean up tracking
             if symbol in active_trades:
@@ -4140,20 +4344,31 @@ def create_limit_order(signal_data):
                 trade_info = active_trades[symbol]
                 primary_order_id = trade_info.get('primary_order_id')
                 dca_order_id = trade_info.get('dca_order_id')
+                optimized_entry1_order_id = trade_info.get('optimized_entry1_order_id')
                 
-                # Check if both orders exist and are filled
+                # Check if all orders exist and are filled (at least Order 1 and Order 3, Order 2 is optional)
                 if primary_order_id and dca_order_id:
                     try:
                         primary_order = client.futures_get_order(symbol=symbol, orderId=primary_order_id)
                         dca_order = client.futures_get_order(symbol=symbol, orderId=dca_order_id)
                         
+                        # Check Order 2 if it exists
+                        order2_filled = True  # Default to True if Order 2 doesn't exist
+                        if optimized_entry1_order_id:
+                            try:
+                                order2 = client.futures_get_order(symbol=symbol, orderId=optimized_entry1_order_id)
+                                order2_filled = order2.get('status') == 'FILLED'
+                            except:
+                                order2_filled = True  # If we can't check, assume it's fine
+                        
                         if (primary_order.get('status') == 'FILLED' and 
-                            dca_order.get('status') == 'FILLED'):
-                            logger.warning(f"⚠️ Duplicate alert ignored: Both orders confirmed as FILLED on Binance for {symbol}. Ignoring duplicate alert.")
+                            dca_order.get('status') == 'FILLED' and
+                            order2_filled):
+                            logger.warning(f"⚠️ Duplicate alert ignored: All orders confirmed as FILLED on Binance for {symbol}. Ignoring duplicate alert.")
                             return {
                                 'success': False, 
-                                'error': 'Duplicate alert ignored - both orders already filled',
-                                'message': f'Both primary and DCA orders are already FILLED for {symbol}. Ignoring duplicate alert.'
+                                'error': 'Duplicate alert ignored - all orders already filled',
+                                'message': f'All orders (Order 1, Order 2, Order 3) are already FILLED for {symbol}. Ignoring duplicate alert.'
                             }
                     except Exception as e:
                         logger.debug(f"Could not verify order status for duplicate check: {e}")
@@ -4201,6 +4416,17 @@ def create_limit_order(signal_data):
         if symbol in active_trades:
             logger.info(f"Cleaning up old trade tracking for {symbol}")
             del active_trades[symbol]
+        
+        # Store ORIGINAL Entry 1 price BEFORE optimization (for Order 1)
+        original_entry1_price = safe_float(signal_data.get('entry_price'), default=entry_price)
+        
+        # Get optimized Entry 1 price (if AI optimized it)
+        optimized_entry1_price = None
+        if 'optimized_prices' in validation_result and validation_result.get('optimized_prices', {}).get('entry_price'):
+            opt_entry1 = validation_result['optimized_prices']['entry_price']
+            if opt_entry1 != original_entry1_price:
+                optimized_entry1_price = opt_entry1
+                logger.info(f"🔄 [PRICE UPDATE] AI optimized Entry 1: ${original_entry1_price:,.8f} → ${optimized_entry1_price:,.8f}")
         
         # Get primary entry price - use optimized entry_price if available, otherwise original
         primary_entry_price = entry_price
@@ -4258,13 +4484,24 @@ def create_limit_order(signal_data):
         tick_size = float(price_filter['tickSize']) if price_filter else 0.01
         
         # Format prices to tick size precision (removes floating point errors)
+        original_entry1_price = format_price_precision(original_entry1_price, tick_size)
         primary_entry_price = format_price_precision(primary_entry_price, tick_size)
+        if optimized_entry1_price:
+            optimized_entry1_price = format_price_precision(optimized_entry1_price, tick_size)
         if dca_entry_price:
             dca_entry_price = format_price_precision(dca_entry_price, tick_size)
         
-        # Calculate quantity based on entry size and leverage
-        primary_quantity = calculate_quantity(primary_entry_price, symbol_info)
-        dca_quantity = calculate_quantity(dca_entry_price, symbol_info) if dca_entry_price else primary_quantity
+        # Calculate quantities for 3 orders:
+        # Order 1: $10 with original Entry 1
+        # Order 2: $5 with optimized Entry 1 (if exists)
+        # Order 3: $10 with Entry 2 (original or optimized)
+        order1_quantity = calculate_quantity(original_entry1_price, symbol_info, entry_size_usd=10.0)
+        order2_quantity = calculate_quantity(optimized_entry1_price, symbol_info, entry_size_usd=5.0) if optimized_entry1_price else None
+        order3_quantity = calculate_quantity(dca_entry_price, symbol_info, entry_size_usd=10.0) if dca_entry_price else None
+        
+        # Legacy variables for backward compatibility (used in TP calculations)
+        primary_quantity = order1_quantity
+        dca_quantity = order3_quantity if order3_quantity else order1_quantity
         
         # Risk Validation: Check if trade risk is within acceptable limits
         # This includes risk from pending orders (orders waiting to fill)
@@ -4309,10 +4546,12 @@ def create_limit_order(signal_data):
         if symbol not in active_trades:
             active_trades[symbol] = {
                 'primary_filled': False, 
-                'dca_filled': False, 
+                'dca_filled': False,
+                'optimized_entry1_filled': False,  # Track Order 2 (optimized Entry 1)
                 'position_open': False,
                 'primary_order_id': None,
                 'dca_order_id': None,
+                'optimized_entry1_order_id': None,  # Order 2 ID
                 'tp_order_id': None,
                 'sl_order_id': None,
                 'original_stop_loss': None,
@@ -4325,57 +4564,201 @@ def create_limit_order(signal_data):
         
         # Store original prices for trailing stop loss
         active_trades[symbol]['original_stop_loss'] = stop_loss
-        active_trades[symbol]['original_entry1'] = primary_entry_price
+        active_trades[symbol]['original_entry1'] = original_entry1_price  # Store original Entry 1
         active_trades[symbol]['original_entry2'] = dca_entry_price if dca_entry_price else None
         
         current_time = time.time()
         order_results = []
         
-        # If this is a primary entry, create BOTH entry orders immediately
+        # If this is a primary entry, create 3 entry orders:
+        # Order 1: $10 with original Entry 1 price
+        # Order 2: $5 with optimized Entry 1 price (if AI optimized, otherwise skip)
+        # Order 3: $10 with Entry 2 price (original or optimized)
         if is_primary_entry:
-            # Create primary entry order (Entry 1)
-            primary_order_params = {
+            # ORDER 1: $10 with original Entry 1 price
+            order1_params = {
                 'symbol': symbol,
                 'side': side,
                 'type': 'LIMIT',
                 'timeInForce': 'GTC',
-                'quantity': primary_quantity,
-                'price': primary_entry_price,
+                'quantity': order1_quantity,
+                'price': original_entry1_price,
             }
             if is_hedge_mode:
-                primary_order_params['positionSide'] = position_side
+                order1_params['positionSide'] = position_side
             
-            logger.info(f"Creating PRIMARY entry limit order: {primary_order_params}")
+            logger.info(f"Creating ORDER 1 (Original Entry 1, $10): {order1_params}")
             try:
-                primary_order_result = client.futures_create_order(**primary_order_params)
-                order_results.append(primary_order_result)
-                active_trades[symbol]['primary_order_id'] = primary_order_result.get('orderId')
-                active_trades[symbol]['primary_filled'] = False  # Will be updated when filled
+                order1_result = client.futures_create_order(**order1_params)
+                order_results.append(order1_result)
+                active_trades[symbol]['primary_order_id'] = order1_result.get('orderId')
+                active_trades[symbol]['primary_filled'] = False
                 active_trades[symbol]['position_open'] = True
-                logger.info(f"✅ PRIMARY entry order created successfully: Order ID {primary_order_result.get('orderId')}")
+                logger.info(f"✅ ORDER 1 created successfully: Order ID {order1_result.get('orderId')} @ ${original_entry1_price:,.8f} (${10.0} size)")
+            except BinanceAPIException as e:
+                logger.error(f"❌ Failed to create ORDER 1: {e.message} (Code: {e.code})")
+                send_slack_alert(
+                    error_type="Order 1 Creation Failed",
+                    message=f"{e.message} (Code: {e.code})",
+                    details={'Error_Code': e.code, 'Entry_Price': original_entry1_price, 'Quantity': order1_quantity, 'Side': side},
+                    symbol=symbol,
+                    severity='ERROR'
+                )
+                return {'success': False, 'error': f'Failed to create Order 1: {e.message}'}
+            except Exception as e:
+                logger.error(f"❌ Unexpected error creating ORDER 1: {e}")
+                send_slack_alert(
+                    error_type="Order 1 Creation Error",
+                    message=str(e),
+                    details={'Entry_Price': original_entry1_price, 'Quantity': order1_quantity, 'Side': side},
+                    symbol=symbol,
+                    severity='ERROR'
+                )
+                return {'success': False, 'error': f'Unexpected error: {str(e)}'}
+            
+            # Track Order 1
+            order_key = f"{symbol}_{original_entry1_price}_{side}_ORDER1"
+            recent_orders[order_key] = current_time
+            
+            # ORDER 2: $5 with optimized Entry 1 price (only if AI optimized Entry 1)
+            if optimized_entry1_price and order2_quantity:
+                order2_params = {
+                    'symbol': symbol,
+                    'side': side,
+                    'type': 'LIMIT',
+                    'timeInForce': 'GTC',
+                    'quantity': order2_quantity,
+                    'price': optimized_entry1_price,
+                }
+                if is_hedge_mode:
+                    order2_params['positionSide'] = position_side
                 
-                # Smart TP Strategy: Based on AI Confidence Score
-                # High Confidence (>=90%): Use single TP (main TP from signal) - trust the signal completely
-                # Lower Confidence (<90%): Use TP1 + TP2 strategy - secure profits early
+                logger.info(f"Creating ORDER 2 (Optimized Entry 1, $5): {order2_params}")
+                try:
+                    order2_result = client.futures_create_order(**order2_params)
+                    order_results.append(order2_result)
+                    active_trades[symbol]['optimized_entry1_order_id'] = order2_result.get('orderId')
+                    active_trades[symbol]['optimized_entry1_filled'] = False
+                    logger.info(f"✅ ORDER 2 created successfully: Order ID {order2_result.get('orderId')} @ ${optimized_entry1_price:,.8f} (${5.0} size)")
+                    
+                    # Track Order 2
+                    order_key = f"{symbol}_{optimized_entry1_price}_{side}_ORDER2"
+                    recent_orders[order_key] = current_time
+                except BinanceAPIException as e:
+                    logger.warning(f"⚠️ Failed to create ORDER 2: {e.message} (Code: {e.code}) - continuing with Order 1 and Order 3")
+                    send_slack_alert(
+                        error_type="Order 2 Creation Failed",
+                        message=f"{e.message} (Code: {e.code})",
+                        details={'Error_Code': e.code, 'Entry_Price': optimized_entry1_price, 'Quantity': order2_quantity, 'Side': side},
+                        symbol=symbol,
+                        severity='WARNING'
+                    )
+                    # Continue - Order 2 is optional
+                except Exception as e:
+                    logger.warning(f"⚠️ Unexpected error creating ORDER 2: {e} - continuing with Order 1 and Order 3")
+                    send_slack_alert(
+                        error_type="Order 2 Creation Error",
+                        message=str(e),
+                        details={'Entry_Price': optimized_entry1_price, 'Quantity': order2_quantity, 'Side': side},
+                        symbol=symbol,
+                        severity='WARNING'
+                    )
+                    # Continue - Order 2 is optional
+            else:
+                logger.info(f"ℹ️  ORDER 2 skipped: Entry 1 was not optimized by AI (using original Entry 1 only)")
+            
+            # ORDER 3: $10 with Entry 2 price (original or optimized)
+            if dca_entry_price and order3_quantity:
+                order3_params = {
+                    'symbol': symbol,
+                    'side': side,
+                    'type': 'LIMIT',
+                    'timeInForce': 'GTC',
+                    'quantity': order3_quantity,
+                    'price': dca_entry_price,
+                }
+                if is_hedge_mode:
+                    order3_params['positionSide'] = position_side
                 
-                confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
-                use_single_tp = confidence_score >= TP_HIGH_CONFIDENCE_THRESHOLD
-                
-                # Calculate entry price for TP calculation
-                # TP1: Always use Entry 1 price only (4% from Entry 1)
-                # TP2: Use average if Entry 2 provided, otherwise Entry 1 only
-                entry_price_for_tp1 = primary_entry_price  # Always Entry 1 for TP1
-                
-                if dca_entry_price and dca_entry_price > 0:
-                    avg_entry_price = (primary_entry_price + dca_entry_price) / 2
-                    entry_price_for_tp2 = avg_entry_price  # Average for TP2
-                else:
-                    # Entry 2 not provided - use Entry 1 for TP2 as well
-                    entry_price_for_tp2 = primary_entry_price
-                    logger.info(f"📊 Entry 2 not provided - using Entry 1 price for TP2 calculation: ${entry_price_for_tp2:,.8f}")
-                
-                tp_side = 'SELL' if side == 'BUY' else 'BUY'
-                total_qty = primary_quantity + (dca_quantity if dca_entry_price else 0)
+                logger.info(f"Creating ORDER 3 (Entry 2, $10): {order3_params}")
+                try:
+                    order3_result = client.futures_create_order(**order3_params)
+                    order_results.append(order3_result)
+                    active_trades[symbol]['dca_order_id'] = order3_result.get('orderId')
+                    active_trades[symbol]['dca_filled'] = False
+                    logger.info(f"✅ ORDER 3 created successfully: Order ID {order3_result.get('orderId')} @ ${dca_entry_price:,.8f} (${10.0} size)")
+                    
+                    # Track Order 3
+                    order_key = f"{symbol}_{dca_entry_price}_{side}_ORDER3"
+                    recent_orders[order_key] = current_time
+                except BinanceAPIException as e:
+                    logger.warning(f"⚠️ Failed to create ORDER 3: {e.message} (Code: {e.code}) - continuing with Order 1")
+                    send_slack_alert(
+                        error_type="Order 3 Creation Failed",
+                        message=f"{e.message} (Code: {e.code})",
+                        details={'Error_Code': e.code, 'DCA_Price': dca_entry_price, 'Quantity': order3_quantity, 'Side': side},
+                        symbol=symbol,
+                        severity='WARNING'
+                    )
+                    # Continue - Order 3 is optional if Entry 2 not provided
+                except Exception as e:
+                    logger.warning(f"⚠️ Unexpected error creating ORDER 3: {e} - continuing with Order 1")
+                    send_slack_alert(
+                        error_type="Order 3 Creation Error",
+                        message=str(e),
+                        details={'DCA_Price': dca_entry_price, 'Quantity': order3_quantity, 'Side': side},
+                        symbol=symbol,
+                        severity='WARNING'
+                    )
+            else:
+                logger.info(f"ℹ️  ORDER 3 skipped: Entry 2 not provided in signal")
+            
+            # Use Order 1 result for response (primary order)
+            primary_order_result = order1_result
+            
+            # Smart TP Strategy: Based on AI Confidence Score
+            # High Confidence (>=90%): Use single TP (main TP from signal) - trust the signal completely
+            # Lower Confidence (<90%): Use TP1 + TP2 strategy - secure profits early
+            
+            confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
+            use_single_tp = confidence_score >= TP_HIGH_CONFIDENCE_THRESHOLD
+            
+            # Calculate entry price for TP calculation
+            # TP1: Always use original Entry 1 price only (4% from Entry 1)
+            # TP2: Use weighted average of all filled orders
+            entry_price_for_tp1 = original_entry1_price  # Always original Entry 1 for TP1
+            
+            # Calculate weighted average entry price for TP2 (accounting for all 3 orders)
+            # Order 1: $10 at original Entry 1
+            # Order 2: $5 at optimized Entry 1 (if exists)
+            # Order 3: $10 at Entry 2 (if exists)
+            total_usd = 10.0  # Order 1
+            weighted_sum = original_entry1_price * 10.0
+            
+            if optimized_entry1_price and order2_quantity:
+                total_usd += 5.0
+                weighted_sum += optimized_entry1_price * 5.0
+            
+            if dca_entry_price and order3_quantity:
+                total_usd += 10.0
+                weighted_sum += dca_entry_price * 10.0
+            
+            if total_usd > 10.0:
+                entry_price_for_tp2 = weighted_sum / total_usd
+                logger.info(f"📊 Weighted average entry for TP2: ${entry_price_for_tp2:,.8f} (based on ${total_usd} total USD across orders)")
+            else:
+                # Only Order 1 exists
+                entry_price_for_tp2 = original_entry1_price
+                logger.info(f"📊 Only Order 1 exists - using original Entry 1 for TP2: ${entry_price_for_tp2:,.8f}")
+            
+            tp_side = 'SELL' if side == 'BUY' else 'BUY'
+            # Calculate total quantity from all orders
+            total_qty = order1_quantity
+            if order2_quantity:
+                total_qty += order2_quantity
+            if order3_quantity:
+                total_qty += order3_quantity
+            logger.info(f"📊 Total position size: {total_qty} (Order 1: {order1_quantity}, Order 2: {order2_quantity if order2_quantity else 0}, Order 3: {order3_quantity if order3_quantity else 0})")
                 
                 if use_single_tp:
                     # HIGH CONFIDENCE: Use single TP (main TP from signal)
@@ -4411,7 +4794,7 @@ def create_limit_order(signal_data):
                     else:  # SHORT position
                         tp1_price = entry_price_for_tp1 * (1 - tp1_percent)  # Use Entry 1 only
                     tp1_price = format_price_precision(tp1_price, tick_size)
-                    logger.info(f"📊 TP1 calculated: {TP1_PERCENT}% from Entry 1 (${primary_entry_price:,.8f}) = ${tp1_price:,.8f}")
+                    logger.info(f"📊 TP1 calculated: {TP1_PERCENT}% from Entry 1 (${original_entry1_price:,.8f}) = ${tp1_price:,.8f}")
                     
                     # TP2: Use the TP from webhook (or AI-optimized TP)
                     if take_profit and take_profit > 0:
@@ -4442,107 +4825,39 @@ def create_limit_order(signal_data):
                     logger.info(f"   → TP1: {TP1_PERCENT}% profit @ ${tp1_price:,.8f} (closes {TP1_SPLIT}% = {tp1_quantity} of position)")
                     logger.info(f"   → TP2: @ ${tp2_price:,.8f} (closes {TP2_SPLIT}% = {tp2_quantity} of position)")
                     logger.info(f"   → Strategy: Securing profits early with TP1, letting TP2 run")
+            
+            logger.info(f"   → TPs will be created automatically when position opens (background thread checks every 1min/2min)")
+            
+            # Send signal notification to Slack
+            try:
+                timeframe = signal_data.get('timeframe', 'Unknown')
+                confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
+                risk_level = validation_result.get('risk_level', 'MEDIUM') if validation_result else 'MEDIUM'
+                # Get TP prices for notification
+                if use_single_tp:
+                    main_tp = active_trades[symbol].get('tp2_price')
+                    tp1_for_notif = None
+                else:
+                    main_tp = active_trades[symbol].get('tp2_price')
+                    tp1_for_notif = active_trades[symbol].get('tp1_price')
                 
-                logger.info(f"   → TPs will be created automatically when position opens (background thread checks every 1min/2min)")
-                
-                # Send signal notification to Slack
-                try:
-                    timeframe = signal_data.get('timeframe', 'Unknown')
-                    confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
-                    risk_level = validation_result.get('risk_level', 'MEDIUM') if validation_result else 'MEDIUM'
-                    # Get TP prices for notification
-                    if use_single_tp:
-                        main_tp = active_trades[symbol].get('tp2_price')
-                        tp1_for_notif = None
-                    else:
-                        main_tp = active_trades[symbol].get('tp2_price')
-                        tp1_for_notif = active_trades[symbol].get('tp1_price')
-                    
-                    send_signal_notification(
-                        symbol=symbol,
-                        signal_side=signal_side,
-                        timeframe=timeframe,
-                        confidence_score=confidence_score,
-                        risk_level=risk_level,
-                        entry1_price=primary_entry_price,
-                        entry2_price=dca_entry_price,
-                        stop_loss=stop_loss,
-                        take_profit=main_tp,  # Main TP (TP2 in dual mode, or single TP in high confidence)
-                        tp1_price=tp1_for_notif,  # TP1 (only in dual mode)
-                        use_single_tp=use_single_tp,  # Flag for notification formatting
-                        validation_result=validation_result
-                    )
-                except Exception as e:
-                    logger.debug(f"Failed to send signal notification: {e}")
-                        
-            except BinanceAPIException as e:
-                logger.error(f"❌ Failed to create PRIMARY entry order: {e.message} (Code: {e.code})")
-                send_slack_alert(
-                    error_type="Primary Entry Order Creation Failed",
-                    message=f"{e.message} (Code: {e.code})",
-                    details={'Error_Code': e.code, 'Entry_Price': entry_price, 'Quantity': primary_quantity, 'Side': side},
+                send_signal_notification(
                     symbol=symbol,
-                    severity='ERROR'
+                    signal_side=signal_side,
+                    timeframe=timeframe,
+                    confidence_score=confidence_score,
+                    risk_level=risk_level,
+                    entry1_price=original_entry1_price,  # Order 1: Original Entry 1
+                    entry2_price=dca_entry_price,  # Order 3: Entry 2
+                    stop_loss=stop_loss,
+                    take_profit=main_tp,  # Main TP (TP2 in dual mode, or single TP in high confidence)
+                    tp1_price=tp1_for_notif,  # TP1 (only in dual mode)
+                    use_single_tp=use_single_tp,  # Flag for notification formatting
+                    validation_result=validation_result,
+                    optimized_entry1_price=optimized_entry1_price  # Order 2: Optimized Entry 1 (if exists)
                 )
-                return {'success': False, 'error': f'Failed to create order: {e.message}'}
             except Exception as e:
-                logger.error(f"❌ Unexpected error creating PRIMARY entry order: {e}")
-                send_slack_alert(
-                    error_type="Primary Entry Order Creation Error",
-                    message=str(e),
-                    details={'Entry_Price': entry_price, 'Quantity': primary_quantity, 'Side': side},
-                    symbol=symbol,
-                    severity='ERROR'
-                )
-                return {'success': False, 'error': f'Unexpected error: {str(e)}'}
-            
-            # Track order
-            order_key = f"{symbol}_{primary_entry_price}_{side}_PRIMARY"
-            recent_orders[order_key] = current_time
-            
-            # Create DCA entry order (Entry 2) if price is provided
-            if dca_entry_price and dca_entry_price > 0:
-                dca_order_params = {
-                    'symbol': symbol,
-                    'side': side,
-                    'type': 'LIMIT',
-                    'timeInForce': 'GTC',
-                    'quantity': dca_quantity,
-                    'price': dca_entry_price,
-                }
-                if is_hedge_mode:
-                    dca_order_params['positionSide'] = position_side
-                
-                logger.info(f"Creating DCA entry limit order: {dca_order_params}")
-                try:
-                    dca_order_result = client.futures_create_order(**dca_order_params)
-                    order_results.append(dca_order_result)
-                    active_trades[symbol]['dca_order_id'] = dca_order_result.get('orderId')
-                    active_trades[symbol]['dca_filled'] = False  # Will be updated when filled
-                    logger.info(f"✅ DCA entry order created successfully: Order ID {dca_order_result.get('orderId')}")
-                except BinanceAPIException as e:
-                    logger.error(f"❌ Failed to create DCA entry order: {e.message} (Code: {e.code})")
-                    send_slack_alert(
-                        error_type="DCA Entry Order Creation Failed",
-                        message=f"{e.message} (Code: {e.code})",
-                        details={'Error_Code': e.code, 'DCA_Price': dca_entry_price, 'Quantity': dca_quantity, 'Side': side},
-                        symbol=symbol,
-                        severity='WARNING'
-                    )
-                    # Continue with primary order even if DCA fails
-                except Exception as e:
-                    logger.error(f"❌ Unexpected error creating DCA entry order: {e}")
-                    send_slack_alert(
-                        error_type="DCA Entry Order Creation Error",
-                        message=str(e),
-                        details={'DCA_Price': dca_entry_price, 'Quantity': dca_quantity, 'Side': side},
-                        symbol=symbol,
-                        severity='WARNING'
-                    )
-                
-                # Track order
-                order_key = f"{symbol}_{dca_entry_price}_{side}_DCA"
-                recent_orders[order_key] = current_time
+                logger.debug(f"Failed to send signal notification: {e}")
             
             # Use primary order result for response
             order_result = primary_order_result
