@@ -3050,17 +3050,45 @@ CURRENT TASK: Evaluate Entry 2 (${entry_price:,.8f}) as a STANDALONE trade oppor
 - Entry 1 is NOT being used - this is Entry 2 ONLY
 - You must evaluate if Entry 2 alone is worth trading with $20 position size
 - Entry 2 will use a custom TP of 4-5% from entry (not the original TP)
-- This is a RARE case - only approve if Entry 2 is STRONG enough to trade alone
+- Entry 2 is typically at a BETTER price (support/resistance level) than Entry 1
+- Entry 2 often has BETTER Risk/Reward potential than Entry 1
+
+IMPORTANT: Entry 2 standalone validation should be MORE LENIENT than Entry 1:
+- Entry 2 is usually at a support level (for LONG) or resistance level (for SHORT)
+- Entry 2 has better entry price, which improves R/R ratio
+- Funding rate concerns are LESS critical for Entry 2 (smaller position, better entry)
+- If Entry 2 is at support/resistance with acceptable R/R (≥1:2), it should be APPROVED
+- Only reject Entry 2 if there are MULTIPLE severe red flags (not just funding rate)
 
 CRITICAL QUESTIONS TO ANSWER:
-1. Is Entry 2 at an optimal institutional liquidity zone?
-2. Does Entry 2 have strong technical support (support/resistance, indicators)?
-3. Is Entry 2's Risk/Reward acceptable for a standalone trade?
-4. Would you trade Entry 2 alone if Entry 1 didn't exist?
+1. Is Entry 2 at an optimal institutional liquidity zone (support/resistance)?
+2. Does Entry 2 have acceptable technical support (indicators, structure)?
+3. Is Entry 2's Risk/Reward acceptable for a standalone trade (≥1:2 with 4-5% TP)?
+4. Would Entry 2 be profitable if price moves 4-5% in the signal direction?
 
-DECISION CRITERIA:
-- APPROVE Entry 2 standalone if: Strong technical setup, good R/R, optimal entry zone
-- REJECT Entry 2 standalone if: Weak setup, poor R/R, not at optimal zone, or Entry 1 rejection reasons also apply to Entry 2
+DECISION CRITERIA (VERY LENIENT - DO NOT MISS PROFITABLE TRADES):
+⚠️ CRITICAL: Entry 2 is at BETTER price - be VERY lenient, only reject if ALL strong factors align ⚠️
+
+- APPROVE Entry 2 standalone if ANY of these are true:
+  * Entry 2 is at support/resistance level (institutional zone) → APPROVE
+  * R/R ≥ 1:1 with 4-5% TP target → APPROVE
+  * At least 3+ indicators support the signal → APPROVE
+  * Market structure is not STRONGLY counter-trend → APPROVE
+  * Funding rate is not EXTREME (>0.15% or <-0.15%) → APPROVE
+  
+- REJECT Entry 2 standalone ONLY if ALL 4 conditions are met:
+  * Entry 2 is NOT at a support/resistance level AND
+  * R/R < 0.8 AND
+  * 6+ indicators contradict the signal AND
+  * Market structure is STRONGLY counter-trend (>5% against signal direction)
+  → If even ONE condition is missing, APPROVE (don't miss profitable trades)
+
+FUNDING RATE ADJUSTMENT FOR ENTRY 2:
+- For Entry 2 standalone, funding rate penalties are REDUCED by 50%
+- Example: LONG signal with +0.05% funding (accumulating) = CONFIDENCE -5% to -7.5% (not -25%)
+- Funding rate should NEVER reject Entry 2 (only reduce confidence slightly)
+- Only EXTREME funding (>0.15% or <-0.15%) should reduce confidence by 10-12.5%
+- Normal funding (<0.1% daily) should have minimal impact (2-5% confidence reduction)
 
 ═══════════════════════════════════════════════════════════════
 """
@@ -3105,7 +3133,20 @@ IMPORTANT CONTEXT:
 - If prices are not optimal, suggest better levels based on technical analysis
 - Focus on TradingView indicators (PRIMARY - 70%) and technical market analysis (SECONDARY - 30%)
 - Accept RR ≥ 1:1 (good setups), prefer RR ≥ 1:2 (better), excellent if RR ≥ 1:3
-- Only reject if MULTIPLE red flags: poor R/R (< 0.5) AND weak indicators AND strong counter-trend
+
+⚠️ CRITICAL REJECTION PHILOSOPHY - READ CAREFULLY:
+- TRADING GOAL: 4-10% profit per trade, trades run 6-24 hours, typically achieve 3-5% profit
+- DO NOT MISS PROFITABLE TRADES due to false reasoning or single-factor rejections
+- ONLY REJECT if there are MULTIPLE STRONG SOLID REASONS that align together
+- SINGLE FACTORS (funding rate, weak indicators, sideways market) are NOT enough to reject
+- A SINGLE negative factor should only REDUCE confidence, NOT cause rejection
+- REJECTION requires 3+ STRONG factors ALL pointing against the trade:
+  * Example: R/R < 0.5 AND 7+ indicators contradict AND strong counter-trend AND price at very unfavorable level
+- When in doubt, APPROVE - the script already filtered signals, so they have merit
+- Funding rate alone should NEVER reject a trade (only reduce confidence by 10-15%)
+- Weak indicators alone should NEVER reject a trade (only reduce confidence)
+- Sideways market alone should NEVER reject a trade (only reduce confidence)
+- Only reject if MULTIPLE STRONG factors combine: poor R/R (<0.5) AND weak indicators (7+ contradict) AND strong counter-trend (>5%) AND price at very unfavorable level
 
 MANDATORY ANALYSIS REQUIREMENTS:
 1. You MUST analyze Entry 1 price: Is it at support/resistance from market_data? If not, suggest optimal level
@@ -3162,8 +3203,20 @@ Think like the whale/institution you are - see liquidity, order flow, and market
    - SMART MONEY: Are institutions buying or selling? (Use Smart Money indicators)
    - ACCUMULATION/DISTRIBUTION: Are institutions accumulating or distributing? (This determines direction)
 
-6. FUNDING RATE ANALYSIS (CRITICAL FOR SIGNAL VALIDATION - PRIMARY REJECTION FACTOR):
-   ⚠️ THIS IS A PRIMARY CONCERN - FUNDING RATE CAN REJECT SIGNALS ⚠️
+6. FUNDING RATE ANALYSIS (SECONDARY FACTOR - NOT A PRIMARY REJECTION FACTOR):
+   ⚠️ IMPORTANT: Funding rate should ONLY REDUCE CONFIDENCE, NOT REJECT SIGNALS ⚠️
+   ⚠️ FUNDING RATE ALONE CAN NEVER REJECT A TRADE - it requires MULTIPLE other strong factors ⚠️
+   
+   ⚠️ SPECIAL NOTE FOR ENTRY 2 STANDALONE VALIDATION:
+   - If this is Entry 2 standalone validation, funding rate penalties are REDUCED by 50%
+   - Entry 2 is at a better price (support/resistance), which improves R/R and reduces funding cost impact
+   - Only apply STRONG funding penalties if funding is EXTREME (>0.15% or <-0.15%)
+   - Small funding costs (<0.1% daily) are acceptable for Entry 2 if other factors are good
+   
+   ⚠️ CRITICAL: Funding rate is a COST FACTOR, not a REJECTION FACTOR
+   - For 6-24 hour trades, funding cost is typically 0.1-0.3% (acceptable for 3-5% profit target)
+   - Only EXTREME funding (>0.15% or <-0.15%) should significantly impact confidence
+   - Normal funding (0.01-0.1%) should only reduce confidence by 5-10%, NOT reject
    
    - CURRENT FUNDING RATE: Check the CURRENT funding rate from market_data (this is the most important)
    - FUNDING RATE STATUS: Is it EXTREMELY_POSITIVE, POSITIVE, NEUTRAL, NEGATIVE, or EXTREMELY_NEGATIVE?
@@ -3172,40 +3225,38 @@ Think like the whale/institution you are - see liquidity, order flow, and market
    - ESTIMATED DAILY COST: Check estimated_daily_funding_pct (if high, you'll pay a lot)
    
    CRITICAL VALIDATION RULES (COMBINE TIMEFRAME + FUNDING MAGNITUDE + FREQUENCY):
+   ⚠️ REMEMBER: Funding rate penalties should ONLY REDUCE CONFIDENCE, NOT REJECT
+   ⚠️ For Entry 2 standalone, reduce all confidence penalties by 50% (e.g., -15% becomes -7.5%)
    
    * For SHORT signals:
      - If CURRENT funding rate is NEGATIVE (shorts paying longs):
        → Check if funding_is_accumulating (consistent negative funding)
-       → If ACCUMULATING (consistent): Market is ALREADY heavily shorted = HIGH SQUEEZE RISK + HIGH COST
-         → This is a MAJOR RED FLAG - LOWER CONFIDENCE SIGNIFICANTLY or REJECT
-         → For 1H timeframe: EVEN MORE CRITICAL - STRONG REJECTION SIGNAL
-         → Example: SHORT signal (1H) with -0.05% funding (accumulating) = REJECT or CONFIDENCE -25%
-       → If OCCASIONAL (small, infrequent): Might be acceptable with other STRONG factors
-         → Check estimated_daily_funding_pct - if <0.1% daily, might pass with strong indicators
-         → Example: SHORT signal with -0.02% funding (occasional, not accumulating) = Lower confidence -10% but can pass
-     - If CURRENT funding rate is EXTREMELY_NEGATIVE (<-0.1%): 
-       → Market is EXTREMELY shorted = VERY HIGH SQUEEZE RISK
-       → This is a CRITICAL RED FLAG - STRONGLY CONSIDER REJECTION (regardless of frequency)
-       → Example: SHORT signal with -0.15% funding = REJECT (unless other factors are extremely strong)
+       → If ACCUMULATING (consistent) AND funding is MODERATE (0.05-0.1%): 
+         → REDUCE CONFIDENCE by 10-15% (NOT reject) - this is a cost factor, not rejection factor
+         → Example: SHORT signal with -0.05% funding (accumulating) = CONFIDENCE -10% to -15% (still approve if other factors good)
+       → If ACCUMULATING AND funding is EXTREME (<-0.1%):
+         → REDUCE CONFIDENCE by 20-25% (only reject if combined with 2+ other strong negative factors)
+         → Example: SHORT signal with -0.15% funding = CONFIDENCE -20% to -25% (still approve if R/R good and indicators support)
+       → If OCCASIONAL (small, infrequent): 
+         → REDUCE CONFIDENCE by 5-10% (minimal impact)
+         → Example: SHORT signal with -0.02% funding (occasional) = CONFIDENCE -5% to -10% (approve)
      - If CURRENT funding rate is POSITIVE or EXTREMELY_POSITIVE: 
-       → FAVORABLE for SHORT (longs paying shorts) = Market not yet shorted = GOOD
+       → FAVORABLE for SHORT (longs paying shorts) = Market not yet shorted = GOOD (no penalty)
    
    * For LONG signals:
      - If CURRENT funding rate is POSITIVE (longs paying shorts):
        → Check if funding_is_accumulating (consistent positive funding)
-       → If ACCUMULATING (consistent): Market is ALREADY heavily longed = HIGH REVERSAL RISK + HIGH COST
-         → This is a MAJOR RED FLAG - LOWER CONFIDENCE SIGNIFICANTLY or REJECT
-         → For 1H timeframe: EVEN MORE CRITICAL - STRONG REJECTION SIGNAL
-         → Example: LONG signal (1H) with +0.05% funding (accumulating) = REJECT or CONFIDENCE -25%
-       → If OCCASIONAL (small, infrequent): Might be acceptable with other STRONG factors
-         → Check estimated_daily_funding_pct - if <0.1% daily, might pass with strong indicators
-         → Example: LONG signal with +0.02% funding (occasional, not accumulating) = Lower confidence -10% but can pass
-     - If CURRENT funding rate is EXTREMELY_POSITIVE (>0.1%): 
-       → Market is EXTREMELY longed = VERY HIGH REVERSAL RISK
-       → This is a CRITICAL RED FLAG - STRONGLY CONSIDER REJECTION (regardless of frequency)
-       → Example: LONG signal with +0.15% funding = REJECT (unless other factors are extremely strong)
+       → If ACCUMULATING (consistent) AND funding is MODERATE (0.05-0.1%): 
+         → REDUCE CONFIDENCE by 10-15% (NOT reject) - this is a cost factor, not rejection factor
+         → Example: LONG signal with +0.05% funding (accumulating) = CONFIDENCE -10% to -15% (still approve if other factors good)
+       → If ACCUMULATING AND funding is EXTREME (>0.1%):
+         → REDUCE CONFIDENCE by 20-25% (only reject if combined with 2+ other strong negative factors)
+         → Example: LONG signal with +0.15% funding = CONFIDENCE -20% to -25% (still approve if R/R good and indicators support)
+       → If OCCASIONAL (small, infrequent): 
+         → REDUCE CONFIDENCE by 5-10% (minimal impact)
+         → Example: LONG signal with +0.02% funding (occasional) = CONFIDENCE -5% to -10% (approve)
      - If CURRENT funding rate is NEGATIVE or EXTREMELY_NEGATIVE: 
-       → FAVORABLE for LONG (shorts paying longs) = Market not yet longed = GOOD
+       → FAVORABLE for LONG (shorts paying longs) = Market not yet longed = GOOD (no penalty)
    
    TIMEFRAME + FUNDING COMBINATION (CRITICAL):
    - For 1H timeframe signals: Funding rate validation is EVEN MORE CRITICAL
@@ -3216,20 +3267,39 @@ Think like the whale/institution you are - see liquidity, order flow, and market
    - 4H/1D + Contradictory funding + Occasional = Minor concern, small confidence reduction
    
    CONFIDENCE ADJUSTMENT (COMBINED FACTORS):
-   - SHORT signal (1H) + NEGATIVE funding + ACCUMULATING: CONFIDENCE -25% to -35% (or REJECT)
-   - LONG signal (1H) + POSITIVE funding + ACCUMULATING: CONFIDENCE -25% to -35% (or REJECT)
-   - SHORT signal (1H) + NEGATIVE funding + OCCASIONAL (small): CONFIDENCE -10% to -15% (can pass with strong factors)
-   - LONG signal (1H) + POSITIVE funding + OCCASIONAL (small): CONFIDENCE -10% to -15% (can pass with strong factors)
-   - SHORT signal (4H/1D) + NEGATIVE funding + ACCUMULATING: CONFIDENCE -15% to -20%
-   - LONG signal (4H/1D) + POSITIVE funding + ACCUMULATING: CONFIDENCE -15% to -20%
-   - EXTREME funding (very negative/positive): CONFIDENCE -30% to -40% (or REJECT)
+   ⚠️ REMEMBER: These are CONFIDENCE REDUCTIONS, NOT REJECTION FACTORS
+   ⚠️ Even with these reductions, trade should be APPROVED unless 3+ strong factors combine
+   
+   - SHORT signal (1H) + NEGATIVE funding (moderate 0.05-0.1%) + ACCUMULATING: CONFIDENCE -10% to -15%
+     → For Entry 2 standalone: CONFIDENCE -5% to -7.5% (reduced by 50%)
+   - LONG signal (1H) + POSITIVE funding (moderate 0.05-0.1%) + ACCUMULATING: CONFIDENCE -10% to -15%
+     → For Entry 2 standalone: CONFIDENCE -5% to -7.5% (reduced by 50%)
+   - SHORT signal (1H) + NEGATIVE funding + OCCASIONAL (small): CONFIDENCE -5% to -10%
+     → For Entry 2 standalone: CONFIDENCE -2.5% to -5% (reduced by 50%)
+   - LONG signal (1H) + POSITIVE funding + OCCASIONAL (small): CONFIDENCE -5% to -10%
+     → For Entry 2 standalone: CONFIDENCE -2.5% to -5% (reduced by 50%)
+   - SHORT signal (4H/1D) + NEGATIVE funding + ACCUMULATING: CONFIDENCE -8% to -12%
+     → For Entry 2 standalone: CONFIDENCE -4% to -6% (reduced by 50%)
+   - LONG signal (4H/1D) + POSITIVE funding + ACCUMULATING: CONFIDENCE -8% to -12%
+     → For Entry 2 standalone: CONFIDENCE -4% to -6% (reduced by 50%)
+   - EXTREME funding (>0.15% or <-0.15%): CONFIDENCE -20% to -25%
+     → For Entry 2 standalone: CONFIDENCE -10% to -12.5% (reduced by 50%)
+     → Still approve unless combined with 2+ other strong negative factors
    
    DECISION LOGIC (PRIORITY ORDER):
-   1. If funding is EXTREME (>0.1% or <-0.1%) AND contradicts signal: STRONG REJECTION (unless all factors extremely strong)
-   2. If funding contradicts signal + ACCUMULATING + 1H timeframe: STRONG REJECTION or CONFIDENCE -25%
-   3. If funding contradicts signal + ACCUMULATING + 4H/1D timeframe: Lower confidence -15% to -20%
-   4. If funding contradicts signal + OCCASIONAL (small) + 1H timeframe: Lower confidence -10% to -15% (can pass with strong factors)
-   5. If funding contradicts signal + OCCASIONAL (small) + 4H/1D timeframe: Lower confidence -5% to -10% (can pass)
+   ⚠️ CRITICAL: Funding rate should NEVER be the sole reason for rejection
+   ⚠️ Only reject if funding is EXTREME AND combined with 2+ other strong negative factors
+   
+   1. If funding is EXTREME (>0.15% or <-0.15%) AND contradicts signal: REDUCE CONFIDENCE by 20-25%
+     → Only reject if ALSO: R/R < 0.5 AND 7+ indicators contradict AND strong counter-trend
+   2. If funding contradicts signal + ACCUMULATING (moderate 0.05-0.1%) + 1H timeframe: REDUCE CONFIDENCE by 10-15%
+     → Still approve unless combined with 2+ other strong negative factors
+   3. If funding contradicts signal + ACCUMULATING + 4H/1D timeframe: REDUCE CONFIDENCE by 8-12%
+     → Still approve unless combined with 2+ other strong negative factors
+   4. If funding contradicts signal + OCCASIONAL (small) + 1H timeframe: REDUCE CONFIDENCE by 5-10%
+     → Approve (minimal impact)
+   5. If funding contradicts signal + OCCASIONAL (small) + 4H/1D timeframe: REDUCE CONFIDENCE by 3-8%
+     → Approve (minimal impact)
    6. If funding aligns with signal direction: FAVORABLE (no penalty, may even boost confidence)
    
    MAIN CONCERN: Don't want to pay too much in funding costs
@@ -3507,13 +3577,28 @@ SIGNAL QUALITY SCORING:
 - QUESTIONABLE (40-49%): Mixed signals but not clearly bad (still approve if above threshold)
 - POOR (0-39%): Multiple indicators contradict signal + poor R/R + low volume
 
-REJECTION CRITERIA (only reject if MULTIPLE red flags - be lenient):
-- Risk/Reward < 0.5 AND
-- Signal contradicts STRONG trend (>5% against signal direction) AND
-- Price at VERY unfavorable level (LONG at strong resistance, SHORT at strong support) AND
-- Multiple indicators STRONGLY contradict signal (7+ indicators against signal direction)
+REJECTION CRITERIA (ONLY reject if ALL 4 STRONG factors combine - be VERY lenient):
+⚠️ CRITICAL: ALL 4 conditions MUST be true to reject - missing even ONE means APPROVE ⚠️
 
-IMPORTANT: If TradingView script sent this signal, it likely has merit. Only reject if ALL of the above conditions are met. When in doubt, APPROVE (the script already filtered signals).
+1. Risk/Reward < 0.5 (very poor R/R) AND
+2. Signal contradicts STRONG trend (>5% against signal direction) AND
+3. Price at VERY unfavorable level (LONG at strong resistance, SHORT at strong support) AND
+4. Multiple indicators STRONGLY contradict signal (7+ indicators against signal direction)
+
+⚠️ SINGLE FACTORS ARE NOT ENOUGH TO REJECT:
+- Funding rate alone: NEVER reject (only reduce confidence by 5-15%)
+- Weak indicators alone (4-6 contradict): NEVER reject (only reduce confidence)
+- Sideways market alone: NEVER reject (only reduce confidence)
+- Poor R/R alone (0.5-0.8): NEVER reject (only reduce confidence)
+- Single negative factor: NEVER reject (only reduce confidence)
+
+⚠️ ONLY REJECT IF ALL 4 STRONG FACTORS COMBINE:
+- If even ONE factor is missing, APPROVE the trade
+- Example: R/R is 0.6 (not <0.5) → APPROVE (even if other 3 factors are negative)
+- Example: Only 5 indicators contradict (not 7+) → APPROVE (even if other 3 factors are negative)
+- Example: Funding rate is negative but R/R is good → APPROVE
+
+IMPORTANT: If TradingView script sent this signal, it likely has merit. Only reject if ALL 4 conditions are met. When in doubt, APPROVE (the script already filtered signals).
 
 ═══════════════════════════════════════════════════════════════
 FINAL DECISION PROCESS (COMBINE BOTH DECISION MAKERS EQUALLY):
@@ -3543,7 +3628,18 @@ CRITICAL UNDERSTANDING: The TradingView script ONLY sends alerts when:
 
 GURU LEVEL CONFIDENCE FORMULA (Reflects Script's Quality System):
 
+⚠️ SPECIAL ADJUSTMENT FOR ENTRY 2 STANDALONE VALIDATION:
+- If this is Entry 2 standalone validation, Entry 2 is typically at a BETTER price (support/resistance)
+- Entry 2 has BETTER Risk/Reward potential (better entry = lower risk, higher reward)
+- Entry 2 standalone should be MORE LENIENT - use these adjustments:
+  * BASE CONFIDENCE: 80% (Entry 2 is at better price, higher quality entry)
+  * Funding rate penalties: REDUCE by 50% (better entry reduces funding cost impact)
+  * Indicator threshold: 3-4 indicators support is acceptable (not 6+)
+  * R/R threshold: ≥1:2 is good (Entry 2 has better R/R than Entry 1)
+  * Confidence threshold: 40% is acceptable (lower than Entry 1's 50%)
+
 1. BASE CONFIDENCE: 75% (signals already passed 6-8+ quality factors)
+   - For Entry 2 standalone: BASE CONFIDENCE = 80% (Entry 2 is at better price)
    - Script requires 6-8/17 quality factors = signals are pre-filtered for quality
    - Base confidence reflects that signals are already high quality
 
@@ -3590,15 +3686,30 @@ GURU LEVEL CONFIDENCE FORMULA (Reflects Script's Quality System):
    - Quality Score 8-9: +0-3% bonus (good quality - script's minimum)
    - Quality Score 6-7: Base confidence (acceptable - script's minimum for sideways markets)
 
-DECISION RULES (GURU LEVEL - MATCHES SCRIPT'S STRICTNESS):
-- If final confidence >= 55%: APPROVE (matches AI_VALIDATION_MIN_CONFIDENCE threshold)
-- If final confidence 50-54%: APPROVE with caution (script sent it, but lower confidence)
-- If final confidence 45-49%: APPROVE only if R/R >= 1.0 AND 6+ indicators support
-- If final confidence < 45%: REJECT only if MULTIPLE red flags:
+DECISION RULES (GURU LEVEL - VERY LENIENT TO CATCH PROFITABLE TRADES):
+⚠️ GOAL: 4-10% profit per trade, 6-24 hour duration, typically 3-5% profit
+⚠️ DO NOT MISS PROFITABLE TRADES - only reject if ALL strong factors align against trade
+
+- If final confidence >= 50%: APPROVE (script sent it, has merit)
+- If final confidence 40-49%: APPROVE (script sent it, lower confidence but still valid)
+- If final confidence 30-39%: APPROVE if R/R >= 0.8 OR 4+ indicators support (script sent it, has merit)
+- If final confidence < 30%: REJECT ONLY if ALL 4 strong factors combine:
   * R/R < 0.5 AND
-  * 5+ indicators contradict AND
+  * 7+ indicators contradict AND
   * Strong counter-trend (>5% against signal direction) AND
   * Price at very unfavorable level
+  → If even ONE factor is missing, APPROVE (don't miss profitable trades)
+
+⚠️ ENTRY 2 STANDALONE DECISION RULES (EVEN MORE LENIENT):
+- If final confidence >= 35%: APPROVE (Entry 2 is at better price, lower threshold)
+- If final confidence 25-34%: APPROVE if Entry 2 is at support/resistance OR R/R >= 1:2
+- If final confidence 20-24%: APPROVE if Entry 2 is at support/resistance AND R/R >= 1:1 AND 3+ indicators support
+- If final confidence < 20%: REJECT only if ALL 4 severe red flags combine:
+  * Entry 2 NOT at support/resistance AND
+  * R/R < 0.8 AND
+  * 6+ indicators contradict AND
+  * Strong counter-trend (>5% against signal direction)
+  → If even ONE factor is missing, APPROVE (Entry 2 at better price deserves benefit of doubt)
 
 IMPORTANT: Since the script only sends alerts when 6-8+ quality factors align, signals are ALREADY HIGH QUALITY. 
 Only reject if there are MAJOR red flags that the script might have missed (very rare).
@@ -3618,6 +3729,15 @@ Remember:
 - Market analysis is SECONDARY (25% weight) - use it to fine-tune confidence
 - Base confidence is 75% because signals already passed script's strict quality gates
 - Only reject if MAJOR red flags (very rare - script already filtered for quality)
+
+⚠️ FINAL REMINDER - CRITICAL PHILOSOPHY:
+- TRADING GOAL: 4-10% profit per trade, 6-24 hour duration, typically achieve 3-5% profit
+- DO NOT MISS PROFITABLE TRADES due to false reasoning or single-factor rejections
+- SINGLE FACTORS (funding rate, weak indicators, sideways market) should ONLY reduce confidence, NOT reject
+- ONLY REJECT if 3-4 STRONG factors ALL align against the trade (very rare)
+- When in doubt, APPROVE - the script already filtered signals, so they have merit
+- Funding rate is a COST FACTOR (acceptable for 3-5% profit target), NOT a rejection factor
+- Entry 2 is at BETTER price - be even more lenient, only reject if ALL 4 strong factors align
 
 Respond in JSON format ONLY with this exact structure:
 {{
@@ -4489,12 +4609,72 @@ def create_limit_order(signal_data):
             entry1_is_bad, entry2_is_good_from_parsing = parse_entry_analysis_from_reasoning(reasoning)
             has_high_volatility, price_change_pct = check_recent_price_volatility(symbol, days=7)
             
-            # Check if Entry 1 failed validation
-            # Entry 1 fails ONLY if: is_valid=False (explicitly rejected by AI)
-            # NOTE: If is_valid=True, Entry 1 is approved and will proceed (even if confidence is 45-49%, approval logic handles it)
-            # NOTE: Parsing result (entry1_is_bad) is only used as additional context, not to determine failure
-            # If Entry 1 is approved with good confidence, ignore parsing result (parsing can have false positives)
-            entry1_failed = not is_valid  # Only fail if AI explicitly rejects (is_valid=False)
+            # Check if we should skip Entry 1 due to accumulating funding rate (1H timeframe only)
+            # If funding is accumulating every hour and contradicts signal direction, use Entry 2 only to reduce funding cost
+            should_skip_entry1_for_funding = False
+            funding_skip_reason = ""
+            
+            if timeframe == '1H' and second_entry_price and second_entry_price > 0:
+                # Fetch funding rate data to check if we should skip Entry 1
+                try:
+                    # Get current funding rate
+                    funding_info = client.futures_funding_rate(symbol=symbol, limit=1)
+                    if funding_info and len(funding_info) > 0:
+                        current_funding = float(funding_info[0].get('fundingRate', 0))
+                        
+                        # Get historical funding rates to check if accumulating
+                        historical_funding = client.futures_funding_rate(symbol=symbol, limit=24)
+                        if historical_funding and len(historical_funding) > 0:
+                            funding_rates = [float(f.get('fundingRate', 0)) for f in historical_funding]
+                            
+                            # Calculate funding consistency (how often it's in the same direction)
+                            if current_funding > 0:
+                                same_direction_count = sum(1 for fr in funding_rates if fr > 0)
+                                funding_consistency = same_direction_count / len(funding_rates) if funding_rates else 0
+                                funding_is_accumulating = funding_consistency >= 0.6  # 60%+ in same direction
+                            elif current_funding < 0:
+                                same_direction_count = sum(1 for fr in funding_rates if fr < 0)
+                                funding_consistency = same_direction_count / len(funding_rates) if funding_rates else 0
+                                funding_is_accumulating = funding_consistency >= 0.6  # 60%+ in same direction
+                            else:
+                                funding_is_accumulating = False
+                            
+                            # Check if funding is accumulating and contradicts signal direction
+                            if funding_is_accumulating:
+                                if signal_side == 'LONG' and current_funding > 0:
+                                    # LONG signal with positive accumulating funding = skip Entry 1, use Entry 2 only
+                                    should_skip_entry1_for_funding = True
+                                    funding_skip_reason = f"Funding rate is POSITIVE ({current_funding*100:.4f}%) and ACCUMULATING on 1H timeframe. Skipping Entry 1 to reduce funding cost - using Entry 2 only at better price (${second_entry_price:,.8f})"
+                                    logger.info(f"💰 [FUNDING COST OPTIMIZATION] {funding_skip_reason}")
+                                elif signal_side == 'SHORT' and current_funding < 0:
+                                    # SHORT signal with negative accumulating funding = skip Entry 1, use Entry 2 only
+                                    should_skip_entry1_for_funding = True
+                                    funding_skip_reason = f"Funding rate is NEGATIVE ({current_funding*100:.4f}%) and ACCUMULATING on 1H timeframe. Skipping Entry 1 to reduce funding cost - using Entry 2 only at better price (${second_entry_price:,.8f})"
+                                    logger.info(f"💰 [FUNDING COST OPTIMIZATION] {funding_skip_reason}")
+                except Exception as e:
+                    logger.debug(f"Could not check funding rate for Entry 1 skip logic: {e}")
+            
+            # If we should skip Entry 1 due to funding, mark Entry 1 as failed and proceed with Entry 2 only
+            if should_skip_entry1_for_funding:
+                logger.info(f"🎯 [FUNDING COST OPTIMIZATION] Skipping Entry 1, using Entry 2 only to minimize funding cost")
+                logger.info(f"   Entry 1 Price: ${entry_price:,.8f}")
+                logger.info(f"   Entry 2 Price: ${second_entry_price:,.8f} (will use this)")
+                logger.info(f"   Reason: {funding_skip_reason}")
+                
+                # Mark Entry 1 as failed so Entry 2 validation logic will run
+                entry1_failed = True
+                is_valid = False  # Mark as invalid so Entry 2 logic triggers
+                validation_result['is_valid'] = False
+                validation_result['_funding_cost_optimization'] = True
+                validation_result['_skip_entry1_reason'] = funding_skip_reason
+            else:
+                # Check if Entry 1 failed validation
+                # Entry 1 fails ONLY if: is_valid=False (explicitly rejected by AI)
+                # NOTE: If is_valid=True, Entry 1 is approved and will proceed (even if confidence is 45-49%, approval logic handles it)
+                # NOTE: Parsing result (entry1_is_bad) is only used as additional context, not to determine failure
+                # If Entry 1 is approved with good confidence, ignore parsing result (parsing can have false positives)
+                entry1_failed = not is_valid  # Only fail if AI explicitly rejects (is_valid=False)
+            
             # Only add parsing result if Entry 1 is already failing
             if entry1_failed and entry1_is_bad:
                 logger.info(f"   Entry 1 failed AND parsing detected Entry 1 as bad - will check Entry 2")
@@ -4537,7 +4717,8 @@ def create_limit_order(signal_data):
                     entry2_valid_original = entry2_result_original.get('is_valid', False)
                     entry2_confidence_original = entry2_result_original.get('confidence_score', 0.0)
                     
-                    if entry2_valid_original and entry2_confidence_original >= 50.0:
+                    # Lower threshold for Entry 2 standalone (40% instead of 50%) - Entry 2 is at better price
+                    if entry2_valid_original and entry2_confidence_original >= 40.0:
                         logger.info(f"✅ AI APPROVED Entry 2 with ORIGINAL price: Confidence={entry2_confidence_original:.1f}%")
                         entry2_standalone_valid = True
                         entry2_standalone_result = entry2_result_original
@@ -4557,7 +4738,8 @@ def create_limit_order(signal_data):
                     entry2_valid_optimized = entry2_result_optimized.get('is_valid', False)
                     entry2_confidence_optimized = entry2_result_optimized.get('confidence_score', 0.0)
                     
-                    if entry2_valid_optimized and entry2_confidence_optimized >= 50.0:
+                    # Lower threshold for Entry 2 standalone (40% instead of 50%) - Entry 2 is at better price
+                    if entry2_valid_optimized and entry2_confidence_optimized >= 40.0:
                         logger.info(f"✅ AI APPROVED Entry 2 with OPTIMIZED price: Confidence={entry2_confidence_optimized:.1f}%")
                         entry2_standalone_valid = True
                         entry2_standalone_result = entry2_result_optimized
@@ -4576,15 +4758,25 @@ def create_limit_order(signal_data):
                 entry2_standalone_valid and
                 entry2_standalone_result is not None and
                 entry2_price_to_use is not None and
-                entry2_standalone_result.get('confidence_score', 0.0) >= 50.0
+                entry2_standalone_result.get('confidence_score', 0.0) >= 40.0  # Lower threshold for Entry 2 standalone
                 # Volatility check removed: (has_high_volatility or price_change_pct > 5.0)
-                # If AI approves Entry 2 with >=50% confidence, we trust it regardless of volatility
+                # If AI approves Entry 2 with >=40% confidence, we trust it regardless of volatility
             )
             
             if should_use_entry2_only:
                 entry2_confidence = entry2_standalone_result.get('confidence_score', 60.0)
-                logger.info(f"🎯 SPECIAL CASE DETECTED: Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade for {symbol}")
-                logger.info(f"   Entry 1 Analysis: Rejected (is_valid={is_valid}, confidence={confidence_score:.1f}%)")
+                
+                # Check if this is due to funding cost optimization
+                is_funding_optimization = validation_result.get('_funding_cost_optimization', False)
+                funding_reason = validation_result.get('_skip_entry1_reason', '')
+                
+                if is_funding_optimization:
+                    logger.info(f"🎯 FUNDING COST OPTIMIZATION: Skipping Entry 1 due to accumulating funding, using Entry 2 only for {symbol}")
+                    logger.info(f"   Entry 1 Skipped: {funding_reason}")
+                else:
+                    logger.info(f"🎯 SPECIAL CASE DETECTED: Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade for {symbol}")
+                    logger.info(f"   Entry 1 Analysis: Rejected (is_valid={is_valid}, confidence={confidence_score:.1f}%)")
+                
                 logger.info(f"   Entry 2 Standalone Validation: ✅ APPROVED by AI")
                 logger.info(f"   Entry 2 Price: ${entry2_price_to_use:,.8f} ({'OPTIMIZED' if entry2_price_to_use == entry2_price_optimized else 'ORIGINAL'})")
                 logger.info(f"   Entry 2 Confidence: {entry2_confidence:.1f}%")
@@ -4601,7 +4793,12 @@ def create_limit_order(signal_data):
                 validation_result['confidence_score'] = entry2_confidence
                 validation_result['risk_level'] = entry2_standalone_result.get('risk_level', 'MEDIUM')
                 validation_result['special_case'] = 'ENTRY2_ONLY'
-                validation_result['special_case_reason'] = f'Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade (Confidence: {entry2_confidence:.1f}%, Price: ${entry2_price_to_use:,.8f}). Recent volatility: {price_change_pct:.2f}%'
+                
+                if is_funding_optimization:
+                    validation_result['special_case_reason'] = f'Entry 1 skipped due to funding cost optimization: {funding_reason}. Entry 2 APPROVED by AI as standalone trade (Confidence: {entry2_confidence:.1f}%, Price: ${entry2_price_to_use:,.8f})'
+                else:
+                    validation_result['special_case_reason'] = f'Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade (Confidence: {entry2_confidence:.1f}%, Price: ${entry2_price_to_use:,.8f}). Recent volatility: {price_change_pct:.2f}%'
+                
                 validation_result['entry2_standalone_reasoning'] = entry2_standalone_result.get('reasoning', '')
             
             # APPROVAL LOGIC (More lenient - matches AI prompt instructions):
