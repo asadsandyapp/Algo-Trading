@@ -5008,12 +5008,27 @@ def create_limit_order(signal_data):
         original_entry1_price = safe_float(signal_data.get('entry_price'), default=entry_price)
         
         # Get optimized Entry 1 price (if AI optimized it)
+        # CRITICAL: Only use optimized price if it's BETTER than original:
+        # - For LONG: Optimized price must be LOWER than original (better entry)
+        # - For SHORT: Optimized price must be HIGHER than original (better entry)
         optimized_entry1_price = None
         if 'optimized_prices' in validation_result and validation_result.get('optimized_prices', {}).get('entry_price'):
             opt_entry1 = validation_result['optimized_prices']['entry_price']
-            if opt_entry1 != original_entry1_price:
-                optimized_entry1_price = opt_entry1
-                logger.info(f"🔄 [PRICE UPDATE] AI optimized Entry 1: ${original_entry1_price:,.8f} → ${optimized_entry1_price:,.8f}")
+            # Check if optimized price is actually better than original
+            if signal_side == 'LONG':
+                # For LONG: Optimized price must be LOWER (better entry closer to support)
+                if opt_entry1 < original_entry1_price:
+                    optimized_entry1_price = opt_entry1
+                    logger.info(f"🔄 [PRICE UPDATE] AI optimized Entry 1 for LONG: ${original_entry1_price:,.8f} → ${optimized_entry1_price:,.8f} (better entry - lower)")
+                else:
+                    logger.info(f"⚠️  [PRICE UPDATE] AI suggested Entry 1 ${opt_entry1:,.8f} is NOT LOWER than original ${original_entry1_price:,.8f} - skipping Order 2 (not better for LONG)")
+            else:  # SHORT
+                # For SHORT: Optimized price must be HIGHER (better entry closer to resistance)
+                if opt_entry1 > original_entry1_price:
+                    optimized_entry1_price = opt_entry1
+                    logger.info(f"🔄 [PRICE UPDATE] AI optimized Entry 1 for SHORT: ${original_entry1_price:,.8f} → ${optimized_entry1_price:,.8f} (better entry - higher)")
+                else:
+                    logger.info(f"⚠️  [PRICE UPDATE] AI suggested Entry 1 ${opt_entry1:,.8f} is NOT HIGHER than original ${original_entry1_price:,.8f} - skipping Order 2 (not better for SHORT)")
         
         # Get primary entry price - use optimized entry_price if available, otherwise original
         primary_entry_price = entry_price
@@ -5347,8 +5362,28 @@ def create_limit_order(signal_data):
             order_key = f"{symbol}_{original_entry1_price}_{side}_ORDER1"
             recent_orders[order_key] = current_time
             
-            # ORDER 2: $5 with optimized Entry 1 price (only if AI optimized Entry 1)
+            # ORDER 2: $5 with optimized Entry 1 price (only if AI optimized Entry 1 AND it's actually better)
+            # Double-check: Optimized price must be different from original AND better (lower for LONG, higher for SHORT)
+            should_create_order2 = False
             if optimized_entry1_price and order2_quantity:
+                # Verify optimized price is actually different and better
+                price_diff = abs(optimized_entry1_price - original_entry1_price)
+                min_price_diff = original_entry1_price * 0.001  # At least 0.1% difference to avoid floating point issues
+                
+                if signal_side == 'LONG':
+                    # For LONG: Optimized must be LOWER (better entry)
+                    if optimized_entry1_price < original_entry1_price and price_diff >= min_price_diff:
+                        should_create_order2 = True
+                    else:
+                        logger.warning(f"⚠️  ORDER 2 SKIPPED: Optimized Entry 1 ${optimized_entry1_price:,.8f} is NOT LOWER than original ${original_entry1_price:,.8f} (or difference too small: {price_diff:.8f} < {min_price_diff:.8f})")
+                else:  # SHORT
+                    # For SHORT: Optimized must be HIGHER (better entry)
+                    if optimized_entry1_price > original_entry1_price and price_diff >= min_price_diff:
+                        should_create_order2 = True
+                    else:
+                        logger.warning(f"⚠️  ORDER 2 SKIPPED: Optimized Entry 1 ${optimized_entry1_price:,.8f} is NOT HIGHER than original ${original_entry1_price:,.8f} (or difference too small: {price_diff:.8f} < {min_price_diff:.8f})")
+            
+            if should_create_order2:
                 order2_params = {
                     'symbol': symbol,
                     'side': side,
@@ -5392,7 +5427,10 @@ def create_limit_order(signal_data):
                     )
                     # Continue - Order 2 is optional
             else:
-                logger.info(f"ℹ️  ORDER 2 skipped: Entry 1 was not optimized by AI (using original Entry 1 only)")
+                if optimized_entry1_price:
+                    logger.info(f"ℹ️  ORDER 2 skipped: Optimized Entry 1 price is not better than original (or difference too small)")
+                else:
+                    logger.info(f"ℹ️  ORDER 2 skipped: Entry 1 was not optimized by AI (using original Entry 1 only)")
             
             # ORDER 3: $10 with Entry 2 price (original or optimized)
             if dca_entry_price and order3_quantity:
