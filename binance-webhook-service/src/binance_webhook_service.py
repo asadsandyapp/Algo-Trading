@@ -3050,45 +3050,17 @@ CURRENT TASK: Evaluate Entry 2 (${entry_price:,.8f}) as a STANDALONE trade oppor
 - Entry 1 is NOT being used - this is Entry 2 ONLY
 - You must evaluate if Entry 2 alone is worth trading with $20 position size
 - Entry 2 will use a custom TP of 4-5% from entry (not the original TP)
-- Entry 2 is typically at a BETTER price (support/resistance level) than Entry 1
-- Entry 2 often has BETTER Risk/Reward potential than Entry 1
-
-IMPORTANT: Entry 2 standalone validation should be MORE LENIENT than Entry 1:
-- Entry 2 is usually at a support level (for LONG) or resistance level (for SHORT)
-- Entry 2 has better entry price, which improves R/R ratio
-- Funding rate concerns are LESS critical for Entry 2 (smaller position, better entry)
-- If Entry 2 is at support/resistance with acceptable R/R (≥1:2), it should be APPROVED
-- Only reject Entry 2 if there are MULTIPLE severe red flags (not just funding rate)
+- This is a RARE case - only approve if Entry 2 is STRONG enough to trade alone
 
 CRITICAL QUESTIONS TO ANSWER:
-1. Is Entry 2 at an optimal institutional liquidity zone (support/resistance)?
-2. Does Entry 2 have acceptable technical support (indicators, structure)?
-3. Is Entry 2's Risk/Reward acceptable for a standalone trade (≥1:2 with 4-5% TP)?
-4. Would Entry 2 be profitable if price moves 4-5% in the signal direction?
+1. Is Entry 2 at an optimal institutional liquidity zone?
+2. Does Entry 2 have strong technical support (support/resistance, indicators)?
+3. Is Entry 2's Risk/Reward acceptable for a standalone trade?
+4. Would you trade Entry 2 alone if Entry 1 didn't exist?
 
-DECISION CRITERIA (VERY LENIENT - DO NOT MISS PROFITABLE TRADES):
-⚠️ CRITICAL: Entry 2 is at BETTER price - be VERY lenient, only reject if ALL strong factors align ⚠️
-
-- APPROVE Entry 2 standalone if ANY of these are true:
-  * Entry 2 is at support/resistance level (institutional zone) → APPROVE
-  * R/R ≥ 1:1 with 4-5% TP target → APPROVE
-  * At least 3+ indicators support the signal → APPROVE
-  * Market structure is not STRONGLY counter-trend → APPROVE
-  * Funding rate is not EXTREME (>0.15% or <-0.15%) → APPROVE
-  
-- REJECT Entry 2 standalone ONLY if ALL 4 conditions are met:
-  * Entry 2 is NOT at a support/resistance level AND
-  * R/R < 0.8 AND
-  * 6+ indicators contradict the signal AND
-  * Market structure is STRONGLY counter-trend (>5% against signal direction)
-  → If even ONE condition is missing, APPROVE (don't miss profitable trades)
-
-FUNDING RATE ADJUSTMENT FOR ENTRY 2:
-- For Entry 2 standalone, funding rate penalties are REDUCED by 50%
-- Example: LONG signal with +0.05% funding (accumulating) = CONFIDENCE -5% to -7.5% (not -25%)
-- Funding rate should NEVER reject Entry 2 (only reduce confidence slightly)
-- Only EXTREME funding (>0.15% or <-0.15%) should reduce confidence by 10-12.5%
-- Normal funding (<0.1% daily) should have minimal impact (2-5% confidence reduction)
+DECISION CRITERIA:
+- APPROVE Entry 2 standalone if: Strong technical setup, good R/R, optimal entry zone
+- REJECT Entry 2 standalone if: Weak setup, poor R/R, not at optimal zone, or Entry 1 rejection reasons also apply to Entry 2
 
 ═══════════════════════════════════════════════════════════════
 """
@@ -3133,20 +3105,7 @@ IMPORTANT CONTEXT:
 - If prices are not optimal, suggest better levels based on technical analysis
 - Focus on TradingView indicators (PRIMARY - 70%) and technical market analysis (SECONDARY - 30%)
 - Accept RR ≥ 1:1 (good setups), prefer RR ≥ 1:2 (better), excellent if RR ≥ 1:3
-
-⚠️ CRITICAL REJECTION PHILOSOPHY - READ CAREFULLY:
-- TRADING GOAL: 4-10% profit per trade, trades run 6-24 hours, typically achieve 3-5% profit
-- DO NOT MISS PROFITABLE TRADES due to false reasoning or single-factor rejections
-- ONLY REJECT if there are MULTIPLE STRONG SOLID REASONS that align together
-- SINGLE FACTORS (funding rate, weak indicators, sideways market) are NOT enough to reject
-- A SINGLE negative factor should only REDUCE confidence, NOT cause rejection
-- REJECTION requires 3+ STRONG factors ALL pointing against the trade:
-  * Example: R/R < 0.5 AND 7+ indicators contradict AND strong counter-trend AND price at very unfavorable level
-- When in doubt, APPROVE - the script already filtered signals, so they have merit
-- Funding rate alone should NEVER reject a trade (only reduce confidence by 10-15%)
-- Weak indicators alone should NEVER reject a trade (only reduce confidence)
-- Sideways market alone should NEVER reject a trade (only reduce confidence)
-- Only reject if MULTIPLE STRONG factors combine: poor R/R (<0.5) AND weak indicators (7+ contradict) AND strong counter-trend (>5%) AND price at very unfavorable level
+- Only reject if MULTIPLE red flags: poor R/R (< 0.5) AND weak indicators AND strong counter-trend
 
 MANDATORY ANALYSIS REQUIREMENTS:
 1. You MUST analyze Entry 1 price: Is it at support/resistance from market_data? If not, suggest optimal level
@@ -3203,20 +3162,8 @@ Think like the whale/institution you are - see liquidity, order flow, and market
    - SMART MONEY: Are institutions buying or selling? (Use Smart Money indicators)
    - ACCUMULATION/DISTRIBUTION: Are institutions accumulating or distributing? (This determines direction)
 
-6. FUNDING RATE ANALYSIS (SECONDARY FACTOR - NOT A PRIMARY REJECTION FACTOR):
-   ⚠️ IMPORTANT: Funding rate should ONLY REDUCE CONFIDENCE, NOT REJECT SIGNALS ⚠️
-   ⚠️ FUNDING RATE ALONE CAN NEVER REJECT A TRADE - it requires MULTIPLE other strong factors ⚠️
-   
-   ⚠️ SPECIAL NOTE FOR ENTRY 2 STANDALONE VALIDATION:
-   - If this is Entry 2 standalone validation, funding rate penalties are REDUCED by 50%
-   - Entry 2 is at a better price (support/resistance), which improves R/R and reduces funding cost impact
-   - Only apply STRONG funding penalties if funding is EXTREME (>0.15% or <-0.15%)
-   - Small funding costs (<0.1% daily) are acceptable for Entry 2 if other factors are good
-   
-   ⚠️ CRITICAL: Funding rate is a COST FACTOR, not a REJECTION FACTOR
-   - For 6-24 hour trades, funding cost is typically 0.1-0.3% (acceptable for 3-5% profit target)
-   - Only EXTREME funding (>0.15% or <-0.15%) should significantly impact confidence
-   - Normal funding (0.01-0.1%) should only reduce confidence by 5-10%, NOT reject
+6. FUNDING RATE ANALYSIS (CRITICAL FOR SIGNAL VALIDATION - PRIMARY REJECTION FACTOR):
+   ⚠️ THIS IS A PRIMARY CONCERN - FUNDING RATE CAN REJECT SIGNALS ⚠️
    
    - CURRENT FUNDING RATE: Check the CURRENT funding rate from market_data (this is the most important)
    - FUNDING RATE STATUS: Is it EXTREMELY_POSITIVE, POSITIVE, NEUTRAL, NEGATIVE, or EXTREMELY_NEGATIVE?
@@ -3225,38 +3172,40 @@ Think like the whale/institution you are - see liquidity, order flow, and market
    - ESTIMATED DAILY COST: Check estimated_daily_funding_pct (if high, you'll pay a lot)
    
    CRITICAL VALIDATION RULES (COMBINE TIMEFRAME + FUNDING MAGNITUDE + FREQUENCY):
-   ⚠️ REMEMBER: Funding rate penalties should ONLY REDUCE CONFIDENCE, NOT REJECT
-   ⚠️ For Entry 2 standalone, reduce all confidence penalties by 50% (e.g., -15% becomes -7.5%)
    
    * For SHORT signals:
      - If CURRENT funding rate is NEGATIVE (shorts paying longs):
        → Check if funding_is_accumulating (consistent negative funding)
-       → If ACCUMULATING (consistent) AND funding is MODERATE (0.05-0.1%): 
-         → REDUCE CONFIDENCE by 10-15% (NOT reject) - this is a cost factor, not rejection factor
-         → Example: SHORT signal with -0.05% funding (accumulating) = CONFIDENCE -10% to -15% (still approve if other factors good)
-       → If ACCUMULATING AND funding is EXTREME (<-0.1%):
-         → REDUCE CONFIDENCE by 20-25% (only reject if combined with 2+ other strong negative factors)
-         → Example: SHORT signal with -0.15% funding = CONFIDENCE -20% to -25% (still approve if R/R good and indicators support)
-       → If OCCASIONAL (small, infrequent): 
-         → REDUCE CONFIDENCE by 5-10% (minimal impact)
-         → Example: SHORT signal with -0.02% funding (occasional) = CONFIDENCE -5% to -10% (approve)
+       → If ACCUMULATING (consistent): Market is ALREADY heavily shorted = HIGH SQUEEZE RISK + HIGH COST
+         → This is a MAJOR RED FLAG - LOWER CONFIDENCE SIGNIFICANTLY or REJECT
+         → For 1H timeframe: EVEN MORE CRITICAL - STRONG REJECTION SIGNAL
+         → Example: SHORT signal (1H) with -0.05% funding (accumulating) = REJECT or CONFIDENCE -25%
+       → If OCCASIONAL (small, infrequent): Might be acceptable with other STRONG factors
+         → Check estimated_daily_funding_pct - if <0.1% daily, might pass with strong indicators
+         → Example: SHORT signal with -0.02% funding (occasional, not accumulating) = Lower confidence -10% but can pass
+     - If CURRENT funding rate is EXTREMELY_NEGATIVE (<-0.1%): 
+       → Market is EXTREMELY shorted = VERY HIGH SQUEEZE RISK
+       → This is a CRITICAL RED FLAG - STRONGLY CONSIDER REJECTION (regardless of frequency)
+       → Example: SHORT signal with -0.15% funding = REJECT (unless other factors are extremely strong)
      - If CURRENT funding rate is POSITIVE or EXTREMELY_POSITIVE: 
-       → FAVORABLE for SHORT (longs paying shorts) = Market not yet shorted = GOOD (no penalty)
+       → FAVORABLE for SHORT (longs paying shorts) = Market not yet shorted = GOOD
    
    * For LONG signals:
      - If CURRENT funding rate is POSITIVE (longs paying shorts):
        → Check if funding_is_accumulating (consistent positive funding)
-       → If ACCUMULATING (consistent) AND funding is MODERATE (0.05-0.1%): 
-         → REDUCE CONFIDENCE by 10-15% (NOT reject) - this is a cost factor, not rejection factor
-         → Example: LONG signal with +0.05% funding (accumulating) = CONFIDENCE -10% to -15% (still approve if other factors good)
-       → If ACCUMULATING AND funding is EXTREME (>0.1%):
-         → REDUCE CONFIDENCE by 20-25% (only reject if combined with 2+ other strong negative factors)
-         → Example: LONG signal with +0.15% funding = CONFIDENCE -20% to -25% (still approve if R/R good and indicators support)
-       → If OCCASIONAL (small, infrequent): 
-         → REDUCE CONFIDENCE by 5-10% (minimal impact)
-         → Example: LONG signal with +0.02% funding (occasional) = CONFIDENCE -5% to -10% (approve)
+       → If ACCUMULATING (consistent): Market is ALREADY heavily longed = HIGH REVERSAL RISK + HIGH COST
+         → This is a MAJOR RED FLAG - LOWER CONFIDENCE SIGNIFICANTLY or REJECT
+         → For 1H timeframe: EVEN MORE CRITICAL - STRONG REJECTION SIGNAL
+         → Example: LONG signal (1H) with +0.05% funding (accumulating) = REJECT or CONFIDENCE -25%
+       → If OCCASIONAL (small, infrequent): Might be acceptable with other STRONG factors
+         → Check estimated_daily_funding_pct - if <0.1% daily, might pass with strong indicators
+         → Example: LONG signal with +0.02% funding (occasional, not accumulating) = Lower confidence -10% but can pass
+     - If CURRENT funding rate is EXTREMELY_POSITIVE (>0.1%): 
+       → Market is EXTREMELY longed = VERY HIGH REVERSAL RISK
+       → This is a CRITICAL RED FLAG - STRONGLY CONSIDER REJECTION (regardless of frequency)
+       → Example: LONG signal with +0.15% funding = REJECT (unless other factors are extremely strong)
      - If CURRENT funding rate is NEGATIVE or EXTREMELY_NEGATIVE: 
-       → FAVORABLE for LONG (shorts paying longs) = Market not yet longed = GOOD (no penalty)
+       → FAVORABLE for LONG (shorts paying longs) = Market not yet longed = GOOD
    
    TIMEFRAME + FUNDING COMBINATION (CRITICAL):
    - For 1H timeframe signals: Funding rate validation is EVEN MORE CRITICAL
@@ -3267,39 +3216,20 @@ Think like the whale/institution you are - see liquidity, order flow, and market
    - 4H/1D + Contradictory funding + Occasional = Minor concern, small confidence reduction
    
    CONFIDENCE ADJUSTMENT (COMBINED FACTORS):
-   ⚠️ REMEMBER: These are CONFIDENCE REDUCTIONS, NOT REJECTION FACTORS
-   ⚠️ Even with these reductions, trade should be APPROVED unless 3+ strong factors combine
-   
-   - SHORT signal (1H) + NEGATIVE funding (moderate 0.05-0.1%) + ACCUMULATING: CONFIDENCE -10% to -15%
-     → For Entry 2 standalone: CONFIDENCE -5% to -7.5% (reduced by 50%)
-   - LONG signal (1H) + POSITIVE funding (moderate 0.05-0.1%) + ACCUMULATING: CONFIDENCE -10% to -15%
-     → For Entry 2 standalone: CONFIDENCE -5% to -7.5% (reduced by 50%)
-   - SHORT signal (1H) + NEGATIVE funding + OCCASIONAL (small): CONFIDENCE -5% to -10%
-     → For Entry 2 standalone: CONFIDENCE -2.5% to -5% (reduced by 50%)
-   - LONG signal (1H) + POSITIVE funding + OCCASIONAL (small): CONFIDENCE -5% to -10%
-     → For Entry 2 standalone: CONFIDENCE -2.5% to -5% (reduced by 50%)
-   - SHORT signal (4H/1D) + NEGATIVE funding + ACCUMULATING: CONFIDENCE -8% to -12%
-     → For Entry 2 standalone: CONFIDENCE -4% to -6% (reduced by 50%)
-   - LONG signal (4H/1D) + POSITIVE funding + ACCUMULATING: CONFIDENCE -8% to -12%
-     → For Entry 2 standalone: CONFIDENCE -4% to -6% (reduced by 50%)
-   - EXTREME funding (>0.15% or <-0.15%): CONFIDENCE -20% to -25%
-     → For Entry 2 standalone: CONFIDENCE -10% to -12.5% (reduced by 50%)
-     → Still approve unless combined with 2+ other strong negative factors
+   - SHORT signal (1H) + NEGATIVE funding + ACCUMULATING: CONFIDENCE -25% to -35% (or REJECT)
+   - LONG signal (1H) + POSITIVE funding + ACCUMULATING: CONFIDENCE -25% to -35% (or REJECT)
+   - SHORT signal (1H) + NEGATIVE funding + OCCASIONAL (small): CONFIDENCE -10% to -15% (can pass with strong factors)
+   - LONG signal (1H) + POSITIVE funding + OCCASIONAL (small): CONFIDENCE -10% to -15% (can pass with strong factors)
+   - SHORT signal (4H/1D) + NEGATIVE funding + ACCUMULATING: CONFIDENCE -15% to -20%
+   - LONG signal (4H/1D) + POSITIVE funding + ACCUMULATING: CONFIDENCE -15% to -20%
+   - EXTREME funding (very negative/positive): CONFIDENCE -30% to -40% (or REJECT)
    
    DECISION LOGIC (PRIORITY ORDER):
-   ⚠️ CRITICAL: Funding rate should NEVER be the sole reason for rejection
-   ⚠️ Only reject if funding is EXTREME AND combined with 2+ other strong negative factors
-   
-   1. If funding is EXTREME (>0.15% or <-0.15%) AND contradicts signal: REDUCE CONFIDENCE by 20-25%
-     → Only reject if ALSO: R/R < 0.5 AND 7+ indicators contradict AND strong counter-trend
-   2. If funding contradicts signal + ACCUMULATING (moderate 0.05-0.1%) + 1H timeframe: REDUCE CONFIDENCE by 10-15%
-     → Still approve unless combined with 2+ other strong negative factors
-   3. If funding contradicts signal + ACCUMULATING + 4H/1D timeframe: REDUCE CONFIDENCE by 8-12%
-     → Still approve unless combined with 2+ other strong negative factors
-   4. If funding contradicts signal + OCCASIONAL (small) + 1H timeframe: REDUCE CONFIDENCE by 5-10%
-     → Approve (minimal impact)
-   5. If funding contradicts signal + OCCASIONAL (small) + 4H/1D timeframe: REDUCE CONFIDENCE by 3-8%
-     → Approve (minimal impact)
+   1. If funding is EXTREME (>0.1% or <-0.1%) AND contradicts signal: STRONG REJECTION (unless all factors extremely strong)
+   2. If funding contradicts signal + ACCUMULATING + 1H timeframe: STRONG REJECTION or CONFIDENCE -25%
+   3. If funding contradicts signal + ACCUMULATING + 4H/1D timeframe: Lower confidence -15% to -20%
+   4. If funding contradicts signal + OCCASIONAL (small) + 1H timeframe: Lower confidence -10% to -15% (can pass with strong factors)
+   5. If funding contradicts signal + OCCASIONAL (small) + 4H/1D timeframe: Lower confidence -5% to -10% (can pass)
    6. If funding aligns with signal direction: FAVORABLE (no penalty, may even boost confidence)
    
    MAIN CONCERN: Don't want to pay too much in funding costs
@@ -3577,28 +3507,13 @@ SIGNAL QUALITY SCORING:
 - QUESTIONABLE (40-49%): Mixed signals but not clearly bad (still approve if above threshold)
 - POOR (0-39%): Multiple indicators contradict signal + poor R/R + low volume
 
-REJECTION CRITERIA (ONLY reject if ALL 4 STRONG factors combine - be VERY lenient):
-⚠️ CRITICAL: ALL 4 conditions MUST be true to reject - missing even ONE means APPROVE ⚠️
+REJECTION CRITERIA (only reject if MULTIPLE red flags - be lenient):
+- Risk/Reward < 0.5 AND
+- Signal contradicts STRONG trend (>5% against signal direction) AND
+- Price at VERY unfavorable level (LONG at strong resistance, SHORT at strong support) AND
+- Multiple indicators STRONGLY contradict signal (7+ indicators against signal direction)
 
-1. Risk/Reward < 0.5 (very poor R/R) AND
-2. Signal contradicts STRONG trend (>5% against signal direction) AND
-3. Price at VERY unfavorable level (LONG at strong resistance, SHORT at strong support) AND
-4. Multiple indicators STRONGLY contradict signal (7+ indicators against signal direction)
-
-⚠️ SINGLE FACTORS ARE NOT ENOUGH TO REJECT:
-- Funding rate alone: NEVER reject (only reduce confidence by 5-15%)
-- Weak indicators alone (4-6 contradict): NEVER reject (only reduce confidence)
-- Sideways market alone: NEVER reject (only reduce confidence)
-- Poor R/R alone (0.5-0.8): NEVER reject (only reduce confidence)
-- Single negative factor: NEVER reject (only reduce confidence)
-
-⚠️ ONLY REJECT IF ALL 4 STRONG FACTORS COMBINE:
-- If even ONE factor is missing, APPROVE the trade
-- Example: R/R is 0.6 (not <0.5) → APPROVE (even if other 3 factors are negative)
-- Example: Only 5 indicators contradict (not 7+) → APPROVE (even if other 3 factors are negative)
-- Example: Funding rate is negative but R/R is good → APPROVE
-
-IMPORTANT: If TradingView script sent this signal, it likely has merit. Only reject if ALL 4 conditions are met. When in doubt, APPROVE (the script already filtered signals).
+IMPORTANT: If TradingView script sent this signal, it likely has merit. Only reject if ALL of the above conditions are met. When in doubt, APPROVE (the script already filtered signals).
 
 ═══════════════════════════════════════════════════════════════
 FINAL DECISION PROCESS (COMBINE BOTH DECISION MAKERS EQUALLY):
@@ -3628,18 +3543,7 @@ CRITICAL UNDERSTANDING: The TradingView script ONLY sends alerts when:
 
 GURU LEVEL CONFIDENCE FORMULA (Reflects Script's Quality System):
 
-⚠️ SPECIAL ADJUSTMENT FOR ENTRY 2 STANDALONE VALIDATION:
-- If this is Entry 2 standalone validation, Entry 2 is typically at a BETTER price (support/resistance)
-- Entry 2 has BETTER Risk/Reward potential (better entry = lower risk, higher reward)
-- Entry 2 standalone should be MORE LENIENT - use these adjustments:
-  * BASE CONFIDENCE: 80% (Entry 2 is at better price, higher quality entry)
-  * Funding rate penalties: REDUCE by 50% (better entry reduces funding cost impact)
-  * Indicator threshold: 3-4 indicators support is acceptable (not 6+)
-  * R/R threshold: ≥1:2 is good (Entry 2 has better R/R than Entry 1)
-  * Confidence threshold: 40% is acceptable (lower than Entry 1's 50%)
-
 1. BASE CONFIDENCE: 75% (signals already passed 6-8+ quality factors)
-   - For Entry 2 standalone: BASE CONFIDENCE = 80% (Entry 2 is at better price)
    - Script requires 6-8/17 quality factors = signals are pre-filtered for quality
    - Base confidence reflects that signals are already high quality
 
@@ -3686,30 +3590,15 @@ GURU LEVEL CONFIDENCE FORMULA (Reflects Script's Quality System):
    - Quality Score 8-9: +0-3% bonus (good quality - script's minimum)
    - Quality Score 6-7: Base confidence (acceptable - script's minimum for sideways markets)
 
-DECISION RULES (GURU LEVEL - VERY LENIENT TO CATCH PROFITABLE TRADES):
-⚠️ GOAL: 4-10% profit per trade, 6-24 hour duration, typically 3-5% profit
-⚠️ DO NOT MISS PROFITABLE TRADES - only reject if ALL strong factors align against trade
-
-- If final confidence >= 50%: APPROVE (script sent it, has merit)
-- If final confidence 40-49%: APPROVE (script sent it, lower confidence but still valid)
-- If final confidence 30-39%: APPROVE if R/R >= 0.8 OR 4+ indicators support (script sent it, has merit)
-- If final confidence < 30%: REJECT ONLY if ALL 4 strong factors combine:
+DECISION RULES (GURU LEVEL - MATCHES SCRIPT'S STRICTNESS):
+- If final confidence >= 55%: APPROVE (matches AI_VALIDATION_MIN_CONFIDENCE threshold)
+- If final confidence 50-54%: APPROVE with caution (script sent it, but lower confidence)
+- If final confidence 45-49%: APPROVE only if R/R >= 1.0 AND 6+ indicators support
+- If final confidence < 45%: REJECT only if MULTIPLE red flags:
   * R/R < 0.5 AND
-  * 7+ indicators contradict AND
+  * 5+ indicators contradict AND
   * Strong counter-trend (>5% against signal direction) AND
   * Price at very unfavorable level
-  → If even ONE factor is missing, APPROVE (don't miss profitable trades)
-
-⚠️ ENTRY 2 STANDALONE DECISION RULES (EVEN MORE LENIENT):
-- If final confidence >= 35%: APPROVE (Entry 2 is at better price, lower threshold)
-- If final confidence 25-34%: APPROVE if Entry 2 is at support/resistance OR R/R >= 1:2
-- If final confidence 20-24%: APPROVE if Entry 2 is at support/resistance AND R/R >= 1:1 AND 3+ indicators support
-- If final confidence < 20%: REJECT only if ALL 4 severe red flags combine:
-  * Entry 2 NOT at support/resistance AND
-  * R/R < 0.8 AND
-  * 6+ indicators contradict AND
-  * Strong counter-trend (>5% against signal direction)
-  → If even ONE factor is missing, APPROVE (Entry 2 at better price deserves benefit of doubt)
 
 IMPORTANT: Since the script only sends alerts when 6-8+ quality factors align, signals are ALREADY HIGH QUALITY. 
 Only reject if there are MAJOR red flags that the script might have missed (very rare).
@@ -3729,15 +3618,6 @@ Remember:
 - Market analysis is SECONDARY (25% weight) - use it to fine-tune confidence
 - Base confidence is 75% because signals already passed script's strict quality gates
 - Only reject if MAJOR red flags (very rare - script already filtered for quality)
-
-⚠️ FINAL REMINDER - CRITICAL PHILOSOPHY:
-- TRADING GOAL: 4-10% profit per trade, 6-24 hour duration, typically achieve 3-5% profit
-- DO NOT MISS PROFITABLE TRADES due to false reasoning or single-factor rejections
-- SINGLE FACTORS (funding rate, weak indicators, sideways market) should ONLY reduce confidence, NOT reject
-- ONLY REJECT if 3-4 STRONG factors ALL align against the trade (very rare)
-- When in doubt, APPROVE - the script already filtered signals, so they have merit
-- Funding rate is a COST FACTOR (acceptable for 3-5% profit target), NOT a rejection factor
-- Entry 2 is at BETTER price - be even more lenient, only reject if ALL 4 strong factors align
 
 Respond in JSON format ONLY with this exact structure:
 {{
@@ -4609,72 +4489,12 @@ def create_limit_order(signal_data):
             entry1_is_bad, entry2_is_good_from_parsing = parse_entry_analysis_from_reasoning(reasoning)
             has_high_volatility, price_change_pct = check_recent_price_volatility(symbol, days=7)
             
-            # Check if we should skip Entry 1 due to accumulating funding rate (1H timeframe only)
-            # If funding is accumulating every hour and contradicts signal direction, use Entry 2 only to reduce funding cost
-            should_skip_entry1_for_funding = False
-            funding_skip_reason = ""
-            
-            if timeframe == '1H' and second_entry_price and second_entry_price > 0:
-                # Fetch funding rate data to check if we should skip Entry 1
-                try:
-                    # Get current funding rate
-                    funding_info = client.futures_funding_rate(symbol=symbol, limit=1)
-                    if funding_info and len(funding_info) > 0:
-                        current_funding = float(funding_info[0].get('fundingRate', 0))
-                        
-                        # Get historical funding rates to check if accumulating
-                        historical_funding = client.futures_funding_rate(symbol=symbol, limit=24)
-                        if historical_funding and len(historical_funding) > 0:
-                            funding_rates = [float(f.get('fundingRate', 0)) for f in historical_funding]
-                            
-                            # Calculate funding consistency (how often it's in the same direction)
-                            if current_funding > 0:
-                                same_direction_count = sum(1 for fr in funding_rates if fr > 0)
-                                funding_consistency = same_direction_count / len(funding_rates) if funding_rates else 0
-                                funding_is_accumulating = funding_consistency >= 0.6  # 60%+ in same direction
-                            elif current_funding < 0:
-                                same_direction_count = sum(1 for fr in funding_rates if fr < 0)
-                                funding_consistency = same_direction_count / len(funding_rates) if funding_rates else 0
-                                funding_is_accumulating = funding_consistency >= 0.6  # 60%+ in same direction
-                            else:
-                                funding_is_accumulating = False
-                            
-                            # Check if funding is accumulating and contradicts signal direction
-                            if funding_is_accumulating:
-                                if signal_side == 'LONG' and current_funding > 0:
-                                    # LONG signal with positive accumulating funding = skip Entry 1, use Entry 2 only
-                                    should_skip_entry1_for_funding = True
-                                    funding_skip_reason = f"Funding rate is POSITIVE ({current_funding*100:.4f}%) and ACCUMULATING on 1H timeframe. Skipping Entry 1 to reduce funding cost - using Entry 2 only at better price (${second_entry_price:,.8f})"
-                                    logger.info(f"💰 [FUNDING COST OPTIMIZATION] {funding_skip_reason}")
-                                elif signal_side == 'SHORT' and current_funding < 0:
-                                    # SHORT signal with negative accumulating funding = skip Entry 1, use Entry 2 only
-                                    should_skip_entry1_for_funding = True
-                                    funding_skip_reason = f"Funding rate is NEGATIVE ({current_funding*100:.4f}%) and ACCUMULATING on 1H timeframe. Skipping Entry 1 to reduce funding cost - using Entry 2 only at better price (${second_entry_price:,.8f})"
-                                    logger.info(f"💰 [FUNDING COST OPTIMIZATION] {funding_skip_reason}")
-                except Exception as e:
-                    logger.debug(f"Could not check funding rate for Entry 1 skip logic: {e}")
-            
-            # If we should skip Entry 1 due to funding, mark Entry 1 as failed and proceed with Entry 2 only
-            if should_skip_entry1_for_funding:
-                logger.info(f"🎯 [FUNDING COST OPTIMIZATION] Skipping Entry 1, using Entry 2 only to minimize funding cost")
-                logger.info(f"   Entry 1 Price: ${entry_price:,.8f}")
-                logger.info(f"   Entry 2 Price: ${second_entry_price:,.8f} (will use this)")
-                logger.info(f"   Reason: {funding_skip_reason}")
-                
-                # Mark Entry 1 as failed so Entry 2 validation logic will run
-                entry1_failed = True
-                is_valid = False  # Mark as invalid so Entry 2 logic triggers
-                validation_result['is_valid'] = False
-                validation_result['_funding_cost_optimization'] = True
-                validation_result['_skip_entry1_reason'] = funding_skip_reason
-            else:
-                # Check if Entry 1 failed validation
-                # Entry 1 fails ONLY if: is_valid=False (explicitly rejected by AI)
-                # NOTE: If is_valid=True, Entry 1 is approved and will proceed (even if confidence is 45-49%, approval logic handles it)
-                # NOTE: Parsing result (entry1_is_bad) is only used as additional context, not to determine failure
-                # If Entry 1 is approved with good confidence, ignore parsing result (parsing can have false positives)
-                entry1_failed = not is_valid  # Only fail if AI explicitly rejects (is_valid=False)
-            
+            # Check if Entry 1 failed validation
+            # Entry 1 fails ONLY if: is_valid=False (explicitly rejected by AI)
+            # NOTE: If is_valid=True, Entry 1 is approved and will proceed (even if confidence is 45-49%, approval logic handles it)
+            # NOTE: Parsing result (entry1_is_bad) is only used as additional context, not to determine failure
+            # If Entry 1 is approved with good confidence, ignore parsing result (parsing can have false positives)
+            entry1_failed = not is_valid  # Only fail if AI explicitly rejects (is_valid=False)
             # Only add parsing result if Entry 1 is already failing
             if entry1_failed and entry1_is_bad:
                 logger.info(f"   Entry 1 failed AND parsing detected Entry 1 as bad - will check Entry 2")
@@ -4717,8 +4537,7 @@ def create_limit_order(signal_data):
                     entry2_valid_original = entry2_result_original.get('is_valid', False)
                     entry2_confidence_original = entry2_result_original.get('confidence_score', 0.0)
                     
-                    # Lower threshold for Entry 2 standalone (40% instead of 50%) - Entry 2 is at better price
-                    if entry2_valid_original and entry2_confidence_original >= 40.0:
+                    if entry2_valid_original and entry2_confidence_original >= 50.0:
                         logger.info(f"✅ AI APPROVED Entry 2 with ORIGINAL price: Confidence={entry2_confidence_original:.1f}%")
                         entry2_standalone_valid = True
                         entry2_standalone_result = entry2_result_original
@@ -4738,8 +4557,7 @@ def create_limit_order(signal_data):
                     entry2_valid_optimized = entry2_result_optimized.get('is_valid', False)
                     entry2_confidence_optimized = entry2_result_optimized.get('confidence_score', 0.0)
                     
-                    # Lower threshold for Entry 2 standalone (40% instead of 50%) - Entry 2 is at better price
-                    if entry2_valid_optimized and entry2_confidence_optimized >= 40.0:
+                    if entry2_valid_optimized and entry2_confidence_optimized >= 50.0:
                         logger.info(f"✅ AI APPROVED Entry 2 with OPTIMIZED price: Confidence={entry2_confidence_optimized:.1f}%")
                         entry2_standalone_valid = True
                         entry2_standalone_result = entry2_result_optimized
@@ -4758,25 +4576,15 @@ def create_limit_order(signal_data):
                 entry2_standalone_valid and
                 entry2_standalone_result is not None and
                 entry2_price_to_use is not None and
-                entry2_standalone_result.get('confidence_score', 0.0) >= 40.0  # Lower threshold for Entry 2 standalone
+                entry2_standalone_result.get('confidence_score', 0.0) >= 50.0
                 # Volatility check removed: (has_high_volatility or price_change_pct > 5.0)
-                # If AI approves Entry 2 with >=40% confidence, we trust it regardless of volatility
+                # If AI approves Entry 2 with >=50% confidence, we trust it regardless of volatility
             )
             
             if should_use_entry2_only:
                 entry2_confidence = entry2_standalone_result.get('confidence_score', 60.0)
-                
-                # Check if this is due to funding cost optimization
-                is_funding_optimization = validation_result.get('_funding_cost_optimization', False)
-                funding_reason = validation_result.get('_skip_entry1_reason', '')
-                
-                if is_funding_optimization:
-                    logger.info(f"🎯 FUNDING COST OPTIMIZATION: Skipping Entry 1 due to accumulating funding, using Entry 2 only for {symbol}")
-                    logger.info(f"   Entry 1 Skipped: {funding_reason}")
-                else:
-                    logger.info(f"🎯 SPECIAL CASE DETECTED: Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade for {symbol}")
-                    logger.info(f"   Entry 1 Analysis: Rejected (is_valid={is_valid}, confidence={confidence_score:.1f}%)")
-                
+                logger.info(f"🎯 SPECIAL CASE DETECTED: Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade for {symbol}")
+                logger.info(f"   Entry 1 Analysis: Rejected (is_valid={is_valid}, confidence={confidence_score:.1f}%)")
                 logger.info(f"   Entry 2 Standalone Validation: ✅ APPROVED by AI")
                 logger.info(f"   Entry 2 Price: ${entry2_price_to_use:,.8f} ({'OPTIMIZED' if entry2_price_to_use == entry2_price_optimized else 'ORIGINAL'})")
                 logger.info(f"   Entry 2 Confidence: {entry2_confidence:.1f}%")
@@ -4793,12 +4601,7 @@ def create_limit_order(signal_data):
                 validation_result['confidence_score'] = entry2_confidence
                 validation_result['risk_level'] = entry2_standalone_result.get('risk_level', 'MEDIUM')
                 validation_result['special_case'] = 'ENTRY2_ONLY'
-                
-                if is_funding_optimization:
-                    validation_result['special_case_reason'] = f'Entry 1 skipped due to funding cost optimization: {funding_reason}. Entry 2 APPROVED by AI as standalone trade (Confidence: {entry2_confidence:.1f}%, Price: ${entry2_price_to_use:,.8f})'
-                else:
-                    validation_result['special_case_reason'] = f'Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade (Confidence: {entry2_confidence:.1f}%, Price: ${entry2_price_to_use:,.8f}). Recent volatility: {price_change_pct:.2f}%'
-                
+                validation_result['special_case_reason'] = f'Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade (Confidence: {entry2_confidence:.1f}%, Price: ${entry2_price_to_use:,.8f}). Recent volatility: {price_change_pct:.2f}%'
                 validation_result['entry2_standalone_reasoning'] = entry2_standalone_result.get('reasoning', '')
             
             # APPROVAL LOGIC (More lenient - matches AI prompt instructions):
@@ -4842,8 +4645,8 @@ def create_limit_order(signal_data):
                     # Entry 1 failed and no Entry 2 available
                     rejection_reason = f"Confidence score {confidence_score:.1f}% is below acceptable threshold (AI: is_valid={is_valid}, threshold: {confidence_threshold}%)"
                     logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
-                    logger.info(f"   Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
-                    logger.info(f"   Risk Level: {validation_result.get('risk_level', 'UNKNOWN')}")
+                logger.info(f"   Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
+                logger.info(f"   Risk Level: {validation_result.get('risk_level', 'UNKNOWN')}")
                 
                 # Send rejection notification to Slack exception channel
                 full_reason = f"{rejection_reason}\n\n{validation_result.get('reasoning', 'No detailed reasoning provided')}"
@@ -4885,7 +4688,6 @@ def create_limit_order(signal_data):
                 
                 # Calculate optimized Entry 2 (DCA) if Entry 1 was optimized
                 # Keep Entry 2 close to original Entry 2, maintaining relative spacing from Entry 1
-                # BUT: Only use recalculated Entry 2 if it's BETTER than original (lower for LONG, higher for SHORT)
                 if opt_prices.get('entry_price') and opt_prices['entry_price'] != safe_float(signal_data.get('entry_price'), default=entry_price):
                     original_entry = safe_float(signal_data.get('entry_price'), default=entry_price)
                     original_entry2 = safe_float(signal_data.get('second_entry_price'), default=None)
@@ -4907,23 +4709,8 @@ def create_limit_order(signal_data):
                         else:  # SHORT
                             optimized_entry2 = opt_prices['entry_price'] * (1 + original_spacing_pct / 100)
                         
-                        # CRITICAL: Only use recalculated Entry 2 if it's BETTER than original
-                        # For LONG: Recalculated Entry 2 must be LOWER than original (better entry)
-                        # For SHORT: Recalculated Entry 2 must be HIGHER than original (better entry)
-                        if signal_side == 'LONG':
-                            if optimized_entry2 < original_entry2:
-                                opt_prices['second_entry_price'] = optimized_entry2
-                                logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (LOWER than original ${original_entry2:,.8f}, maintaining {original_spacing_pct:.2f}% spacing from optimized Entry 1)")
-                            else:
-                                logger.info(f"⚠️  [PRICE UPDATE] Recalculated Entry 2 ${optimized_entry2:,.8f} is NOT LOWER than original ${original_entry2:,.8f} - keeping original Entry 2 (better for LONG)")
-                                # Don't set optimized Entry 2 - keep original
-                        else:  # SHORT
-                            if optimized_entry2 > original_entry2:
-                                opt_prices['second_entry_price'] = optimized_entry2
-                                logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (HIGHER than original ${original_entry2:,.8f}, maintaining {original_spacing_pct:.2f}% spacing from optimized Entry 1)")
-                            else:
-                                logger.info(f"⚠️  [PRICE UPDATE] Recalculated Entry 2 ${optimized_entry2:,.8f} is NOT HIGHER than original ${original_entry2:,.8f} - keeping original Entry 2 (better for SHORT)")
-                                # Don't set optimized Entry 2 - keep original
+                        opt_prices['second_entry_price'] = optimized_entry2
+                        logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (maintaining original {original_spacing_pct:.2f}% spacing from optimized Entry 1, original Entry 2 was ${original_entry2:,.8f})")
         
         # Handle EXIT events - close position at market price and cancel all orders for symbol
         if event == 'EXIT':
@@ -5283,47 +5070,15 @@ def create_limit_order(signal_data):
         
         # Get DCA entry price (second entry) - prioritize AI-suggested Entry 2, then recalculated Entry 2, then original
         # Priority: 1) AI-suggested Entry 2, 2) Recalculated Entry 2 (if Entry 1 was optimized), 3) Original Entry 2
-        # CRITICAL: Only use optimized Entry 2 if it's BETTER than original (lower for LONG, higher for SHORT)
-        original_entry2_price = second_entry_price if second_entry_price and second_entry_price > 0 else None
-        
         if 'optimized_prices' in validation_result and validation_result.get('optimized_prices', {}).get('second_entry_price'):
-            optimized_entry2 = validation_result['optimized_prices']['second_entry_price']
-            
-            # Safety check: Only use optimized Entry 2 if it's better than original
-            if original_entry2_price:
-                if signal_side == 'LONG':
-                    # For LONG: Optimized Entry 2 must be LOWER than original (better entry)
-                    if optimized_entry2 < original_entry2_price:
-                        dca_entry_price = optimized_entry2
-                        if 'suggested_second_entry_price' in validation_result.get('price_suggestions', {}):
-                            logger.info(f"🔄 [PRICE UPDATE] Using AI-suggested Entry 2 (DCA): ${dca_entry_price:,.8f} (LOWER than original ${original_entry2_price:,.8f} - better for LONG)")
-                        else:
-                            logger.info(f"🔄 [PRICE UPDATE] Using recalculated Entry 2 (DCA): ${dca_entry_price:,.8f} (LOWER than original ${original_entry2_price:,.8f} - better for LONG)")
-                    else:
-                        logger.warning(f"⚠️  [PRICE UPDATE] Optimized Entry 2 ${optimized_entry2:,.8f} is NOT LOWER than original ${original_entry2_price:,.8f} - using original (better for LONG)")
-                        dca_entry_price = original_entry2_price
-                        logger.info(f"ℹ️  [PRICE] Using original Entry 2 (DCA): ${dca_entry_price:,.8f}")
-                else:  # SHORT
-                    # For SHORT: Optimized Entry 2 must be HIGHER than original (better entry)
-                    if optimized_entry2 > original_entry2_price:
-                        dca_entry_price = optimized_entry2
-                        if 'suggested_second_entry_price' in validation_result.get('price_suggestions', {}):
-                            logger.info(f"🔄 [PRICE UPDATE] Using AI-suggested Entry 2 (DCA): ${dca_entry_price:,.8f} (HIGHER than original ${original_entry2_price:,.8f} - better for SHORT)")
-                        else:
-                            logger.info(f"🔄 [PRICE UPDATE] Using recalculated Entry 2 (DCA): ${dca_entry_price:,.8f} (HIGHER than original ${original_entry2_price:,.8f} - better for SHORT)")
-                    else:
-                        logger.warning(f"⚠️  [PRICE UPDATE] Optimized Entry 2 ${optimized_entry2:,.8f} is NOT HIGHER than original ${original_entry2_price:,.8f} - using original (better for SHORT)")
-                        dca_entry_price = original_entry2_price
-                        logger.info(f"ℹ️  [PRICE] Using original Entry 2 (DCA): ${dca_entry_price:,.8f}")
+            dca_entry_price = validation_result['optimized_prices']['second_entry_price']
+            # Check if this is AI-suggested (from AI validation) or recalculated (from Entry 1 optimization)
+            if 'suggested_second_entry_price' in validation_result.get('price_suggestions', {}):
+                logger.info(f"🔄 [PRICE UPDATE] Using AI-suggested Entry 2 (DCA): ${dca_entry_price:,.8f}")
             else:
-                # No original Entry 2 - use optimized one
-                dca_entry_price = optimized_entry2
-                if 'suggested_second_entry_price' in validation_result.get('price_suggestions', {}):
-                    logger.info(f"🔄 [PRICE UPDATE] Using AI-suggested Entry 2 (DCA): ${dca_entry_price:,.8f} (original was missing)")
-                else:
-                    logger.info(f"🔄 [PRICE UPDATE] Using recalculated Entry 2 (DCA): ${dca_entry_price:,.8f} (original was missing)")
+                logger.info(f"🔄 [PRICE UPDATE] Using recalculated Entry 2 (DCA): ${dca_entry_price:,.8f} (based on Entry 1 optimization)")
         else:
-            dca_entry_price = original_entry2_price
+            dca_entry_price = second_entry_price if second_entry_price and second_entry_price > 0 else None
             if dca_entry_price:
                 logger.info(f"ℹ️  [PRICE] Using original Entry 2 (DCA): ${dca_entry_price:,.8f}")
         
@@ -5760,15 +5515,15 @@ def create_limit_order(signal_data):
             
             # Use Order 1 result for response (primary order)
             primary_order_result = order1_result
-            
-            # Smart TP Strategy: Based on AI Confidence Score
-            # High Confidence (>=90%): Use single TP (main TP from signal) - trust the signal completely
-            # Lower Confidence (<90%): Use TP1 + TP2 strategy - secure profits early
-            
-            confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
-            use_single_tp = confidence_score >= TP_HIGH_CONFIDENCE_THRESHOLD
-            
-            # Calculate entry price for TP calculation
+                
+                # Smart TP Strategy: Based on AI Confidence Score
+                # High Confidence (>=90%): Use single TP (main TP from signal) - trust the signal completely
+                # Lower Confidence (<90%): Use TP1 + TP2 strategy - secure profits early
+                
+                confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
+                use_single_tp = confidence_score >= TP_HIGH_CONFIDENCE_THRESHOLD
+                
+                # Calculate entry price for TP calculation
             # TP1: Always use original Entry 1 price only (4% from Entry 1)
             # TP2: Use weighted average of all filled orders
             entry_price_for_tp1 = original_entry1_price  # Always original Entry 1 for TP1
@@ -5791,12 +5546,12 @@ def create_limit_order(signal_data):
             if total_usd > 10.0:
                 entry_price_for_tp2 = weighted_sum / total_usd
                 logger.info(f"📊 Weighted average entry for TP2: ${entry_price_for_tp2:,.8f} (based on ${total_usd} total USD across orders)")
-            else:
+                else:
                 # Only Order 1 exists
                 entry_price_for_tp2 = original_entry1_price
                 logger.info(f"📊 Only Order 1 exists - using original Entry 1 for TP2: ${entry_price_for_tp2:,.8f}")
-            
-            tp_side = 'SELL' if side == 'BUY' else 'BUY'
+                
+                tp_side = 'SELL' if side == 'BUY' else 'BUY'
             # Calculate total quantity from all orders
             total_qty = order1_quantity
             if order2_quantity:
@@ -5804,105 +5559,105 @@ def create_limit_order(signal_data):
             if order3_quantity:
                 total_qty += order3_quantity
             logger.info(f"📊 Total position size: {total_qty} (Order 1: {order1_quantity}, Order 2: {order2_quantity if order2_quantity else 0}, Order 3: {order3_quantity if order3_quantity else 0})")
-            
-            if use_single_tp:
-                # HIGH CONFIDENCE: Use single TP (main TP from signal)
-                if take_profit and take_profit > 0:
-                    main_tp_price = format_price_precision(take_profit, tick_size)
-                else:
-                    # If no TP provided, calculate a conservative TP
-                    default_tp_percent = 0.05  # 5% profit for high confidence
-                    if side == 'BUY':  # LONG position
-                        main_tp_price = entry_price_for_tp2 * (1 + default_tp_percent)
-                    else:  # SHORT position
-                        main_tp_price = entry_price_for_tp2 * (1 - default_tp_percent)
-                    main_tp_price = format_price_precision(main_tp_price, tick_size)
-                    logger.info(f"📊 High confidence signal ({confidence_score:.1f}%) - TP not provided, calculating with {default_tp_percent*100}% profit: {main_tp_price}")
                 
-                # Store as single TP (100% of position)
-                active_trades[symbol]['tp1_price'] = None  # No TP1
-                active_trades[symbol]['tp2_price'] = main_tp_price  # Use TP2 as main TP
-                active_trades[symbol]['tp_side'] = tp_side
-                active_trades[symbol]['tp1_quantity'] = 0  # No TP1
-                active_trades[symbol]['tp2_quantity'] = total_qty  # 100% at main TP
-                active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
-                active_trades[symbol]['use_single_tp'] = True  # Flag for single TP mode
-                logger.info(f"📝 HIGH CONFIDENCE ({confidence_score:.1f}%) - Single TP configured for {symbol}:")
-                logger.info(f"   → Main TP: @ ${main_tp_price:,.8f} (closes 100% = {total_qty} of position)")
-                logger.info(f"   → Strategy: Trusting signal completely - using single TP")
-            else:
-                # LOWER CONFIDENCE: Use TP1 + TP2 strategy (secure profits early)
-                # Calculate TP1: 3-4% profit from Entry 1 ONLY (not average)
-                tp1_percent = TP1_PERCENT / 100.0
-                if side == 'BUY':  # LONG position
-                    tp1_price = entry_price_for_tp1 * (1 + tp1_percent)  # Use Entry 1 only
-                else:  # SHORT position
-                    tp1_price = entry_price_for_tp1 * (1 - tp1_percent)  # Use Entry 1 only
-                tp1_price = format_price_precision(tp1_price, tick_size)
-                logger.info(f"📊 TP1 calculated: {TP1_PERCENT}% from Entry 1 (${original_entry1_price:,.8f}) = ${tp1_price:,.8f}")
-                
-                # TP2: Use the TP from webhook (or AI-optimized TP)
-                if take_profit and take_profit > 0:
-                    tp2_price = format_price_precision(take_profit, tick_size)
-                else:
-                    # If no TP provided, calculate a default TP2 (higher than TP1)
-                    default_tp2_percent = 0.055  # 5.5% profit
-                    if side == 'BUY':  # LONG position
-                        tp2_price = entry_price_for_tp2 * (1 + default_tp2_percent)
-                    else:  # SHORT position
-                        tp2_price = entry_price_for_tp2 * (1 - default_tp2_percent)
-                    tp2_price = format_price_precision(tp2_price, tick_size)
-                    logger.info(f"📊 TP2 not provided in webhook - calculating with {default_tp2_percent*100}% profit: {tp2_price}")
-                
-                # Calculate TP1 and TP2 quantities based on split percentages
-                tp1_quantity = total_qty * (TP1_SPLIT / 100.0)  # 70% of position
-                tp2_quantity = total_qty * (TP2_SPLIT / 100.0)  # 30% of position
-                
-                # Store TP1 and TP2 details
-                active_trades[symbol]['tp1_price'] = tp1_price
-                active_trades[symbol]['tp2_price'] = tp2_price
-                active_trades[symbol]['tp_side'] = tp_side
-                active_trades[symbol]['tp1_quantity'] = tp1_quantity
-                active_trades[symbol]['tp2_quantity'] = tp2_quantity
-                active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
-                active_trades[symbol]['use_single_tp'] = False  # Flag for TP1+TP2 mode
-                logger.info(f"📝 LOWER CONFIDENCE ({confidence_score:.1f}%) - TP1 + TP2 configured for {symbol}:")
-                logger.info(f"   → TP1: {TP1_PERCENT}% profit @ ${tp1_price:,.8f} (closes {TP1_SPLIT}% = {tp1_quantity} of position)")
-                logger.info(f"   → TP2: @ ${tp2_price:,.8f} (closes {TP2_SPLIT}% = {tp2_quantity} of position)")
-                logger.info(f"   → Strategy: Securing profits early with TP1, letting TP2 run")
-            
-            logger.info(f"   → TPs will be created automatically when position opens (background thread checks every 1min/2min)")
-            
-            # Send signal notification to Slack
-            try:
-                timeframe = signal_data.get('timeframe', 'Unknown')
-                confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
-                risk_level = validation_result.get('risk_level', 'MEDIUM') if validation_result else 'MEDIUM'
-                # Get TP prices for notification
                 if use_single_tp:
-                    main_tp = active_trades[symbol].get('tp2_price')
-                    tp1_for_notif = None
+                    # HIGH CONFIDENCE: Use single TP (main TP from signal)
+                    if take_profit and take_profit > 0:
+                        main_tp_price = format_price_precision(take_profit, tick_size)
+                    else:
+                        # If no TP provided, calculate a conservative TP
+                        default_tp_percent = 0.05  # 5% profit for high confidence
+                        if side == 'BUY':  # LONG position
+                            main_tp_price = entry_price_for_tp2 * (1 + default_tp_percent)
+                        else:  # SHORT position
+                            main_tp_price = entry_price_for_tp2 * (1 - default_tp_percent)
+                        main_tp_price = format_price_precision(main_tp_price, tick_size)
+                        logger.info(f"📊 High confidence signal ({confidence_score:.1f}%) - TP not provided, calculating with {default_tp_percent*100}% profit: {main_tp_price}")
+                    
+                    # Store as single TP (100% of position)
+                    active_trades[symbol]['tp1_price'] = None  # No TP1
+                    active_trades[symbol]['tp2_price'] = main_tp_price  # Use TP2 as main TP
+                    active_trades[symbol]['tp_side'] = tp_side
+                    active_trades[symbol]['tp1_quantity'] = 0  # No TP1
+                    active_trades[symbol]['tp2_quantity'] = total_qty  # 100% at main TP
+                    active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
+                    active_trades[symbol]['use_single_tp'] = True  # Flag for single TP mode
+                    logger.info(f"📝 HIGH CONFIDENCE ({confidence_score:.1f}%) - Single TP configured for {symbol}:")
+                    logger.info(f"   → Main TP: @ ${main_tp_price:,.8f} (closes 100% = {total_qty} of position)")
+                    logger.info(f"   → Strategy: Trusting signal completely - using single TP")
                 else:
-                    main_tp = active_trades[symbol].get('tp2_price')
-                    tp1_for_notif = active_trades[symbol].get('tp1_price')
+                    # LOWER CONFIDENCE: Use TP1 + TP2 strategy (secure profits early)
+                    # Calculate TP1: 3-4% profit from Entry 1 ONLY (not average)
+                    tp1_percent = TP1_PERCENT / 100.0
+                    if side == 'BUY':  # LONG position
+                        tp1_price = entry_price_for_tp1 * (1 + tp1_percent)  # Use Entry 1 only
+                    else:  # SHORT position
+                        tp1_price = entry_price_for_tp1 * (1 - tp1_percent)  # Use Entry 1 only
+                    tp1_price = format_price_precision(tp1_price, tick_size)
+                logger.info(f"📊 TP1 calculated: {TP1_PERCENT}% from Entry 1 (${original_entry1_price:,.8f}) = ${tp1_price:,.8f}")
+                    
+                    # TP2: Use the TP from webhook (or AI-optimized TP)
+                    if take_profit and take_profit > 0:
+                        tp2_price = format_price_precision(take_profit, tick_size)
+                    else:
+                        # If no TP provided, calculate a default TP2 (higher than TP1)
+                        default_tp2_percent = 0.055  # 5.5% profit
+                        if side == 'BUY':  # LONG position
+                            tp2_price = entry_price_for_tp2 * (1 + default_tp2_percent)
+                        else:  # SHORT position
+                            tp2_price = entry_price_for_tp2 * (1 - default_tp2_percent)
+                        tp2_price = format_price_precision(tp2_price, tick_size)
+                        logger.info(f"📊 TP2 not provided in webhook - calculating with {default_tp2_percent*100}% profit: {tp2_price}")
+                    
+                    # Calculate TP1 and TP2 quantities based on split percentages
+                    tp1_quantity = total_qty * (TP1_SPLIT / 100.0)  # 70% of position
+                    tp2_quantity = total_qty * (TP2_SPLIT / 100.0)  # 30% of position
+                    
+                    # Store TP1 and TP2 details
+                    active_trades[symbol]['tp1_price'] = tp1_price
+                    active_trades[symbol]['tp2_price'] = tp2_price
+                    active_trades[symbol]['tp_side'] = tp_side
+                    active_trades[symbol]['tp1_quantity'] = tp1_quantity
+                    active_trades[symbol]['tp2_quantity'] = tp2_quantity
+                    active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
+                    active_trades[symbol]['use_single_tp'] = False  # Flag for TP1+TP2 mode
+                    logger.info(f"📝 LOWER CONFIDENCE ({confidence_score:.1f}%) - TP1 + TP2 configured for {symbol}:")
+                    logger.info(f"   → TP1: {TP1_PERCENT}% profit @ ${tp1_price:,.8f} (closes {TP1_SPLIT}% = {tp1_quantity} of position)")
+                    logger.info(f"   → TP2: @ ${tp2_price:,.8f} (closes {TP2_SPLIT}% = {tp2_quantity} of position)")
+                    logger.info(f"   → Strategy: Securing profits early with TP1, letting TP2 run")
                 
-                send_signal_notification(
-                    symbol=symbol,
-                    signal_side=signal_side,
-                    timeframe=timeframe,
-                    confidence_score=confidence_score,
-                    risk_level=risk_level,
+                logger.info(f"   → TPs will be created automatically when position opens (background thread checks every 1min/2min)")
+                
+                # Send signal notification to Slack
+                try:
+                    timeframe = signal_data.get('timeframe', 'Unknown')
+                    confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
+                    risk_level = validation_result.get('risk_level', 'MEDIUM') if validation_result else 'MEDIUM'
+                    # Get TP prices for notification
+                    if use_single_tp:
+                        main_tp = active_trades[symbol].get('tp2_price')
+                        tp1_for_notif = None
+                    else:
+                        main_tp = active_trades[symbol].get('tp2_price')
+                        tp1_for_notif = active_trades[symbol].get('tp1_price')
+                    
+                    send_signal_notification(
+                        symbol=symbol,
+                        signal_side=signal_side,
+                        timeframe=timeframe,
+                        confidence_score=confidence_score,
+                        risk_level=risk_level,
                     entry1_price=original_entry1_price,  # Order 1: Original Entry 1
                     entry2_price=dca_entry_price,  # Order 3: Entry 2
-                    stop_loss=stop_loss,
-                    take_profit=main_tp,  # Main TP (TP2 in dual mode, or single TP in high confidence)
-                    tp1_price=tp1_for_notif,  # TP1 (only in dual mode)
-                    use_single_tp=use_single_tp,  # Flag for notification formatting
+                        stop_loss=stop_loss,
+                        take_profit=main_tp,  # Main TP (TP2 in dual mode, or single TP in high confidence)
+                        tp1_price=tp1_for_notif,  # TP1 (only in dual mode)
+                        use_single_tp=use_single_tp,  # Flag for notification formatting
                     validation_result=validation_result,
                     optimized_entry1_price=optimized_entry1_price  # Order 2: Optimized Entry 1 (if exists)
-                )
-            except Exception as e:
-                logger.debug(f"Failed to send signal notification: {e}")
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to send signal notification: {e}")
             
             # Use primary order result for response
             order_result = primary_order_result
