@@ -4688,6 +4688,7 @@ def create_limit_order(signal_data):
                 
                 # Calculate optimized Entry 2 (DCA) if Entry 1 was optimized
                 # Keep Entry 2 close to original Entry 2, maintaining relative spacing from Entry 1
+                # BUT: Only use recalculated Entry 2 if it's BETTER than original (lower for LONG, higher for SHORT)
                 if opt_prices.get('entry_price') and opt_prices['entry_price'] != safe_float(signal_data.get('entry_price'), default=entry_price):
                     original_entry = safe_float(signal_data.get('entry_price'), default=entry_price)
                     original_entry2 = safe_float(signal_data.get('second_entry_price'), default=None)
@@ -4709,8 +4710,23 @@ def create_limit_order(signal_data):
                         else:  # SHORT
                             optimized_entry2 = opt_prices['entry_price'] * (1 + original_spacing_pct / 100)
                         
-                        opt_prices['second_entry_price'] = optimized_entry2
-                        logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (maintaining original {original_spacing_pct:.2f}% spacing from optimized Entry 1, original Entry 2 was ${original_entry2:,.8f})")
+                        # CRITICAL: Only use recalculated Entry 2 if it's BETTER than original
+                        # For LONG: Recalculated Entry 2 must be LOWER than original (better entry)
+                        # For SHORT: Recalculated Entry 2 must be HIGHER than original (better entry)
+                        if signal_side == 'LONG':
+                            if optimized_entry2 < original_entry2:
+                                opt_prices['second_entry_price'] = optimized_entry2
+                                logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (LOWER than original ${original_entry2:,.8f}, maintaining {original_spacing_pct:.2f}% spacing from optimized Entry 1)")
+                            else:
+                                logger.info(f"⚠️  [PRICE UPDATE] Recalculated Entry 2 ${optimized_entry2:,.8f} is NOT LOWER than original ${original_entry2:,.8f} - keeping original Entry 2 (better for LONG)")
+                                # Don't set optimized Entry 2 - keep original
+                        else:  # SHORT
+                            if optimized_entry2 > original_entry2:
+                                opt_prices['second_entry_price'] = optimized_entry2
+                                logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (HIGHER than original ${original_entry2:,.8f}, maintaining {original_spacing_pct:.2f}% spacing from optimized Entry 1)")
+                            else:
+                                logger.info(f"⚠️  [PRICE UPDATE] Recalculated Entry 2 ${optimized_entry2:,.8f} is NOT HIGHER than original ${original_entry2:,.8f} - keeping original Entry 2 (better for SHORT)")
+                                # Don't set optimized Entry 2 - keep original
         
         # Handle EXIT events - close position at market price and cancel all orders for symbol
         if event == 'EXIT':
@@ -5070,15 +5086,47 @@ def create_limit_order(signal_data):
         
         # Get DCA entry price (second entry) - prioritize AI-suggested Entry 2, then recalculated Entry 2, then original
         # Priority: 1) AI-suggested Entry 2, 2) Recalculated Entry 2 (if Entry 1 was optimized), 3) Original Entry 2
+        # CRITICAL: Only use optimized Entry 2 if it's BETTER than original (lower for LONG, higher for SHORT)
+        original_entry2_price = second_entry_price if second_entry_price and second_entry_price > 0 else None
+        
         if 'optimized_prices' in validation_result and validation_result.get('optimized_prices', {}).get('second_entry_price'):
-            dca_entry_price = validation_result['optimized_prices']['second_entry_price']
-            # Check if this is AI-suggested (from AI validation) or recalculated (from Entry 1 optimization)
-            if 'suggested_second_entry_price' in validation_result.get('price_suggestions', {}):
-                logger.info(f"🔄 [PRICE UPDATE] Using AI-suggested Entry 2 (DCA): ${dca_entry_price:,.8f}")
+            optimized_entry2 = validation_result['optimized_prices']['second_entry_price']
+            
+            # Safety check: Only use optimized Entry 2 if it's better than original
+            if original_entry2_price:
+                if signal_side == 'LONG':
+                    # For LONG: Optimized Entry 2 must be LOWER than original (better entry)
+                    if optimized_entry2 < original_entry2_price:
+                        dca_entry_price = optimized_entry2
+                        if 'suggested_second_entry_price' in validation_result.get('price_suggestions', {}):
+                            logger.info(f"🔄 [PRICE UPDATE] Using AI-suggested Entry 2 (DCA): ${dca_entry_price:,.8f} (LOWER than original ${original_entry2_price:,.8f} - better for LONG)")
+                        else:
+                            logger.info(f"🔄 [PRICE UPDATE] Using recalculated Entry 2 (DCA): ${dca_entry_price:,.8f} (LOWER than original ${original_entry2_price:,.8f} - better for LONG)")
+                    else:
+                        logger.warning(f"⚠️  [PRICE UPDATE] Optimized Entry 2 ${optimized_entry2:,.8f} is NOT LOWER than original ${original_entry2_price:,.8f} - using original (better for LONG)")
+                        dca_entry_price = original_entry2_price
+                        logger.info(f"ℹ️  [PRICE] Using original Entry 2 (DCA): ${dca_entry_price:,.8f}")
+                else:  # SHORT
+                    # For SHORT: Optimized Entry 2 must be HIGHER than original (better entry)
+                    if optimized_entry2 > original_entry2_price:
+                        dca_entry_price = optimized_entry2
+                        if 'suggested_second_entry_price' in validation_result.get('price_suggestions', {}):
+                            logger.info(f"🔄 [PRICE UPDATE] Using AI-suggested Entry 2 (DCA): ${dca_entry_price:,.8f} (HIGHER than original ${original_entry2_price:,.8f} - better for SHORT)")
+                        else:
+                            logger.info(f"🔄 [PRICE UPDATE] Using recalculated Entry 2 (DCA): ${dca_entry_price:,.8f} (HIGHER than original ${original_entry2_price:,.8f} - better for SHORT)")
+                    else:
+                        logger.warning(f"⚠️  [PRICE UPDATE] Optimized Entry 2 ${optimized_entry2:,.8f} is NOT HIGHER than original ${original_entry2_price:,.8f} - using original (better for SHORT)")
+                        dca_entry_price = original_entry2_price
+                        logger.info(f"ℹ️  [PRICE] Using original Entry 2 (DCA): ${dca_entry_price:,.8f}")
             else:
-                logger.info(f"🔄 [PRICE UPDATE] Using recalculated Entry 2 (DCA): ${dca_entry_price:,.8f} (based on Entry 1 optimization)")
+                # No original Entry 2 - use optimized one
+                dca_entry_price = optimized_entry2
+                if 'suggested_second_entry_price' in validation_result.get('price_suggestions', {}):
+                    logger.info(f"🔄 [PRICE UPDATE] Using AI-suggested Entry 2 (DCA): ${dca_entry_price:,.8f} (original was missing)")
+                else:
+                    logger.info(f"🔄 [PRICE UPDATE] Using recalculated Entry 2 (DCA): ${dca_entry_price:,.8f} (original was missing)")
         else:
-            dca_entry_price = second_entry_price if second_entry_price and second_entry_price > 0 else None
+            dca_entry_price = original_entry2_price
             if dca_entry_price:
                 logger.info(f"ℹ️  [PRICE] Using original Entry 2 (DCA): ${dca_entry_price:,.8f}")
         
