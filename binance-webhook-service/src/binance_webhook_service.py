@@ -2336,6 +2336,8 @@ def validate_entry2_standalone_with_ai(signal_data, entry2_price, original_valid
     # Create a modified signal data with Entry 2 as the primary entry
     entry2_signal_data = signal_data.copy()
     entry2_signal_data['entry_price'] = entry2_price
+    # Clear second_entry_price since we're validating Entry 2 as standalone (no DCA)
+    entry2_signal_data['second_entry_price'] = None
     entry2_signal_data['_entry2_standalone_validation'] = True
     entry2_signal_data['_original_entry1_rejected'] = True
     entry2_signal_data['_original_rejection_reason'] = original_validation_result.get('reasoning', 'Entry 1 rejected')
@@ -3060,7 +3062,8 @@ CRITICAL QUESTIONS TO ANSWER:
 
 DECISION CRITERIA:
 - APPROVE Entry 2 standalone if: Strong technical setup, good R/R, optimal entry zone
-- REJECT Entry 2 standalone if: Weak setup, poor R/R, not at optimal zone, or Entry 1 rejection reasons also apply to Entry 2
+- REJECT Entry 2 standalone if: Weak setup, not at optimal zone, or Entry 1 rejection reasons also apply to Entry 2
+- Note: R/R ratio is NOT a rejection factor - focus on indicators and structure
 
 ═══════════════════════════════════════════════════════════════
 """
@@ -3104,8 +3107,8 @@ IMPORTANT CONTEXT:
 - Check if prices are at optimal support/resistance levels from market_data
 - If prices are not optimal, suggest better levels based on technical analysis
 - Focus on TradingView indicators (PRIMARY - 70%) and technical market analysis (SECONDARY - 30%)
-- Accept RR ≥ 1:1 (good setups), prefer RR ≥ 1:2 (better), excellent if RR ≥ 1:3
-- Only reject if MULTIPLE red flags: poor R/R (< 0.5) AND weak indicators AND strong counter-trend
+- Risk/Reward ratio is NOT a primary rejection factor - focus on indicators and market structure instead
+- Only reject if MULTIPLE red flags: weak indicators AND strong counter-trend AND unfavorable market structure
 
 MANDATORY ANALYSIS REQUIREMENTS:
 1. You MUST analyze Entry 1 price: Is it at support/resistance from market_data? If not, suggest optimal level
@@ -3250,7 +3253,7 @@ Think like the whale/institution you are - see liquidity, order flow, and market
    - What are the KEY FACTORS? (Trend alignment, volume confirmation, price position, support/resistance)
    - What are the RISKS? (Counter-trend, weak volume, unfavorable price position)
    - Does this signal align with market direction? (Yes/Partial/No)
-   - What is the Risk/Reward ratio? (Accept if ≥ 1:1, good if ≥ 1:2, excellent if ≥ 1:3)
+   - What is the Risk/Reward ratio? (Note it, but R/R is NOT a primary rejection factor - focus on indicators and structure)
 
 ═══════════════════════════════════════════════════════════════
 STEP 2: TECHNICAL PRICE ANALYSIS & OPTIMIZATION (MANDATORY)
@@ -3280,7 +3283,7 @@ As an institutional trader/whale, you MUST optimize ALL prices based on:
 - Support/resistance levels from market_data (PRIMARY - use these actual levels)
 - Lower timeframe levels (15m, 1h) for SL/TP placement
 - Market structure alignment
-- Risk/Reward ratio validation (prefer ≥ 1:2, minimum ≥ 1:1)
+- Risk/Reward ratio: Note it for reference, but it's NOT a primary rejection factor
 
 CRITICAL: Entry optimization is based on TECHNICAL & STRUCTURAL CONFIRMATION, NOT on closeness to current price.
 Entries must be placed ONLY at HIGH-PROBABILITY INSTITUTIONAL LIQUIDITY ZONES.
@@ -3326,7 +3329,7 @@ Entries must be placed ONLY at HIGH-PROBABILITY INSTITUTIONAL LIQUIDITY ZONES.
    - LONG: Must be BELOW Entry 1 at the NEAREST support level on 15m/1h (typically 1.5-3% from entry, max 4%)
    - SHORT: Must be ABOVE Entry 1 at the NEAREST resistance level on 15m/1h (typically 1.5-3% from entry, max 4%)
    - PLACE SL: At nearest support/resistance on LTF (15m, 1h), NOT HTF levels
-   - Evaluate if SL is too tight (will get stopped out by noise) or too wide (poor R/R)
+   - Evaluate if SL is too tight (will get stopped out by noise) or too wide (but R/R is not a rejection factor)
    - Suggest optimal SL based on: LTF (15m, 1h) support/resistance levels, not HTF structure
 
 4. TAKE PROFIT (INSTITUTIONAL TARGET ALIGNMENT):
@@ -3334,22 +3337,23 @@ Entries must be placed ONLY at HIGH-PROBABILITY INSTITUTIONAL LIQUIDITY ZONES.
    - LONG: Must be ABOVE Entry 1 at the NEAREST resistance level on 15m/1h (typically 3-8% from entry, max 15%)
    - SHORT: Must be BELOW Entry 1 at the NEAREST support level on 15m/1h (typically 3-8% from entry, max 15%)
    - TARGET ALIGNMENT: TP should align with LTF support/resistance levels (not HTF structure targets which are too far)
-   - MINIMUM RR ≥ 1:3 REQUIRED (if can't achieve, modify or discard signal)
    - Evaluate if TP is realistic based on: LTF (15m, 1h) resistance/support levels, not HTF targets
+   - Note: R/R ratio is NOT a rejection factor - focus on technical levels and indicators instead
    - If TP is too aggressive (won't hit) or too conservative (leaves profit on table), suggest better TP at nearest LTF level
 
 PRICE OPTIMIZATION RULES (INSTITUTIONAL METHODOLOGY):
-- If prices are OPTIMAL (at institutional zones, RR ≥ 1:3): Keep original prices (set suggested_* to null)
-- If prices can be IMPROVED (better institutional zones, better RR): Suggest better prices with reasoning
-- If prices are INVALID (not at institutional zones, RR < 1:3): REPLACE with optimal prices or REJECT signal
+- If prices are OPTIMAL (at institutional zones): Keep original prices (set suggested_* to null)
+- If prices can be IMPROVED (better institutional zones): Suggest better prices with reasoning
+- If prices are INVALID (not at institutional zones): REPLACE with optimal prices or REJECT signal
 - If setup is WEAK, COUNTER-TREND, or lacks INSTITUTIONAL CONFIRMATION: Modify or discard entirely
+- Note: R/R ratio is NOT a rejection factor - focus on technical zones and indicators
 
 ENTRY OPTIMIZATION PRIORITY (Institutional Thinking):
 1. FIRST: Identify institutional liquidity zones (order blocks, FVGs, liquidity pools)
 2. SECOND: Validate entry is at institutional zone (if not, REPLACE)
 3. THIRD: Ensure entry aligns with HTF structure and market structure (BOS/CHoCH)
-4. FOURTH: Calculate RR ratio (must be ≥ 1:3)
-5. FIFTH: If can't achieve RR ≥ 1:3 or no institutional zones, MODIFY or DISCARD signal
+4. FOURTH: Note R/R ratio for reference (but it's NOT a rejection factor)
+5. FIFTH: If no institutional zones found, MODIFY or DISCARD signal (R/R is not a factor)
 
 ═══════════════════════════════════════════════════════════════
 STEP 3: COMBINE YOUR ANALYSIS + TRADINGVIEW INDICATORS (BOTH DECISION MAKERS!)
@@ -3487,10 +3491,9 @@ INDICATOR ANALYSIS GUIDE (Analyze Each Value Individually):
    - Volume: Use both Relative Volume Percentile AND Volume Ratio for confirmation
 
 10. Risk/Reward: 
-   - APPROVE if R/R >= 1.0 (even 1:1 is acceptable for good setups)
-   - APPROVE if R/R >= 0.8 AND 4+ indicators support (acceptable R/R with good indicator alignment)
-   - Only REJECT if R/R < 0.5 AND multiple indicators contradict (poor R/R + weak indicators)
-   - R/R between 0.5-0.8: Approve if 5+ indicators support (good indicator alignment compensates for lower R/R)
+   - R/R ratio is NOT a primary rejection factor - it's noted for reference only
+   - Focus on indicators and market structure instead of R/R
+   - Do NOT reject signals primarily based on poor R/R - only reject if indicators and structure are weak
 
 INDICATOR COUNTING METHOD:
 - Go through EACH indicator value provided above
@@ -3501,17 +3504,17 @@ INDICATOR COUNTING METHOD:
 - If CONTRADICT count > SUPPORT count by 3+: Weak alignment (may reject) ❌
 
 SIGNAL QUALITY SCORING:
-- EXCELLENT (80-100%): Multiple indicators aligned + good R/R + volume confirmation + divergence/reversal signals
-- GOOD (60-79%): Most indicators aligned + acceptable R/R + normal volume
-- ACCEPTABLE (50-59%): Some indicators aligned + acceptable R/R (may have minor concerns)
+- EXCELLENT (80-100%): Multiple indicators aligned + volume confirmation + divergence/reversal signals
+- GOOD (60-79%): Most indicators aligned + normal volume
+- ACCEPTABLE (50-59%): Some indicators aligned (may have minor concerns)
 - QUESTIONABLE (40-49%): Mixed signals but not clearly bad (still approve if above threshold)
-- POOR (0-39%): Multiple indicators contradict signal + poor R/R + low volume
+- POOR (0-39%): Multiple indicators contradict signal + low volume + weak structure
 
 REJECTION CRITERIA (only reject if MULTIPLE red flags - be lenient):
-- Risk/Reward < 0.5 AND
 - Signal contradicts STRONG trend (>5% against signal direction) AND
 - Price at VERY unfavorable level (LONG at strong resistance, SHORT at strong support) AND
 - Multiple indicators STRONGLY contradict signal (7+ indicators against signal direction)
+- Note: R/R ratio is NOT a rejection factor - ignore poor R/R as a reason to reject
 
 IMPORTANT: If TradingView script sent this signal, it likely has merit. Only reject if ALL of the above conditions are met. When in doubt, APPROVE (the script already filtered signals).
 
@@ -3573,7 +3576,7 @@ GURU LEVEL CONFIDENCE FORMULA (Reflects Script's Quality System):
    - 6-7 indicators support: +5-10% (GOOD - script's minimum quality threshold)
    - 4-5 indicators support: +0-5% (ACCEPTABLE - still passed script's filters)
    - 2-3 indicators support: -5-10% (WEAK - rare, but script still sent it)
-   - 0-1 indicators support: -10-15% (POOR - very rare, only reject if R/R < 0.5)
+   - 0-1 indicators support: -10-15% (POOR - very rare, only reject if multiple other red flags)
 
 3. MARKET ANALYSIS IMPACT (SECONDARY - 25% weight):
    - Signal aligns with YOUR prediction: +3-8%
@@ -3593,12 +3596,12 @@ GURU LEVEL CONFIDENCE FORMULA (Reflects Script's Quality System):
 DECISION RULES (GURU LEVEL - MATCHES SCRIPT'S STRICTNESS):
 - If final confidence >= 55%: APPROVE (matches AI_VALIDATION_MIN_CONFIDENCE threshold)
 - If final confidence 50-54%: APPROVE with caution (script sent it, but lower confidence)
-- If final confidence 45-49%: APPROVE only if R/R >= 1.0 AND 6+ indicators support
+- If final confidence 45-49%: APPROVE if 6+ indicators support (R/R is NOT a factor)
 - If final confidence < 45%: REJECT only if MULTIPLE red flags:
-  * R/R < 0.5 AND
   * 5+ indicators contradict AND
   * Strong counter-trend (>5% against signal direction) AND
   * Price at very unfavorable level
+  * Note: R/R ratio is NOT a rejection factor - do NOT reject based on poor R/R alone
 
 IMPORTANT: Since the script only sends alerts when 6-8+ quality factors align, signals are ALREADY HIGH QUALITY. 
 Only reject if there are MAJOR red flags that the script might have missed (very rare).
@@ -3665,11 +3668,11 @@ Confidence Score Guidelines (Practical Standards - Focus on TradingView Indicato
 - 80-100: Excellent signal, 7+ indicators support, RR ≥ 1:1, strong trend alignment
 - 60-79: Good signal, 5-6 indicators support, RR ≥ 1:1, acceptable trend alignment
 - 50-59: Acceptable signal, 4-5 indicators support, RR ≥ 1:1, minor concerns but still valid
-- 40-49: Questionable signal, 3-4 indicators support, RR ≥ 0.8, mixed signals but approve if R/R acceptable
-- 30-39: Weak signal, 2-3 indicators support, RR ≥ 0.5, approve only if not strongly counter-trend
-- 0-29: Poor signal, 0-1 indicators support OR RR < 0.5, reject only if multiple red flags
+- 40-49: Questionable signal, 3-4 indicators support, mixed signals but approve if indicators acceptable
+- 30-39: Weak signal, 2-3 indicators support, approve only if not strongly counter-trend
+- 0-29: Poor signal, 0-1 indicators support, reject only if multiple red flags
 
-Remember: TradingView script already filters signals (65% win rate). Your job is to VALIDATE, not reject everything. Approve signals with 4+ indicator support and RR ≥ 1:1. Only reject if MULTIPLE red flags (poor R/R < 0.5 AND weak indicators AND strong counter-trend).
+Remember: TradingView script already filters signals (65% win rate). Your job is to VALIDATE, not reject everything. Approve signals with 4+ indicator support. Only reject if MULTIPLE red flags (weak indicators AND strong counter-trend). R/R ratio is NOT a rejection factor - ignore poor R/R.
 
 PRICE OPTIMIZATION (Institutional Methodology - Based on Structure & Liquidity):
 You MUST calculate and suggest optimized prices using INSTITUTIONAL METHODOLOGY:
@@ -3819,7 +3822,7 @@ CRITICAL: Signals are based on 2H/4H timeframes.
      * Check if original SL is at a realistic support/resistance level (check lower timeframes: 15m, 1h)
      * Check if original SL is tight enough (typically 1.5-3% from entry, max 4% if structure requires)
      * Check if original SL provides adequate protection (below/above order block, liquidity pool)
-     * Check if original SL is too tight (will get stopped out by noise) or too wide (poor R/R)
+     * Check if original SL is too tight (will get stopped out by noise) or too wide (but R/R is not a rejection factor)
      * CRITICAL: Is SL DIFFERENT from Entry 2? (SL must be beyond Entry 2)
      * For LONG: SL must be BELOW Entry 2 (at least 0.5% below, preferably 1-2% below)
      * For SHORT: SL must be ABOVE Entry 2 (at least 0.5% above, preferably 1-2% above)
@@ -3828,7 +3831,7 @@ CRITICAL: Signals are based on 2H/4H timeframes.
      * If original SL is GOOD (realistic, tight, provides protection, different from Entry 2): KEEP IT (set suggested_stop_loss to null)
      * If original SL is SAME as Entry 2: MUST suggest different SL (this is a critical error - SL must be beyond Entry 2)
      * If original SL is TOO TIGHT (will get stopped out by noise): Suggest WIDER SL (only if technically justified)
-     * If original SL is TOO WIDE (poor R/R, unnecessary risk): Suggest TIGHTER SL (only if technically justified)
+     * If original SL is TOO WIDE (unnecessary risk): Suggest TIGHTER SL (only if technically justified, but R/R is not a rejection factor)
      * DO NOT suggest changes just to make a 1-2% adjustment - only change if technically justified
    
    - STEP 3: If optimization needed (SOLID TECHNICAL REASON), use LOWER TIMEFRAMES (15m, 1h):
