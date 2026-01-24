@@ -2580,6 +2580,108 @@ def validate_signal_with_ai(signal_data):
             except Exception as e:
                 logger.debug(f"Could not fetch klines for {symbol}: {e}")
                 market_data['klines_error'] = str(e)
+            
+            # Fetch funding rate data (critical for signal validation)
+            try:
+                # Get current funding rate
+                funding_info = client.futures_funding_rate(symbol=symbol, limit=1)
+                if funding_info and len(funding_info) > 0:
+                    current_funding = float(funding_info[0].get('fundingRate', 0))
+                    market_data['funding_rate'] = current_funding
+                    market_data['funding_rate_pct'] = current_funding * 100  # Convert to percentage
+                    
+                    # Get historical funding rates (last 24 periods = 3 days to analyze frequency)
+                    historical_funding = client.futures_funding_rate(symbol=symbol, limit=24)
+                    if historical_funding and len(historical_funding) > 0:
+                        funding_rates = [float(f.get('fundingRate', 0)) for f in historical_funding]
+                        funding_timestamps = [int(f.get('fundingTime', 0)) for f in historical_funding]
+                        avg_funding = sum(funding_rates) / len(funding_rates) if funding_rates else 0
+                        max_funding = max(funding_rates) if funding_rates else 0
+                        min_funding = min(funding_rates) if funding_rates else 0
+                        
+                        market_data['funding_rate_24h_avg'] = avg_funding
+                        market_data['funding_rate_24h_avg_pct'] = avg_funding * 100
+                        market_data['funding_rate_24h_max'] = max_funding
+                        market_data['funding_rate_24h_max_pct'] = max_funding * 100
+                        market_data['funding_rate_24h_min'] = min_funding
+                        market_data['funding_rate_24h_min_pct'] = min_funding * 100
+                        
+                        # Analyze funding rate frequency and consistency
+                        # Check if funding is consistently high (accumulating) vs occasional
+                        # Count how many periods have significant funding (same direction as current)
+                        if current_funding > 0:
+                            # For positive funding, count how many periods are positive
+                            significant_periods = sum(1 for fr in funding_rates if fr > 0.0001)  # >0.01% per 8h
+                            consistent_positive = significant_periods >= len(funding_rates) * 0.6  # 60%+ periods positive
+                        elif current_funding < 0:
+                            # For negative funding, count how many periods are negative
+                            significant_periods = sum(1 for fr in funding_rates if fr < -0.0001)  # <-0.01% per 8h
+                            consistent_negative = significant_periods >= len(funding_rates) * 0.6  # 60%+ periods negative
+                        else:
+                            consistent_positive = False
+                            consistent_negative = False
+                        
+                        # Calculate funding consistency (how often it's in the same direction)
+                        if current_funding > 0:
+                            same_direction_count = sum(1 for fr in funding_rates if fr > 0)
+                            funding_consistency = same_direction_count / len(funding_rates) if funding_rates else 0
+                            market_data['funding_consistency'] = funding_consistency
+                            market_data['funding_is_accumulating'] = funding_consistency >= 0.6  # 60%+ in same direction
+                        elif current_funding < 0:
+                            same_direction_count = sum(1 for fr in funding_rates if fr < 0)
+                            funding_consistency = same_direction_count / len(funding_rates) if funding_rates else 0
+                            market_data['funding_consistency'] = funding_consistency
+                            market_data['funding_is_accumulating'] = funding_consistency >= 0.6  # 60%+ in same direction
+                        else:
+                            market_data['funding_consistency'] = 0
+                            market_data['funding_is_accumulating'] = False
+                        
+                        # Calculate estimated daily funding cost (if position held for 24h)
+                        # Funding happens every 8 hours, so 3 times per day
+                        # If funding is consistent, multiply by 3 for daily cost estimate
+                        if market_data.get('funding_is_accumulating', False):
+                            # If accumulating, estimate higher cost (use current funding)
+                            estimated_daily_funding = abs(current_funding) * 3  # 3 funding periods per day
+                        else:
+                            # If occasional, use average (less frequent, lower cost)
+                            estimated_daily_funding = abs(avg_funding) * 3
+                        
+                        market_data['estimated_daily_funding'] = estimated_daily_funding
+                        market_data['estimated_daily_funding_pct'] = estimated_daily_funding * 100  # Convert to percentage
+                        
+                        # Determine funding rate status with frequency consideration
+                        # Extreme thresholds: >0.1% (0.001) = very positive, <-0.1% = very negative
+                        if current_funding > 0.001:  # >0.1% per 8h = very positive
+                            market_data['funding_rate_status'] = 'EXTREMELY_POSITIVE'
+                            market_data['funding_rate_risk'] = 'HIGH'  # Market heavily longed, reversal risk
+                        elif current_funding > 0.0005:  # >0.05% per 8h = positive
+                            market_data['funding_rate_status'] = 'POSITIVE'
+                            market_data['funding_rate_risk'] = 'MODERATE'
+                        elif current_funding < -0.001:  # <-0.1% per 8h = very negative
+                            market_data['funding_rate_status'] = 'EXTREMELY_NEGATIVE'
+                            market_data['funding_rate_risk'] = 'HIGH'  # Market heavily shorted, reversal risk
+                        elif current_funding < -0.0005:  # <-0.05% per 8h = negative
+                            market_data['funding_rate_status'] = 'NEGATIVE'
+                            market_data['funding_rate_risk'] = 'MODERATE'
+                        else:  # Between -0.05% and 0.05%
+                            market_data['funding_rate_status'] = 'NEUTRAL'
+                            market_data['funding_rate_risk'] = 'LOW'
+                        
+                        # Funding rate trend (increasing/decreasing)
+                        if len(funding_rates) >= 2:
+                            recent_avg = sum(funding_rates[:3]) / min(3, len(funding_rates))
+                            older_avg = sum(funding_rates[3:]) / max(1, len(funding_rates) - 3)
+                            if recent_avg > older_avg * 1.2:
+                                market_data['funding_rate_trend'] = 'INCREASING'
+                            elif recent_avg < older_avg * 0.8:
+                                market_data['funding_rate_trend'] = 'DECREASING'
+                            else:
+                                market_data['funding_rate_trend'] = 'STABLE'
+                    
+                    logger.debug(f"📊 Funding rate for {symbol}: {current_funding*100:.4f}% (Status: {market_data.get('funding_rate_status', 'UNKNOWN')})")
+            except Exception as e:
+                logger.debug(f"Could not fetch funding rate for {symbol}: {e}")
+                market_data['funding_rate_error'] = str(e)
     except Exception as e:
         logger.debug(f"Could not fetch market data for {symbol}: {e}")
         market_data['error'] = str(e)
@@ -2640,6 +2742,54 @@ TRADINGVIEW INDICATOR VALUES (from your script):
     # Build prompt for AI - Enhanced with real market data AND indicator values for technical analysis
     market_info = ""
     if market_data.get('current_price'):
+        # Build funding rate warning message (combines magnitude + frequency + timeframe)
+        funding_warning = ""
+        if market_data.get('funding_rate') is not None:
+            current_funding = market_data.get('funding_rate', 0)
+            is_accumulating = market_data.get('funding_is_accumulating', False)
+            is_1h = timeframe and '1h' in timeframe.lower()
+            estimated_daily = market_data.get('estimated_daily_funding_pct', 0)  # Already in percentage
+            
+            if signal_side == 'SHORT' and current_funding < 0:
+                if is_accumulating:
+                    if is_1h:
+                        funding_warning = f"🚨 CRITICAL RED FLAG: SHORT signal (1H) with NEGATIVE funding (ACCUMULATING) = Market already shorted + HIGH COST ({estimated_daily:.4f}% daily) = STRONG REJECTION SIGNAL"
+                    else:
+                        funding_warning = f"🚨 MAJOR RED FLAG: SHORT signal with NEGATIVE funding (ACCUMULATING) = Market already shorted + HIGH COST ({estimated_daily:.4f}% daily) = LOWER CONFIDENCE or REJECT"
+                else:
+                    # Occasional funding - might be acceptable with strong factors
+                    if abs(current_funding) < 0.0003:  # <0.03% per 8h
+                        funding_warning = f"⚠️ MODERATE CONCERN: SHORT signal with NEGATIVE funding (OCCASIONAL, small) = Can pass with STRONG other factors (8+ indicators, perfect structure)"
+                    else:
+                        funding_warning = f"⚠️ CONCERN: SHORT signal with NEGATIVE funding (OCCASIONAL) = Lower confidence but can pass with strong factors"
+            elif signal_side == 'LONG' and current_funding > 0:
+                if is_accumulating:
+                    if is_1h:
+                        funding_warning = f"🚨 CRITICAL RED FLAG: LONG signal (1H) with POSITIVE funding (ACCUMULATING) = Market already longed + HIGH COST ({estimated_daily:.4f}% daily) = STRONG REJECTION SIGNAL"
+                    else:
+                        funding_warning = f"🚨 MAJOR RED FLAG: LONG signal with POSITIVE funding (ACCUMULATING) = Market already longed + HIGH COST ({estimated_daily:.4f}% daily) = LOWER CONFIDENCE or REJECT"
+                else:
+                    # Occasional funding - might be acceptable with strong factors
+                    if abs(current_funding) < 0.0003:  # <0.03% per 8h
+                        funding_warning = f"⚠️ MODERATE CONCERN: LONG signal with POSITIVE funding (OCCASIONAL, small) = Can pass with STRONG other factors (8+ indicators, perfect structure)"
+                    else:
+                        funding_warning = f"⚠️ CONCERN: LONG signal with POSITIVE funding (OCCASIONAL) = Lower confidence but can pass with strong factors"
+            else:
+                funding_warning = "✅ FAVORABLE: Funding rate aligns with signal direction"
+        else:
+            funding_warning = "⚠️ Funding rate data unavailable"
+        
+        # Determine funding rate direction
+        funding_direction = "N/A"
+        if market_data.get('funding_rate') is not None:
+            current_funding = market_data.get('funding_rate', 0)
+            if current_funding < 0:
+                funding_direction = "NEGATIVE"
+            elif current_funding > 0:
+                funding_direction = "POSITIVE"
+            else:
+                funding_direction = "NEUTRAL"
+        
         market_info = f"""
 ═══════════════════════════════════════════════════════════════
 REAL-TIME MARKET DATA (from Binance API) - FOR YOUR INDEPENDENT ANALYSIS:
@@ -2675,6 +2825,22 @@ VOLUME ANALYSIS:
 MOMENTUM & VOLATILITY:
 - Price Momentum: {market_data.get('momentum_direction', 'N/A')} ({market_data.get('momentum_pct', 0):+.2f}%)
 - Volatility: {market_data.get('volatility_status', 'N/A')} ({market_data.get('volatility_pct', 0):.2f}%)
+
+FUNDING RATE ANALYSIS (CRITICAL FOR SIGNAL VALIDATION - PRIMARY REJECTION FACTOR):
+⚠️ CURRENT FUNDING RATE + FREQUENCY + TIMEFRAME = COMBINED DECISION ⚠️
+- Current Funding Rate: {(f"{market_data.get('funding_rate_pct', 0):.4f}%" if market_data.get('funding_rate') is not None else 'N/A')} per 8h
+- Funding Rate Status: {market_data.get('funding_rate_status', 'N/A')}
+- Funding Rate Risk: {market_data.get('funding_rate_risk', 'N/A')}
+- Funding Rate Trend: {market_data.get('funding_rate_trend', 'N/A')}
+- Funding Consistency: {(f"{market_data.get('funding_consistency', 0)*100:.1f}%" if market_data.get('funding_consistency') is not None else 'N/A')} (how often in same direction)
+- Funding Is Accumulating: {'YES - Consistent funding (HIGH COST RISK)' if market_data.get('funding_is_accumulating', False) else 'NO - Occasional funding (lower cost)' if market_data.get('funding_is_accumulating') is not None else 'N/A'}
+- Estimated Daily Funding Cost: {(f"{market_data.get('estimated_daily_funding_pct', 0):.4f}%" if market_data.get('estimated_daily_funding_pct') is not None else 'N/A')} (if position held 24h)
+- 24h Average Funding: {(f"{market_data.get('funding_rate_24h_avg_pct', 0):.4f}%" if market_data.get('funding_rate_24h_avg') is not None else 'N/A')}
+- 24h Max Funding: {(f"{market_data.get('funding_rate_24h_max_pct', 0):.4f}%" if market_data.get('funding_rate_24h_max') is not None else 'N/A')}
+- 24h Min Funding: {(f"{market_data.get('funding_rate_24h_min_pct', 0):.4f}%" if market_data.get('funding_rate_24h_min') is not None else 'N/A')}
+- Signal Timeframe: {timeframe} {'⚠️ 1H TIMEFRAME - FUNDING VALIDATION IS EVEN MORE CRITICAL' if timeframe and '1h' in timeframe.lower() else ''}
+- ⚠️ CRITICAL VALIDATION: For {signal_side} signal, CURRENT funding rate is {funding_direction}
+- ⚠️ {funding_warning}
 
 PRICE ACTION PATTERNS:
 - Pattern: {market_data.get('price_pattern', 'N/A')} (Higher Highs/Higher Lows = Bullish, Lower Highs/Lower Lows = Bearish)
@@ -2775,18 +2941,91 @@ Think like the whale/institution you are - see liquidity, order flow, and market
    - VOLUME PROFILE: Is volume INCREASING on moves in trend direction? (Institutional accumulation)
    - VOLUME DIVERGENCE: Is volume CONFIRMING or DIVERGING from price? (Divergence = warning)
    - OPEN INTEREST (OI): Is OI increasing or decreasing? (Increasing OI = institutional interest)
-   - FUNDING RATES: What are funding rates? (Extreme funding = potential reversal)
    - SMART MONEY: Are institutions buying or selling? (Use Smart Money indicators)
    - ACCUMULATION/DISTRIBUTION: Are institutions accumulating or distributing? (This determines direction)
 
-6. MOMENTUM & VOLATILITY (Institutional Perspective):
+6. FUNDING RATE ANALYSIS (CRITICAL FOR SIGNAL VALIDATION - PRIMARY REJECTION FACTOR):
+   ⚠️ THIS IS A PRIMARY CONCERN - FUNDING RATE CAN REJECT SIGNALS ⚠️
+   
+   - CURRENT FUNDING RATE: Check the CURRENT funding rate from market_data (this is the most important)
+   - FUNDING RATE STATUS: Is it EXTREMELY_POSITIVE, POSITIVE, NEUTRAL, NEGATIVE, or EXTREMELY_NEGATIVE?
+   - FUNDING FREQUENCY: Check if funding is ACCUMULATING (consistent, every period) or OCCASIONAL (infrequent)
+   - FUNDING IS ACCUMULATING: If funding_is_accumulating = True, funding is consistent (high cost risk)
+   - ESTIMATED DAILY COST: Check estimated_daily_funding_pct (if high, you'll pay a lot)
+   
+   CRITICAL VALIDATION RULES (COMBINE TIMEFRAME + FUNDING MAGNITUDE + FREQUENCY):
+   
+   * For SHORT signals:
+     - If CURRENT funding rate is NEGATIVE (shorts paying longs):
+       → Check if funding_is_accumulating (consistent negative funding)
+       → If ACCUMULATING (consistent): Market is ALREADY heavily shorted = HIGH SQUEEZE RISK + HIGH COST
+         → This is a MAJOR RED FLAG - LOWER CONFIDENCE SIGNIFICANTLY or REJECT
+         → For 1H timeframe: EVEN MORE CRITICAL - STRONG REJECTION SIGNAL
+         → Example: SHORT signal (1H) with -0.05% funding (accumulating) = REJECT or CONFIDENCE -25%
+       → If OCCASIONAL (small, infrequent): Might be acceptable with other STRONG factors
+         → Check estimated_daily_funding_pct - if <0.1% daily, might pass with strong indicators
+         → Example: SHORT signal with -0.02% funding (occasional, not accumulating) = Lower confidence -10% but can pass
+     - If CURRENT funding rate is EXTREMELY_NEGATIVE (<-0.1%): 
+       → Market is EXTREMELY shorted = VERY HIGH SQUEEZE RISK
+       → This is a CRITICAL RED FLAG - STRONGLY CONSIDER REJECTION (regardless of frequency)
+       → Example: SHORT signal with -0.15% funding = REJECT (unless other factors are extremely strong)
+     - If CURRENT funding rate is POSITIVE or EXTREMELY_POSITIVE: 
+       → FAVORABLE for SHORT (longs paying shorts) = Market not yet shorted = GOOD
+   
+   * For LONG signals:
+     - If CURRENT funding rate is POSITIVE (longs paying shorts):
+       → Check if funding_is_accumulating (consistent positive funding)
+       → If ACCUMULATING (consistent): Market is ALREADY heavily longed = HIGH REVERSAL RISK + HIGH COST
+         → This is a MAJOR RED FLAG - LOWER CONFIDENCE SIGNIFICANTLY or REJECT
+         → For 1H timeframe: EVEN MORE CRITICAL - STRONG REJECTION SIGNAL
+         → Example: LONG signal (1H) with +0.05% funding (accumulating) = REJECT or CONFIDENCE -25%
+       → If OCCASIONAL (small, infrequent): Might be acceptable with other STRONG factors
+         → Check estimated_daily_funding_pct - if <0.1% daily, might pass with strong indicators
+         → Example: LONG signal with +0.02% funding (occasional, not accumulating) = Lower confidence -10% but can pass
+     - If CURRENT funding rate is EXTREMELY_POSITIVE (>0.1%): 
+       → Market is EXTREMELY longed = VERY HIGH REVERSAL RISK
+       → This is a CRITICAL RED FLAG - STRONGLY CONSIDER REJECTION (regardless of frequency)
+       → Example: LONG signal with +0.15% funding = REJECT (unless other factors are extremely strong)
+     - If CURRENT funding rate is NEGATIVE or EXTREMELY_NEGATIVE: 
+       → FAVORABLE for LONG (shorts paying longs) = Market not yet longed = GOOD
+   
+   TIMEFRAME + FUNDING COMBINATION (CRITICAL):
+   - For 1H timeframe signals: Funding rate validation is EVEN MORE CRITICAL
+   - 1H + Contradictory funding + Accumulating = STRONG REJECTION SIGNAL
+   - 1H + Contradictory funding + Occasional (small) = Can pass with STRONG other factors (8+ indicators, perfect structure)
+   - For longer timeframes (4H, 1D): Still important but slightly less critical
+   - 4H/1D + Contradictory funding + Accumulating = Moderate concern, lower confidence
+   - 4H/1D + Contradictory funding + Occasional = Minor concern, small confidence reduction
+   
+   CONFIDENCE ADJUSTMENT (COMBINED FACTORS):
+   - SHORT signal (1H) + NEGATIVE funding + ACCUMULATING: CONFIDENCE -25% to -35% (or REJECT)
+   - LONG signal (1H) + POSITIVE funding + ACCUMULATING: CONFIDENCE -25% to -35% (or REJECT)
+   - SHORT signal (1H) + NEGATIVE funding + OCCASIONAL (small): CONFIDENCE -10% to -15% (can pass with strong factors)
+   - LONG signal (1H) + POSITIVE funding + OCCASIONAL (small): CONFIDENCE -10% to -15% (can pass with strong factors)
+   - SHORT signal (4H/1D) + NEGATIVE funding + ACCUMULATING: CONFIDENCE -15% to -20%
+   - LONG signal (4H/1D) + POSITIVE funding + ACCUMULATING: CONFIDENCE -15% to -20%
+   - EXTREME funding (very negative/positive): CONFIDENCE -30% to -40% (or REJECT)
+   
+   DECISION LOGIC (PRIORITY ORDER):
+   1. If funding is EXTREME (>0.1% or <-0.1%) AND contradicts signal: STRONG REJECTION (unless all factors extremely strong)
+   2. If funding contradicts signal + ACCUMULATING + 1H timeframe: STRONG REJECTION or CONFIDENCE -25%
+   3. If funding contradicts signal + ACCUMULATING + 4H/1D timeframe: Lower confidence -15% to -20%
+   4. If funding contradicts signal + OCCASIONAL (small) + 1H timeframe: Lower confidence -10% to -15% (can pass with strong factors)
+   5. If funding contradicts signal + OCCASIONAL (small) + 4H/1D timeframe: Lower confidence -5% to -10% (can pass)
+   6. If funding aligns with signal direction: FAVORABLE (no penalty, may even boost confidence)
+   
+   MAIN CONCERN: Don't want to pay too much in funding costs
+   - If estimated_daily_funding_pct > 0.15%: HIGH COST RISK - factor into decision
+   - If estimated_daily_funding_pct < 0.1%: Acceptable cost - less concern
+
+7. MOMENTUM & VOLATILITY (Institutional Perspective):
    - MOMENTUM STRENGTH: Is momentum STRONG or WEAK? (Strong momentum = institutional participation)
    - VOLATILITY EXPANSION: Is volatility EXPANDING or CONTRACTING? (Expanding = big move coming)
    - PRICE PATTERNS: Higher highs/higher lows (bullish) vs Lower highs/lower lows (bearish)
    - DIVERGENCE: Price vs indicators divergence? (Divergence = potential reversal)
    - MARKET TEMPERATURE: Is the market ready for a move? (Hot = high probability, Cold = low probability)
 
-7. YOUR MARKET DIRECTION PREDICTION (Based on Available Data):
+8. YOUR MARKET DIRECTION PREDICTION (Based on Available Data):
    Based on AVAILABLE MARKET DATA (trend, volume, price position, support/resistance):
    - What direction is the market MOST LIKELY to move? (UP/DOWN/SIDEWAYS)
    - How CONFIDENT are you? (High/Medium/Low) - Be honest based on available data
