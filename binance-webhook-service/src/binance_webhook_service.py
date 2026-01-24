@@ -4489,57 +4489,14 @@ def create_limit_order(signal_data):
             entry1_is_bad, entry2_is_good_from_parsing = parse_entry_analysis_from_reasoning(reasoning)
             has_high_volatility, price_change_pct = check_recent_price_volatility(symbol, days=7)
             
-            # CRITICAL: Check if funding rate is accumulating hourly and contradicting signal direction
-            # If funding is accumulating (every 1h) and contradicting, skip Entry 1 and use Entry 2 only ($20)
-            funding_contradicts_and_accumulating = False
-            try:
-                if client:
-                    # Get current funding rate
-                    funding_info = client.futures_funding_rate(symbol=symbol, limit=1)
-                    if funding_info and len(funding_info) > 0:
-                        current_funding = float(funding_info[0].get('fundingRate', 0))
-                        
-                        # Get historical funding rates to check accumulation (last 24 periods = 3 days)
-                        historical_funding = client.futures_funding_rate(symbol=symbol, limit=24)
-                        if historical_funding and len(historical_funding) > 0:
-                            funding_rates = [float(f.get('fundingRate', 0)) for f in historical_funding]
-                            
-                            # Check if funding is accumulating (consistent in same direction)
-                            if current_funding > 0:
-                                same_direction_count = sum(1 for fr in funding_rates if fr > 0)
-                                funding_consistency = same_direction_count / len(funding_rates) if funding_rates else 0
-                                funding_is_accumulating = funding_consistency >= 0.6  # 60%+ in same direction
-                            elif current_funding < 0:
-                                same_direction_count = sum(1 for fr in funding_rates if fr < 0)
-                                funding_consistency = same_direction_count / len(funding_rates) if funding_rates else 0
-                                funding_is_accumulating = funding_consistency >= 0.6  # 60%+ in same direction
-                            else:
-                                funding_is_accumulating = False
-                            
-                            # Check if funding contradicts signal AND is accumulating
-                            # SHORT signal with negative funding (accumulating) = contradicting (paying every hour)
-                            # LONG signal with positive funding (accumulating) = contradicting (paying every hour)
-                            if funding_is_accumulating:
-                                if signal_side == 'SHORT' and current_funding < 0:
-                                    funding_contradicts_and_accumulating = True
-                                    logger.warning(f"🚨 FUNDING RATE ALERT: SHORT signal with NEGATIVE funding (ACCUMULATING {funding_consistency*100:.1f}%) = Paying every hour - Will skip Entry 1, use Entry 2 only")
-                                elif signal_side == 'LONG' and current_funding > 0:
-                                    funding_contradicts_and_accumulating = True
-                                    logger.warning(f"🚨 FUNDING RATE ALERT: LONG signal with POSITIVE funding (ACCUMULATING {funding_consistency*100:.1f}%) = Paying every hour - Will skip Entry 1, use Entry 2 only")
-            except Exception as e:
-                logger.debug(f"Could not check funding rate accumulation: {e}")
-            
             # Check if Entry 1 failed validation
             # Entry 1 fails ONLY if: is_valid=False (explicitly rejected by AI)
-            # OR if funding contradicts and is accumulating (skip Entry 1, use Entry 2 only)
             # NOTE: If is_valid=True, Entry 1 is approved and will proceed (even if confidence is 45-49%, approval logic handles it)
             # NOTE: Parsing result (entry1_is_bad) is only used as additional context, not to determine failure
             # If Entry 1 is approved with good confidence, ignore parsing result (parsing can have false positives)
-            entry1_failed = not is_valid or funding_contradicts_and_accumulating  # Fail if AI rejects OR funding contradicts and accumulating
+            entry1_failed = not is_valid  # Only fail if AI explicitly rejects (is_valid=False)
             # Only add parsing result if Entry 1 is already failing
-            if entry1_failed and funding_contradicts_and_accumulating:
-                logger.info(f"   Entry 1 skipped due to funding rate (accumulating and contradicting) - will check Entry 2 only")
-            elif entry1_failed and entry1_is_bad:
+            if entry1_failed and entry1_is_bad:
                 logger.info(f"   Entry 1 failed AND parsing detected Entry 1 as bad - will check Entry 2")
             elif entry1_failed:
                 logger.info(f"   Entry 1 failed (is_valid={is_valid}, confidence={confidence_score:.1f}%) - will check Entry 2")
@@ -4565,11 +4522,8 @@ def create_limit_order(signal_data):
             entry2_price_to_use = None
             
             if entry1_failed and (entry2_price_original is not None or entry2_price_optimized is not None):
-                if funding_contradicts_and_accumulating:
-                    logger.info(f"🔍 Entry 1 skipped due to funding rate (accumulating and contradicting) - checking Entry 2 as standalone trade")
-                else:
-                    logger.info(f"🔍 Entry 1 failed validation (is_valid={is_valid}, confidence={confidence_score:.1f}%, parsed_bad={entry1_is_bad})")
-                    logger.info(f"   Checking Entry 2 as standalone trade to avoid missing profitable trades")
+                logger.info(f"🔍 Entry 1 failed validation (is_valid={is_valid}, confidence={confidence_score:.1f}%, parsed_bad={entry1_is_bad})")
+                logger.info(f"   Checking Entry 2 as standalone trade to avoid missing profitable trades")
                 
                 # Try Entry 2 with ORIGINAL price first
                 if entry2_price_original is not None:
@@ -4629,12 +4583,8 @@ def create_limit_order(signal_data):
             
             if should_use_entry2_only:
                 entry2_confidence = entry2_standalone_result.get('confidence_score', 60.0)
-                if funding_contradicts_and_accumulating:
-                    logger.info(f"🎯 SPECIAL CASE DETECTED: Entry 1 skipped (funding rate accumulating and contradicting) but Entry 2 APPROVED by AI as standalone trade for {symbol}")
-                    logger.info(f"   Entry 1 Analysis: Skipped due to funding rate (accumulating and contradicting - paying every hour)")
-                else:
-                    logger.info(f"🎯 SPECIAL CASE DETECTED: Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade for {symbol}")
-                    logger.info(f"   Entry 1 Analysis: Rejected (is_valid={is_valid}, confidence={confidence_score:.1f}%)")
+                logger.info(f"🎯 SPECIAL CASE DETECTED: Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade for {symbol}")
+                logger.info(f"   Entry 1 Analysis: Rejected (is_valid={is_valid}, confidence={confidence_score:.1f}%)")
                 logger.info(f"   Entry 2 Standalone Validation: ✅ APPROVED by AI")
                 logger.info(f"   Entry 2 Price: ${entry2_price_to_use:,.8f} ({'OPTIMIZED' if entry2_price_to_use == entry2_price_optimized else 'ORIGINAL'})")
                 logger.info(f"   Entry 2 Confidence: {entry2_confidence:.1f}%")
@@ -4693,13 +4643,8 @@ def create_limit_order(signal_data):
                         logger.warning(f"⚠️  Edge case: Entry 2 passed but conditions not met")
                 else:
                     # Entry 1 failed and no Entry 2 available
-                    if funding_contradicts_and_accumulating:
-                        rejection_reason = f"Signal REJECTED: Funding rate accumulating and contradicting signal direction (paying every hour) AND no Entry 2 available to use as alternative"
-                        logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
-                        logger.info(f"   Funding rate is accumulating and contradicting - Entry 1 skipped, but Entry 2 not available")
-                    else:
-                        rejection_reason = f"Confidence score {confidence_score:.1f}% is below acceptable threshold (AI: is_valid={is_valid}, threshold: {confidence_threshold}%)"
-                        logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
+                    rejection_reason = f"Confidence score {confidence_score:.1f}% is below acceptable threshold (AI: is_valid={is_valid}, threshold: {confidence_threshold}%)"
+                    logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
                 logger.info(f"   Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
                 logger.info(f"   Risk Level: {validation_result.get('risk_level', 'UNKNOWN')}")
                 
