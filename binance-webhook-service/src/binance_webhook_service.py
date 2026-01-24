@@ -12,6 +12,7 @@ import hmac
 import hashlib
 import time
 import math
+import re
 import requests
 from datetime import datetime
 from flask import Flask, request, jsonify
@@ -2263,6 +2264,112 @@ def validate_risk_per_trade(symbol, entry_price, stop_loss, quantity, signal_sid
     return True, risk_info, None
 
 
+def check_recent_price_volatility(symbol, days=7):
+    """Check if price has moved significantly in recent days
+    
+    Args:
+        symbol: Trading symbol
+        days: Number of days to check (default 7)
+    
+    Returns:
+        tuple: (has_high_volatility: bool, price_change_pct: float)
+    """
+    try:
+        if not client:
+            return False, 0.0
+        
+        # Get daily candles for the last N days
+        interval = '1d'
+        limit = days + 1  # +1 to get enough candles
+        
+        klines = client.futures_klines(symbol=symbol, interval=interval, limit=limit)
+        if len(klines) < 2:
+            return False, 0.0
+        
+        # Get oldest and newest close prices
+        oldest_close = float(klines[0][4])  # Close price of oldest candle
+        newest_close = float(klines[-1][4])  # Close price of newest candle
+        
+        if oldest_close <= 0:
+            return False, 0.0
+        
+        # Calculate percentage change
+        price_change_pct = abs((newest_close - oldest_close) / oldest_close) * 100
+        
+        # Consider high volatility if price moved >10% in recent days
+        has_high_volatility = price_change_pct > 10.0
+        
+        logger.info(f"📊 Recent price volatility for {symbol}: {price_change_pct:.2f}% over {days} days (High volatility: {has_high_volatility})")
+        return has_high_volatility, price_change_pct
+    except Exception as e:
+        logger.warning(f"Error checking recent price volatility for {symbol}: {e}")
+        return False, 0.0
+
+
+def parse_entry_analysis_from_reasoning(reasoning):
+    """Parse AI reasoning to detect if Entry 1 is bad but Entry 2 is good
+    
+    Args:
+        reasoning: AI reasoning text
+    
+    Returns:
+        tuple: (entry1_is_bad: bool, entry2_is_good: bool)
+    """
+    if not reasoning:
+        return False, False
+    
+    reasoning_lower = reasoning.lower()
+    
+    # Check Entry 1 analysis
+    entry1_bad_keywords = [
+        'entry 1.*not optimal',
+        'entry 1.*not at.*optimal',
+        'entry 1.*not.*good',
+        'entry 1.*poor',
+        'entry 1.*bad',
+        'entry 1.*sub-optimal',
+        'entry 1.*not.*institutional',
+        'entry 1.*not.*well-positioned',
+        'entry 1.*approaching.*resistance',  # For SHORT
+        'entry 1.*approaching.*support',    # For LONG
+    ]
+    
+    entry1_is_bad = False
+    for keyword in entry1_bad_keywords:
+        if re.search(keyword, reasoning_lower):
+            entry1_is_bad = True
+            break
+    
+    # Check Entry 2 analysis
+    entry2_good_keywords = [
+        'entry 2.*correct',
+        'entry 2.*optimal',
+        'entry 2.*good',
+        'entry 2.*well-positioned',
+        'entry 2.*at.*resistance',  # For SHORT
+        'entry 2.*at.*support',      # For LONG
+        'entry 2.*above entry 1.*correct',  # For SHORT
+        'entry 2.*below entry 1.*correct',  # For LONG
+    ]
+    
+    entry2_is_good = False
+    for keyword in entry2_good_keywords:
+        if re.search(keyword, reasoning_lower):
+            entry2_is_good = True
+            break
+    
+    # Also check for explicit statements
+    if 'entry 2 analysis' in reasoning_lower:
+        entry2_section = reasoning_lower.split('entry 2 analysis')[1] if 'entry 2 analysis' in reasoning_lower else ''
+        if entry2_section:
+            # Check if Entry 2 section says it's good/optimal/correct
+            if any(word in entry2_section[:200] for word in ['correct', 'optimal', 'good', 'well-positioned', 'better']):
+                entry2_is_good = True
+    
+    logger.info(f"🔍 Entry analysis parsing: Entry 1 bad={entry1_is_bad}, Entry 2 good={entry2_is_good}")
+    return entry1_is_bad, entry2_is_good
+
+
 def calculate_quantity(entry_price, symbol_info, entry_size_usd=None):
     """Calculate quantity based on entry size and leverage
     
@@ -4229,6 +4336,46 @@ def create_limit_order(signal_data):
             logger.info(f"🔍 [AI VALIDATION] Processing NEW ENTRY signal for {symbol} - AI validation will run")
             validation_result = validate_signal_with_ai(signal_data)
             
+            # SPECIAL CASE: Check if Entry 1 is bad but Entry 2 is good (rare case)
+            # In this case, we skip Entry 1 and only take Entry 2 with $20 and custom TP (4-5%)
+            reasoning = validation_result.get('reasoning', '')
+            entry1_is_bad, entry2_is_good = parse_entry_analysis_from_reasoning(reasoning)
+            has_high_volatility, price_change_pct = check_recent_price_volatility(symbol, days=7)
+            
+            # Check if we have Entry 2 price
+            entry2_price = second_entry_price if second_entry_price and second_entry_price > 0 else None
+            
+            # Special case conditions:
+            # 1. Entry 1 is bad but Entry 2 is good
+            # 2. Entry 2 price is available
+            # 3. Either signal is rejected OR confidence is low (but Entry 2 is good)
+            # 4. High volatility OR price moved significantly recently
+            should_use_entry2_only = (
+                entry1_is_bad and 
+                entry2_is_good and 
+                entry2_price is not None and
+                (not validation_result.get('is_valid', True) or validation_result.get('confidence_score', 100.0) < 50.0) and
+                (has_high_volatility or price_change_pct > 5.0)  # At least 5% movement in 7 days
+            )
+            
+            if should_use_entry2_only:
+                logger.info(f"🎯 SPECIAL CASE DETECTED: Entry 1 is bad but Entry 2 is good for {symbol}")
+                logger.info(f"   Entry 1 Analysis: Bad (not optimal)")
+                logger.info(f"   Entry 2 Analysis: Good (optimal/correct)")
+                logger.info(f"   Recent Volatility: {price_change_pct:.2f}% over 7 days (High: {has_high_volatility})")
+                logger.info(f"   Decision: Skipping Entry 1, creating Entry 2 only order with $20 and custom TP (4-5%)")
+                
+                # This will be handled in the order creation section below
+                # We'll set a flag to indicate this special case
+                signal_data['_special_entry2_only'] = True
+                signal_data['_entry2_only_price'] = entry2_price
+                
+                # Override validation to allow this special case
+                validation_result['is_valid'] = True
+                validation_result['confidence_score'] = 60.0  # Set a reasonable confidence for Entry 2 only
+                validation_result['special_case'] = 'ENTRY2_ONLY'
+                validation_result['special_case_reason'] = f'Entry 1 rejected but Entry 2 is optimal. Recent volatility: {price_change_pct:.2f}%'
+            
             # Check if signal is valid and meets confidence threshold
             if not validation_result.get('is_valid', True):
                 rejection_reason = validation_result.get('reasoning', 'Signal validation failed - AI determined signal is invalid')
@@ -4259,7 +4406,8 @@ def create_limit_order(signal_data):
             if validation_result.get('is_valid', True) and confidence_score >= (confidence_threshold - 5.0):
                 # AI approved and confidence is within 5% of threshold - approve it
                 logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (within 5% of threshold {confidence_threshold}%, AI explicitly approved)")
-            elif confidence_score < confidence_threshold:
+            elif confidence_score < confidence_threshold and not signal_data.get('_special_entry2_only', False):
+                # Don't reject if this is the special Entry 2 only case
                 rejection_reason = f"Confidence score {confidence_score:.1f}% is below minimum threshold of {confidence_threshold}%"
                 logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
                 logger.info(f"   Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
@@ -4808,6 +4956,146 @@ def create_limit_order(signal_data):
         
         current_time = time.time()
         order_results = []
+        
+        # SPECIAL CASE: Entry 2 only (Entry 1 is bad but Entry 2 is good)
+        if signal_data.get('_special_entry2_only', False):
+            entry2_only_price = signal_data.get('_entry2_only_price')
+            if not entry2_only_price or entry2_only_price <= 0:
+                logger.error(f"❌ Special Entry 2 only case but no valid Entry 2 price provided")
+                return {'success': False, 'error': 'Special Entry 2 only case but no valid Entry 2 price'}
+            
+            # Format Entry 2 price
+            entry2_only_price = format_price_precision(entry2_only_price, tick_size)
+            
+            # Calculate quantity for $20 order
+            entry2_quantity = calculate_quantity(entry2_only_price, symbol_info, entry_size_usd=20.0)
+            
+            # Calculate custom TP: 4-5% from entry (use 4.5% as default)
+            tp_percentage = 4.5  # 4.5% default, can be adjusted
+            if signal_side == 'LONG':
+                custom_tp = entry2_only_price * (1 + tp_percentage / 100)
+            else:  # SHORT
+                custom_tp = entry2_only_price * (1 - tp_percentage / 100)
+            custom_tp = format_price_precision(custom_tp, tick_size)
+            
+            logger.info(f"🎯 SPECIAL CASE: Creating Entry 2 only order for {symbol}")
+            logger.info(f"   Entry 2 Price: ${entry2_only_price:,.8f}")
+            logger.info(f"   Order Size: $20")
+            logger.info(f"   Custom TP: ${custom_tp:,.8f} ({tp_percentage}% from entry)")
+            
+            # Create Entry 2 only order
+            entry2_order_params = {
+                'symbol': symbol,
+                'side': side,
+                'type': 'LIMIT',
+                'timeInForce': 'GTC',
+                'quantity': entry2_quantity,
+                'price': entry2_only_price,
+            }
+            if is_hedge_mode:
+                entry2_order_params['positionSide'] = position_side
+            
+            logger.info(f"Creating SPECIAL Entry 2 only order: {entry2_order_params}")
+            try:
+                entry2_order_result = client.futures_create_order(**entry2_order_params)
+                order_results.append(entry2_order_result)
+                active_trades[symbol]['dca_order_id'] = entry2_order_result.get('orderId')
+                active_trades[symbol]['dca_filled'] = False
+                active_trades[symbol]['position_open'] = True
+                active_trades[symbol]['primary_order_id'] = None  # No Order 1
+                active_trades[symbol]['optimized_entry1_order_id'] = None  # No Order 2
+                active_trades[symbol]['original_entry1'] = None  # No Entry 1
+                active_trades[symbol]['original_entry2'] = entry2_only_price
+                active_trades[symbol]['_special_entry2_only'] = True
+                active_trades[symbol]['_custom_tp'] = custom_tp
+                active_trades[symbol]['_custom_tp_percentage'] = tp_percentage
+                # Store TP price for TP creation (use single TP mode for Entry 2 only)
+                active_trades[symbol]['use_single_tp'] = True
+                active_trades[symbol]['tp2_price'] = custom_tp
+                active_trades[symbol]['tp_side'] = 'SELL' if signal_side == 'LONG' else 'BUY'
+                active_trades[symbol]['tp_quantity'] = entry2_quantity  # Store quantity for TP
+                active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'  # Use mark price for trigger
+                logger.info(f"✅ SPECIAL Entry 2 only order created successfully: Order ID {entry2_order_result.get('orderId')} @ ${entry2_only_price:,.8f} (${20.0} size)")
+            except BinanceAPIException as e:
+                logger.error(f"❌ Failed to create SPECIAL Entry 2 only order: {e.message} (Code: {e.code})")
+                send_slack_alert(
+                    error_type="Special Entry 2 Only Order Creation Failed",
+                    message=f"{e.message} (Code: {e.code})",
+                    details={'Error_Code': e.code, 'Entry_Price': entry2_only_price, 'Quantity': entry2_quantity, 'Side': side},
+                    symbol=symbol,
+                    severity='ERROR'
+                )
+                return {'success': False, 'error': f'Failed to create Entry 2 only order: {e.message}'}
+            except Exception as e:
+                logger.error(f"❌ Unexpected error creating SPECIAL Entry 2 only order: {e}")
+                send_slack_alert(
+                    error_type="Special Entry 2 Only Order Creation Failed",
+                    message=str(e),
+                    details={'Entry_Price': entry2_only_price, 'Quantity': entry2_quantity},
+                    symbol=symbol,
+                    severity='ERROR'
+                )
+                return {'success': False, 'error': f'Unexpected error creating Entry 2 only order: {str(e)}'}
+            
+            # Send special notification for Entry 2 only case
+            try:
+                # Use custom notification format for Entry 2 only case
+                if SLACK_SIGNAL_WEBHOOK_URL:
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
+                    environment = 'TESTNET' if BINANCE_TESTNET else 'PRODUCTION'
+                    side_emoji = '📈' if signal_side == 'LONG' else '📉'
+                    formatted_symbol = symbol.replace('.P', '').upper()
+                    formatted_timeframe = timeframe.upper() if timeframe else 'N/A'
+                    
+                    slack_message = f"""{side_emoji} *SPECIAL ENTRY 2 ONLY SIGNAL - ORDER OPENED*
+
+*Symbol:* `{formatted_symbol}`
+*Timeframe:* `{formatted_timeframe}`
+*Environment:* {environment}
+*Time:* {timestamp}
+
+🎯 *SPECIAL CASE: Entry 1 Rejected, Entry 2 Only*
+
+*Entry Order:*
+  • Entry 2 Only: ${entry2_only_price:,.8f} - $20.00 (Entry 1 skipped - not optimal)
+
+*Risk Management:*
+  • Stop Loss: ${stop_loss:,.8f if stop_loss else 'N/A'}
+  • Take Profit: ${custom_tp:,.8f} ({tp_percentage}% from entry - Custom TP)
+
+*Reason:*
+{validation_result.get('special_case_reason', 'Entry 1 rejected but Entry 2 is optimal')}
+
+*AI Analysis:*
+{validation_result.get('reasoning', 'No detailed reasoning')[:600]}"""
+                    
+                    def send_async():
+                        try:
+                            payload = {'text': slack_message}
+                            response = requests.post(
+                                SLACK_SIGNAL_WEBHOOK_URL,
+                                json=payload,
+                                headers={'Content-Type': 'application/json'},
+                                timeout=5
+                            )
+                            response.raise_for_status()
+                            logger.info(f"✅ Special Entry 2 only notification sent to Slack for {symbol}")
+                        except Exception as e:
+                            logger.debug(f"Failed to send Slack special Entry 2 only notification: {e}")
+                    
+                    thread = threading.Thread(target=send_async, daemon=True)
+                    thread.start()
+            except Exception as e:
+                logger.warning(f"Failed to send special Entry 2 only notification: {e}")
+            
+            return {
+                'success': True,
+                'message': 'Special Entry 2 only order created successfully',
+                'order_id': entry2_order_result.get('orderId'),
+                'entry_price': entry2_only_price,
+                'custom_tp': custom_tp,
+                'special_case': 'ENTRY2_ONLY'
+            }
         
         # If this is a primary entry, create 3 entry orders:
         # Order 1: $10 with original Entry 1 price
