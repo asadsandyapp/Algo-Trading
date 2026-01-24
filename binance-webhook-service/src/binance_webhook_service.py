@@ -2374,7 +2374,26 @@ def parse_entry_analysis_from_reasoning(reasoning):
     
     reasoning_lower = reasoning.lower()
     
-    # Check Entry 1 analysis
+    # FIRST: Check for POSITIVE keywords about Entry 1 (if found, Entry 1 is NOT bad)
+    entry1_good_keywords = [
+        'entry 1.*optimal',
+        'entry 1.*is optimal',
+        'entry 1.*perfect',
+        'entry 1.*excellent',
+        'entry 1.*well-positioned',
+        'entry 1.*at.*support',  # For LONG
+        'entry 1.*at.*resistance',  # For SHORT
+        'entry 1.*aligns.*perfectly',
+        'entry 1.*high-probability',
+    ]
+    
+    entry1_is_good = False
+    for keyword in entry1_good_keywords:
+        if re.search(keyword, reasoning_lower):
+            entry1_is_good = True
+            break
+    
+    # Check Entry 1 analysis - only mark as bad if NO positive keywords found
     entry1_bad_keywords = [
         'entry 1.*not optimal',
         'entry 1.*not at.*optimal',
@@ -2384,15 +2403,17 @@ def parse_entry_analysis_from_reasoning(reasoning):
         'entry 1.*sub-optimal',
         'entry 1.*not.*institutional',
         'entry 1.*not.*well-positioned',
-        'entry 1.*approaching.*resistance',  # For SHORT
-        'entry 1.*approaching.*support',    # For LONG
+        'entry 1.*should.*be.*replaced',
+        'entry 1.*needs.*optimization',
     ]
     
     entry1_is_bad = False
-    for keyword in entry1_bad_keywords:
-        if re.search(keyword, reasoning_lower):
-            entry1_is_bad = True
-            break
+    # Only mark as bad if there are negative keywords AND no positive keywords
+    if not entry1_is_good:
+        for keyword in entry1_bad_keywords:
+            if re.search(keyword, reasoning_lower):
+                entry1_is_bad = True
+                break
     
     # Check Entry 2 analysis
     entry2_good_keywords = [
@@ -2420,7 +2441,7 @@ def parse_entry_analysis_from_reasoning(reasoning):
             if any(word in entry2_section[:200] for word in ['correct', 'optimal', 'good', 'well-positioned', 'better']):
                 entry2_is_good = True
     
-    logger.info(f"🔍 Entry analysis parsing: Entry 1 bad={entry1_is_bad}, Entry 2 good={entry2_is_good}")
+    logger.info(f"🔍 Entry analysis parsing: Entry 1 bad={entry1_is_bad}, Entry 1 good={entry1_is_good}, Entry 2 good={entry2_is_good}")
     return entry1_is_bad, entry2_is_good
 
 
@@ -4469,8 +4490,20 @@ def create_limit_order(signal_data):
             has_high_volatility, price_change_pct = check_recent_price_volatility(symbol, days=7)
             
             # Check if Entry 1 failed validation
-            # Entry 1 fails if: is_valid=False OR confidence < 50% OR Entry 1 is bad from parsing
-            entry1_failed = not is_valid or confidence_score < 50.0 or entry1_is_bad
+            # Entry 1 fails ONLY if: is_valid=False (explicitly rejected by AI)
+            # NOTE: If is_valid=True, Entry 1 is approved and will proceed (even if confidence is 45-49%, approval logic handles it)
+            # NOTE: Parsing result (entry1_is_bad) is only used as additional context, not to determine failure
+            # If Entry 1 is approved with good confidence, ignore parsing result (parsing can have false positives)
+            entry1_failed = not is_valid  # Only fail if AI explicitly rejects (is_valid=False)
+            # Only add parsing result if Entry 1 is already failing
+            if entry1_failed and entry1_is_bad:
+                logger.info(f"   Entry 1 failed AND parsing detected Entry 1 as bad - will check Entry 2")
+            elif entry1_failed:
+                logger.info(f"   Entry 1 failed (is_valid={is_valid}, confidence={confidence_score:.1f}%) - will check Entry 2")
+            elif entry1_is_bad and is_valid and confidence_score >= 50.0:
+                # Entry 1 is approved but parsing says it's bad - ignore parsing (false positive)
+                logger.info(f"   Entry 1 APPROVED (is_valid={is_valid}, confidence={confidence_score:.1f}%) - ignoring parsing result (Entry 1 is good)")
+                entry1_is_bad = False  # Override parsing result since Entry 1 is actually approved
             
             # Check if we have Entry 2 price (original)
             entry2_price_original = second_entry_price if second_entry_price and second_entry_price > 0 else None
@@ -4537,13 +4570,15 @@ def create_limit_order(signal_data):
                     logger.warning(f"🚫 Both Entry 2 options (original and optimized) were REJECTED by AI")
             
             # Special case: Use Entry 2 only if Entry 1 failed AND Entry 2 passed validation
+            # NOTE: Volatility check is removed - if AI approves Entry 2, we trust it (don't want to miss profitable trades)
             should_use_entry2_only = (
                 entry1_failed and
                 entry2_standalone_valid and
                 entry2_standalone_result is not None and
                 entry2_price_to_use is not None and
-                entry2_standalone_result.get('confidence_score', 0.0) >= 50.0 and
-                (has_high_volatility or price_change_pct > 5.0)  # At least 5% movement in 7 days (helps ensure fill probability)
+                entry2_standalone_result.get('confidence_score', 0.0) >= 50.0
+                # Volatility check removed: (has_high_volatility or price_change_pct > 5.0)
+                # If AI approves Entry 2 with >=50% confidence, we trust it regardless of volatility
             )
             
             if should_use_entry2_only:
@@ -5275,7 +5310,7 @@ def create_limit_order(signal_data):
   • Entry 2 Only: ${entry2_only_price:,.8f} - $20.00 (Entry 1 skipped - not optimal)
 
 *Risk Management:*
-  • Stop Loss: ${stop_loss:,.8f if stop_loss else 'N/A'}
+  • Stop Loss: {f'${stop_loss:,.8f}' if stop_loss else 'N/A'}
   • Take Profit: ${custom_tp:,.8f} ({tp_percentage}% from entry - Custom TP)
 
 *Reason:*
