@@ -5515,15 +5515,15 @@ def create_limit_order(signal_data):
             
             # Use Order 1 result for response (primary order)
             primary_order_result = order1_result
-                
-                # Smart TP Strategy: Based on AI Confidence Score
-                # High Confidence (>=90%): Use single TP (main TP from signal) - trust the signal completely
-                # Lower Confidence (<90%): Use TP1 + TP2 strategy - secure profits early
-                
-                confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
-                use_single_tp = confidence_score >= TP_HIGH_CONFIDENCE_THRESHOLD
-                
-                # Calculate entry price for TP calculation
+            
+            # Smart TP Strategy: Based on AI Confidence Score
+            # High Confidence (>=90%): Use single TP (main TP from signal) - trust the signal completely
+            # Lower Confidence (<90%): Use TP1 + TP2 strategy - secure profits early
+            
+            confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
+            use_single_tp = confidence_score >= TP_HIGH_CONFIDENCE_THRESHOLD
+            
+            # Calculate entry price for TP calculation
             # TP1: Always use original Entry 1 price only (4% from Entry 1)
             # TP2: Use weighted average of all filled orders
             entry_price_for_tp1 = original_entry1_price  # Always original Entry 1 for TP1
@@ -5546,12 +5546,12 @@ def create_limit_order(signal_data):
             if total_usd > 10.0:
                 entry_price_for_tp2 = weighted_sum / total_usd
                 logger.info(f"📊 Weighted average entry for TP2: ${entry_price_for_tp2:,.8f} (based on ${total_usd} total USD across orders)")
-                else:
+            else:
                 # Only Order 1 exists
                 entry_price_for_tp2 = original_entry1_price
                 logger.info(f"📊 Only Order 1 exists - using original Entry 1 for TP2: ${entry_price_for_tp2:,.8f}")
-                
-                tp_side = 'SELL' if side == 'BUY' else 'BUY'
+            
+            tp_side = 'SELL' if side == 'BUY' else 'BUY'
             # Calculate total quantity from all orders
             total_qty = order1_quantity
             if order2_quantity:
@@ -5559,33 +5559,33 @@ def create_limit_order(signal_data):
             if order3_quantity:
                 total_qty += order3_quantity
             logger.info(f"📊 Total position size: {total_qty} (Order 1: {order1_quantity}, Order 2: {order2_quantity if order2_quantity else 0}, Order 3: {order3_quantity if order3_quantity else 0})")
-                
-                if use_single_tp:
-                    # HIGH CONFIDENCE: Use single TP (main TP from signal)
-                    if take_profit and take_profit > 0:
-                        main_tp_price = format_price_precision(take_profit, tick_size)
-                    else:
-                        # If no TP provided, calculate a conservative TP
-                        default_tp_percent = 0.05  # 5% profit for high confidence
-                        if side == 'BUY':  # LONG position
-                            main_tp_price = entry_price_for_tp2 * (1 + default_tp_percent)
-                        else:  # SHORT position
-                            main_tp_price = entry_price_for_tp2 * (1 - default_tp_percent)
-                        main_tp_price = format_price_precision(main_tp_price, tick_size)
-                        logger.info(f"📊 High confidence signal ({confidence_score:.1f}%) - TP not provided, calculating with {default_tp_percent*100}% profit: {main_tp_price}")
-                    
-                    # Store as single TP (100% of position)
-                    active_trades[symbol]['tp1_price'] = None  # No TP1
-                    active_trades[symbol]['tp2_price'] = main_tp_price  # Use TP2 as main TP
-                    active_trades[symbol]['tp_side'] = tp_side
-                    active_trades[symbol]['tp1_quantity'] = 0  # No TP1
-                    active_trades[symbol]['tp2_quantity'] = total_qty  # 100% at main TP
-                    active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
-                    active_trades[symbol]['use_single_tp'] = True  # Flag for single TP mode
-                    logger.info(f"📝 HIGH CONFIDENCE ({confidence_score:.1f}%) - Single TP configured for {symbol}:")
-                    logger.info(f"   → Main TP: @ ${main_tp_price:,.8f} (closes 100% = {total_qty} of position)")
-                    logger.info(f"   → Strategy: Trusting signal completely - using single TP")
+            
+            if use_single_tp:
+                # HIGH CONFIDENCE: Use single TP (main TP from signal)
+                if take_profit and take_profit > 0:
+                    main_tp_price = format_price_precision(take_profit, tick_size)
                 else:
+                    # If no TP provided, calculate a conservative TP
+                    default_tp_percent = 0.05  # 5% profit for high confidence
+                    if side == 'BUY':  # LONG position
+                        main_tp_price = entry_price_for_tp2 * (1 + default_tp_percent)
+                    else:  # SHORT position
+                        main_tp_price = entry_price_for_tp2 * (1 - default_tp_percent)
+                    main_tp_price = format_price_precision(main_tp_price, tick_size)
+                    logger.info(f"📊 High confidence signal ({confidence_score:.1f}%) - TP not provided, calculating with {default_tp_percent*100}% profit: {main_tp_price}")
+                
+                # Store as single TP (100% of position)
+                active_trades[symbol]['tp1_price'] = None  # No TP1
+                active_trades[symbol]['tp2_price'] = main_tp_price  # Use TP2 as main TP
+                active_trades[symbol]['tp_side'] = tp_side
+                active_trades[symbol]['tp1_quantity'] = 0  # No TP1
+                active_trades[symbol]['tp2_quantity'] = total_qty  # 100% at main TP
+                active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
+                active_trades[symbol]['use_single_tp'] = True  # Flag for single TP mode
+                logger.info(f"📝 HIGH CONFIDENCE ({confidence_score:.1f}%) - Single TP configured for {symbol}:")
+                logger.info(f"   → Main TP: @ ${main_tp_price:,.8f} (closes 100% = {total_qty} of position)")
+                logger.info(f"   → Strategy: Trusting signal completely - using single TP")
+            else:
                     # LOWER CONFIDENCE: Use TP1 + TP2 strategy (secure profits early)
                     # Calculate TP1: 3-4% profit from Entry 1 ONLY (not average)
                     tp1_percent = TP1_PERCENT / 100.0
@@ -5594,7 +5594,7 @@ def create_limit_order(signal_data):
                     else:  # SHORT position
                         tp1_price = entry_price_for_tp1 * (1 - tp1_percent)  # Use Entry 1 only
                     tp1_price = format_price_precision(tp1_price, tick_size)
-                logger.info(f"📊 TP1 calculated: {TP1_PERCENT}% from Entry 1 (${original_entry1_price:,.8f}) = ${tp1_price:,.8f}")
+                    logger.info(f"📊 TP1 calculated: {TP1_PERCENT}% from Entry 1 (${original_entry1_price:,.8f}) = ${tp1_price:,.8f}")
                     
                     # TP2: Use the TP from webhook (or AI-optimized TP)
                     if take_profit and take_profit > 0:
@@ -5625,39 +5625,39 @@ def create_limit_order(signal_data):
                     logger.info(f"   → TP1: {TP1_PERCENT}% profit @ ${tp1_price:,.8f} (closes {TP1_SPLIT}% = {tp1_quantity} of position)")
                     logger.info(f"   → TP2: @ ${tp2_price:,.8f} (closes {TP2_SPLIT}% = {tp2_quantity} of position)")
                     logger.info(f"   → Strategy: Securing profits early with TP1, letting TP2 run")
+            
+            logger.info(f"   → TPs will be created automatically when position opens (background thread checks every 1min/2min)")
+            
+            # Send signal notification to Slack
+            try:
+                timeframe = signal_data.get('timeframe', 'Unknown')
+                confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
+                risk_level = validation_result.get('risk_level', 'MEDIUM') if validation_result else 'MEDIUM'
+                # Get TP prices for notification
+                if use_single_tp:
+                    main_tp = active_trades[symbol].get('tp2_price')
+                    tp1_for_notif = None
+                else:
+                    main_tp = active_trades[symbol].get('tp2_price')
+                    tp1_for_notif = active_trades[symbol].get('tp1_price')
                 
-                logger.info(f"   → TPs will be created automatically when position opens (background thread checks every 1min/2min)")
-                
-                # Send signal notification to Slack
-                try:
-                    timeframe = signal_data.get('timeframe', 'Unknown')
-                    confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
-                    risk_level = validation_result.get('risk_level', 'MEDIUM') if validation_result else 'MEDIUM'
-                    # Get TP prices for notification
-                    if use_single_tp:
-                        main_tp = active_trades[symbol].get('tp2_price')
-                        tp1_for_notif = None
-                    else:
-                        main_tp = active_trades[symbol].get('tp2_price')
-                        tp1_for_notif = active_trades[symbol].get('tp1_price')
-                    
-                    send_signal_notification(
-                        symbol=symbol,
-                        signal_side=signal_side,
-                        timeframe=timeframe,
-                        confidence_score=confidence_score,
-                        risk_level=risk_level,
+                send_signal_notification(
+                    symbol=symbol,
+                    signal_side=signal_side,
+                    timeframe=timeframe,
+                    confidence_score=confidence_score,
+                    risk_level=risk_level,
                     entry1_price=original_entry1_price,  # Order 1: Original Entry 1
                     entry2_price=dca_entry_price,  # Order 3: Entry 2
-                        stop_loss=stop_loss,
-                        take_profit=main_tp,  # Main TP (TP2 in dual mode, or single TP in high confidence)
-                        tp1_price=tp1_for_notif,  # TP1 (only in dual mode)
-                        use_single_tp=use_single_tp,  # Flag for notification formatting
+                    stop_loss=stop_loss,
+                    take_profit=main_tp,  # Main TP (TP2 in dual mode, or single TP in high confidence)
+                    tp1_price=tp1_for_notif,  # TP1 (only in dual mode)
+                    use_single_tp=use_single_tp,  # Flag for notification formatting
                     validation_result=validation_result,
                     optimized_entry1_price=optimized_entry1_price  # Order 2: Optimized Entry 1 (if exists)
-                    )
-                except Exception as e:
-                    logger.debug(f"Failed to send signal notification: {e}")
+                )
+            except Exception as e:
+                logger.debug(f"Failed to send signal notification: {e}")
             
             # Use primary order result for response
             order_result = primary_order_result
