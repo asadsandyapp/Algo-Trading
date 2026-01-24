@@ -3703,19 +3703,33 @@ CRITICAL: Signals are based on 2H/4H timeframes.
    - STRUCTURAL CONFIRMATION: Entry 2 must align with HTF structure and market structure (BOS/CHoCH)
    
    ENTRY 2 OPTIMIZATION PROCESS (Priority Order):
-   1. FIRST PRIORITY: Analyze market structure to identify ALL institutional zones below Entry 1 (LONG) or above Entry 1 (SHORT)
+   1. FIRST PRIORITY: Analyze RECENT PRICE ACTION and REVERSAL ZONES (CRITICAL FOR FILL PROBABILITY):
+      - Check market_data['recent_highs'] and market_data['recent_lows'] for recent reversal points
+      - Check lower timeframe levels (15m, 1h) for recent reversal zones that price already tested
+      - If original Entry 2 is at or near a RECENT REVERSAL ZONE (price touched nearby and reversed):
+        → This is a PROVEN reversal zone - STRONGLY CONSIDER KEEPING original Entry 2
+        → Example: If price touched a higher level (e.g., 1-2% above Entry 2) and reversed, KEEP original Entry 2 (proven zone)
+        → Moving Entry 2 further away from the recent reversal level might MISS the trade if price reverses at that level again
+        → For SHORT: If price touched a level above Entry 2 and reversed, Entry 2 is at proven support - KEEP IT
+        → For LONG: If price touched a level below Entry 2 and reversed, Entry 2 is at proven resistance - KEEP IT
+      - RECENT REVERSAL ZONES have HIGHER FILL PROBABILITY than theoretical zones
+   
+   2. SECOND PRIORITY: Analyze market structure to identify ALL institutional zones below Entry 1 (LONG) or above Entry 1 (SHORT)
       - Order blocks, FVGs, support/resistance levels, reversal points
       - These are the PRIMARY candidates for Entry 2
    
-   2. SECOND PRIORITY: Check if original Entry 2 is ALREADY at one of these institutional zones
+   3. THIRD PRIORITY: Check if original Entry 2 is ALREADY at one of these institutional zones
       - If YES and well-positioned → KEEP it (set suggested_second_entry_price to null)
       - If NO → Find the BEST institutional zone from your analysis
+      - BUT: If original Entry 2 is at a RECENT REVERSAL ZONE, prioritize keeping it over theoretical zones
    
-   3. THIRD PRIORITY: If multiple institutional zones exist, choose the BEST one based on:
+   4. FOURTH PRIORITY: If multiple institutional zones exist, choose the BEST one based on:
+      - RECENT REVERSAL ZONES (price already tested and reversed) = HIGHEST PRIORITY
       - Closest to Entry 1 (but still realistic spacing)
       - Strongest support/resistance level
       - Best volume/OI confirmation
       - Best alignment with market structure
+      - FILL PROBABILITY: Prefer zones that price has already tested (higher fill probability)
    
    4. LAST PRIORITY (ONLY IF NO INSTITUTIONAL ZONES FOUND): Use spacing calculations as fallback
       - Only use spacing if NO institutional zones are identified
@@ -3740,22 +3754,42 @@ CRITICAL: Signals are based on 2H/4H timeframes.
      * For LONG: Entry 2 must be ABOVE SL and BELOW Entry 1
      * For SHORT: Entry 2 must be BELOW SL and ABOVE Entry 1
    
-   - STEP 2: DECISION - Keep or Optimize:
+   - STEP 2: DECISION - Keep or Optimize (CRITICAL: CONSIDER RECENT REVERSAL ZONES):
+     * If original Entry 2 is at a RECENT REVERSAL ZONE (price touched nearby and reversed):
+       → STRONGLY PREFER KEEPING original Entry 2 (proven zone, higher fill probability)
+       → Example: If price touched a level near Entry 2 (within 1-3% above/below) and reversed, Entry 2 is at proven zone - KEEP IT
+       → Moving Entry 2 away from recent reversal zone (even to a "better" theoretical zone) might MISS the trade
+       → For SHORT: If price touched a level above Entry 2 and reversed, Entry 2 is better than moving it higher
+       → For LONG: If price touched a level below Entry 2 and reversed, Entry 2 is better than moving it lower
      * If original Entry 2 is GOOD (at institutional zone, good spacing, different from SL): KEEP IT (set suggested_second_entry_price to null)
      * If original Entry 2 is NOT at institutional zone AND there's a better zone: Suggest better Entry 2
+       → BUT: Only suggest if new zone is SIGNIFICANTLY better AND not moving away from recent reversal zone
      * If original Entry 2 is SAME as SL: MUST suggest different Entry 2 (this is a critical error)
      * DO NOT suggest changes just to make a 1-2% adjustment - only change if technically justified
+     * FILL PROBABILITY RULE: If original Entry 2 is at/near recent reversal zone, KEEP IT even if theoretical zone seems better
    
-   - STEP 3: If optimization needed (SOLID TECHNICAL REASON):
+   - STEP 3: If optimization needed (SOLID TECHNICAL REASON - BUT CHECK RECENT REVERSAL ZONES FIRST):
+     * BEFORE suggesting new Entry 2, CHECK if original Entry 2 is at/near a RECENT REVERSAL ZONE:
+       → Check market_data['recent_highs'] and market_data['recent_lows'] for recent price touches
+       → Check lower timeframe levels (15m, 1h) for recent reversal points
+       → If price touched a level near original Entry 2 (within 1-3% above/below) and reversed, that's a PROVEN reversal zone
+       → PROVEN reversal zones have HIGHER FILL PROBABILITY than theoretical zones
+       → Example: If price touched a level near Entry 2 and reversed, keeping Entry 2 at that proven zone is BETTER than moving it to a theoretical zone
+       → For SHORT: If price touched a level above Entry 2 and reversed, Entry 2 is at proven support - prefer keeping it
+       → For LONG: If price touched a level below Entry 2 and reversed, Entry 2 is at proven resistance - prefer keeping it
      * LONG: Entry 2 should be BELOW Entry 1 and ABOVE SL (at another institutional zone or confirmation level)
      * SHORT: Entry 2 should be ABOVE Entry 1 and BELOW SL (at another institutional zone or confirmation level)
      * MUST be at an institutional liquidity zone (order block, FVG, support/resistance, reversal point)
      * CRITICAL VALIDATION: Entry 2 must be DIFFERENT from SL with proper spacing:
        - For LONG: Entry 2 > SL (at least 0.5% above SL, preferably 1-2% above)
        - For SHORT: Entry 2 < SL (at least 0.5% below SL, preferably 1-2% below)
-     * ALWAYS prioritize institutional zones FIRST - spacing is LAST RESORT
+     * PRIORITY ORDER for Entry 2 selection:
+       1. RECENT REVERSAL ZONES (price already tested and reversed) = HIGHEST PRIORITY
+       2. Institutional zones (order blocks, FVGs, support/resistance)
+       3. Spacing calculations (LAST RESORT)
      * MAXIMUM distance: Keep within 1-2% of original to ensure orders FILL (this is a LIMIT, not a requirement)
      * Only suggest if new Entry 2 is clearly better AND within 1-2% of original AND different from SL
+     * FILL PROBABILITY RULE: If original Entry 2 is at/near recent reversal zone, DO NOT move it away unless new zone is MUCH better
      * Entry 2 can be optimized independently of Entry 1 - validate both separately with full technical analysis
      * NEVER use spacing calculations if institutional zones are available - always use the zone
 
@@ -5054,7 +5088,7 @@ def create_limit_order(signal_data):
         if symbol not in active_trades:
             active_trades[symbol] = {
                 'primary_filled': False, 
-                'dca_filled': False,
+                'dca_filled': False, 
                 'optimized_entry1_filled': False,  # Track Order 2 (optimized Entry 1)
                 'position_open': False,
                 'primary_order_id': None,
@@ -5434,45 +5468,45 @@ def create_limit_order(signal_data):
                 logger.info(f"   → Main TP: @ ${main_tp_price:,.8f} (closes 100% = {total_qty} of position)")
                 logger.info(f"   → Strategy: Trusting signal completely - using single TP")
             else:
-                    # LOWER CONFIDENCE: Use TP1 + TP2 strategy (secure profits early)
-                    # Calculate TP1: 3-4% profit from Entry 1 ONLY (not average)
-                    tp1_percent = TP1_PERCENT / 100.0
+                # LOWER CONFIDENCE: Use TP1 + TP2 strategy (secure profits early)
+                # Calculate TP1: 3-4% profit from Entry 1 ONLY (not average)
+                tp1_percent = TP1_PERCENT / 100.0
+                if side == 'BUY':  # LONG position
+                    tp1_price = entry_price_for_tp1 * (1 + tp1_percent)  # Use Entry 1 only
+                else:  # SHORT position
+                    tp1_price = entry_price_for_tp1 * (1 - tp1_percent)  # Use Entry 1 only
+                tp1_price = format_price_precision(tp1_price, tick_size)
+                logger.info(f"📊 TP1 calculated: {TP1_PERCENT}% from Entry 1 (${original_entry1_price:,.8f}) = ${tp1_price:,.8f}")
+                
+                # TP2: Use the TP from webhook (or AI-optimized TP)
+                if take_profit and take_profit > 0:
+                    tp2_price = format_price_precision(take_profit, tick_size)
+                else:
+                    # If no TP provided, calculate a default TP2 (higher than TP1)
+                    default_tp2_percent = 0.055  # 5.5% profit
                     if side == 'BUY':  # LONG position
-                        tp1_price = entry_price_for_tp1 * (1 + tp1_percent)  # Use Entry 1 only
+                        tp2_price = entry_price_for_tp2 * (1 + default_tp2_percent)
                     else:  # SHORT position
-                        tp1_price = entry_price_for_tp1 * (1 - tp1_percent)  # Use Entry 1 only
-                    tp1_price = format_price_precision(tp1_price, tick_size)
-                    logger.info(f"📊 TP1 calculated: {TP1_PERCENT}% from Entry 1 (${original_entry1_price:,.8f}) = ${tp1_price:,.8f}")
-                    
-                    # TP2: Use the TP from webhook (or AI-optimized TP)
-                    if take_profit and take_profit > 0:
-                        tp2_price = format_price_precision(take_profit, tick_size)
-                    else:
-                        # If no TP provided, calculate a default TP2 (higher than TP1)
-                        default_tp2_percent = 0.055  # 5.5% profit
-                        if side == 'BUY':  # LONG position
-                            tp2_price = entry_price_for_tp2 * (1 + default_tp2_percent)
-                        else:  # SHORT position
-                            tp2_price = entry_price_for_tp2 * (1 - default_tp2_percent)
-                        tp2_price = format_price_precision(tp2_price, tick_size)
-                        logger.info(f"📊 TP2 not provided in webhook - calculating with {default_tp2_percent*100}% profit: {tp2_price}")
-                    
-                    # Calculate TP1 and TP2 quantities based on split percentages
-                    tp1_quantity = total_qty * (TP1_SPLIT / 100.0)  # 70% of position
-                    tp2_quantity = total_qty * (TP2_SPLIT / 100.0)  # 30% of position
-                    
-                    # Store TP1 and TP2 details
-                    active_trades[symbol]['tp1_price'] = tp1_price
-                    active_trades[symbol]['tp2_price'] = tp2_price
-                    active_trades[symbol]['tp_side'] = tp_side
-                    active_trades[symbol]['tp1_quantity'] = tp1_quantity
-                    active_trades[symbol]['tp2_quantity'] = tp2_quantity
-                    active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
-                    active_trades[symbol]['use_single_tp'] = False  # Flag for TP1+TP2 mode
-                    logger.info(f"📝 LOWER CONFIDENCE ({confidence_score:.1f}%) - TP1 + TP2 configured for {symbol}:")
-                    logger.info(f"   → TP1: {TP1_PERCENT}% profit @ ${tp1_price:,.8f} (closes {TP1_SPLIT}% = {tp1_quantity} of position)")
-                    logger.info(f"   → TP2: @ ${tp2_price:,.8f} (closes {TP2_SPLIT}% = {tp2_quantity} of position)")
-                    logger.info(f"   → Strategy: Securing profits early with TP1, letting TP2 run")
+                        tp2_price = entry_price_for_tp2 * (1 - default_tp2_percent)
+                    tp2_price = format_price_precision(tp2_price, tick_size)
+                    logger.info(f"📊 TP2 not provided in webhook - calculating with {default_tp2_percent*100}% profit: {tp2_price}")
+                
+                # Calculate TP1 and TP2 quantities based on split percentages
+                tp1_quantity = total_qty * (TP1_SPLIT / 100.0)  # 70% of position
+                tp2_quantity = total_qty * (TP2_SPLIT / 100.0)  # 30% of position
+                
+                # Store TP1 and TP2 details
+                active_trades[symbol]['tp1_price'] = tp1_price
+                active_trades[symbol]['tp2_price'] = tp2_price
+                active_trades[symbol]['tp_side'] = tp_side
+                active_trades[symbol]['tp1_quantity'] = tp1_quantity
+                active_trades[symbol]['tp2_quantity'] = tp2_quantity
+                active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
+                active_trades[symbol]['use_single_tp'] = False  # Flag for TP1+TP2 mode
+                logger.info(f"📝 LOWER CONFIDENCE ({confidence_score:.1f}%) - TP1 + TP2 configured for {symbol}:")
+                logger.info(f"   → TP1: {TP1_PERCENT}% profit @ ${tp1_price:,.8f} (closes {TP1_SPLIT}% = {tp1_quantity} of position)")
+                logger.info(f"   → TP2: @ ${tp2_price:,.8f} (closes {TP2_SPLIT}% = {tp2_quantity} of position)")
+                logger.info(f"   → Strategy: Securing profits early with TP1, letting TP2 run")
             
             logger.info(f"   → TPs will be created automatically when position opens (background thread checks every 1min/2min)")
             
