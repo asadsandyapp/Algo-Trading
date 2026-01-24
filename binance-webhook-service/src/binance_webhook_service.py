@@ -4460,113 +4460,158 @@ def create_limit_order(signal_data):
             logger.info(f"🔍 [AI VALIDATION] Processing NEW ENTRY signal for {symbol} - AI validation will run")
             validation_result = validate_signal_with_ai(signal_data)
             
-            # SPECIAL CASE: Check if Entry 1 is bad but Entry 2 might be good (rare case)
-            # In this case, we skip Entry 1 and only take Entry 2 with $20 and custom TP (4-5%)
+            # Extract validation results
+            is_valid = validation_result.get('is_valid', True)
+            confidence_score = validation_result.get('confidence_score', 100.0)
+            confidence_threshold = AI_VALIDATION_MIN_CONFIDENCE  # Default: 55%
             reasoning = validation_result.get('reasoning', '')
             entry1_is_bad, entry2_is_good_from_parsing = parse_entry_analysis_from_reasoning(reasoning)
             has_high_volatility, price_change_pct = check_recent_price_volatility(symbol, days=7)
             
-            # Check if we have Entry 2 price
-            entry2_price = second_entry_price if second_entry_price and second_entry_price > 0 else None
+            # Check if Entry 1 failed validation
+            # Entry 1 fails if: is_valid=False OR confidence < 50% OR Entry 1 is bad from parsing
+            entry1_failed = not is_valid or confidence_score < 50.0 or entry1_is_bad
             
-            # If Entry 1 is rejected/bad and Entry 2 seems good from parsing, explicitly validate Entry 2 with AI
+            # Check if we have Entry 2 price (original)
+            entry2_price_original = second_entry_price if second_entry_price and second_entry_price > 0 else None
+            
+            # Get optimized Entry 2 price if available (from AI optimization)
+            entry2_price_optimized = None
+            if 'optimized_prices' in validation_result:
+                opt_prices = validation_result['optimized_prices']
+                entry2_price_optimized = safe_float(opt_prices.get('second_entry_price'), default=None)
+            
+            # ENTRY 2 VALIDATION LOGIC (CRITICAL - CHECK BEFORE REJECTION):
+            # If Entry 1 failed, ALWAYS check Entry 2 as standalone trade (both original and optimized)
+            # Only reject completely if BOTH Entry 2 options fail
             entry2_standalone_valid = False
             entry2_standalone_result = None
+            entry2_price_to_use = None
             
-            if (entry1_is_bad and 
-                entry2_is_good_from_parsing and 
-                entry2_price is not None and
-                (not validation_result.get('is_valid', True) or validation_result.get('confidence_score', 100.0) < 50.0)):
+            if entry1_failed and (entry2_price_original is not None or entry2_price_optimized is not None):
+                logger.info(f"🔍 Entry 1 failed validation (is_valid={is_valid}, confidence={confidence_score:.1f}%, parsed_bad={entry1_is_bad})")
+                logger.info(f"   Checking Entry 2 as standalone trade to avoid missing profitable trades")
                 
-                logger.info(f"🔍 Entry 1 rejected but Entry 2 seems good - Asking AI to explicitly validate Entry 2 as standalone trade")
-                entry2_standalone_result = validate_entry2_standalone_with_ai(
-                    signal_data=signal_data,
-                    entry2_price=entry2_price,
-                    original_validation_result=validation_result
-                )
+                # Try Entry 2 with ORIGINAL price first
+                if entry2_price_original is not None:
+                    logger.info(f"   📍 Testing Entry 2 with ORIGINAL price: ${entry2_price_original:,.8f}")
+                    entry2_result_original = validate_entry2_standalone_with_ai(
+                        signal_data=signal_data,
+                        entry2_price=entry2_price_original,
+                        original_validation_result=validation_result
+                    )
+                    
+                    entry2_valid_original = entry2_result_original.get('is_valid', False)
+                    entry2_confidence_original = entry2_result_original.get('confidence_score', 0.0)
+                    
+                    if entry2_valid_original and entry2_confidence_original >= 50.0:
+                        logger.info(f"✅ AI APPROVED Entry 2 with ORIGINAL price: Confidence={entry2_confidence_original:.1f}%")
+                        entry2_standalone_valid = True
+                        entry2_standalone_result = entry2_result_original
+                        entry2_price_to_use = entry2_price_original
+                    else:
+                        logger.warning(f"🚫 AI REJECTED Entry 2 with ORIGINAL price: Confidence={entry2_confidence_original:.1f}%")
                 
-                entry2_standalone_valid = entry2_standalone_result.get('is_valid', False)
-                entry2_confidence = entry2_standalone_result.get('confidence_score', 0.0)
+                # If original Entry 2 failed, try OPTIMIZED Entry 2 price
+                if not entry2_standalone_valid and entry2_price_optimized is not None:
+                    logger.info(f"   📍 Testing Entry 2 with OPTIMIZED price: ${entry2_price_optimized:,.8f}")
+                    entry2_result_optimized = validate_entry2_standalone_with_ai(
+                        signal_data=signal_data,
+                        entry2_price=entry2_price_optimized,
+                        original_validation_result=validation_result
+                    )
+                    
+                    entry2_valid_optimized = entry2_result_optimized.get('is_valid', False)
+                    entry2_confidence_optimized = entry2_result_optimized.get('confidence_score', 0.0)
+                    
+                    if entry2_valid_optimized and entry2_confidence_optimized >= 50.0:
+                        logger.info(f"✅ AI APPROVED Entry 2 with OPTIMIZED price: Confidence={entry2_confidence_optimized:.1f}%")
+                        entry2_standalone_valid = True
+                        entry2_standalone_result = entry2_result_optimized
+                        entry2_price_to_use = entry2_price_optimized
+                    else:
+                        logger.warning(f"🚫 AI REJECTED Entry 2 with OPTIMIZED price: Confidence={entry2_confidence_optimized:.1f}%")
                 
-                if entry2_standalone_valid:
-                    logger.info(f"✅ AI APPROVED Entry 2 as standalone trade: Confidence={entry2_confidence:.1f}%")
-                else:
-                    logger.warning(f"🚫 AI REJECTED Entry 2 as standalone trade: {entry2_standalone_result.get('reasoning', 'No reason')}")
+                # If both Entry 2 options failed, log it but continue to check if we should still reject
+                if not entry2_standalone_valid:
+                    logger.warning(f"🚫 Both Entry 2 options (original and optimized) were REJECTED by AI")
             
-            # Special case conditions:
-            # 1. Entry 1 is bad
-            # 2. Entry 2 price is available
-            # 3. Either signal is rejected OR confidence is low
-            # 4. AI explicitly approved Entry 2 as standalone trade (with minimum confidence)
-            # 5. High volatility OR price moved significantly recently
+            # Special case: Use Entry 2 only if Entry 1 failed AND Entry 2 passed validation
             should_use_entry2_only = (
-                entry1_is_bad and 
-                entry2_price is not None and
-                (not validation_result.get('is_valid', True) or validation_result.get('confidence_score', 100.0) < 50.0) and
+                entry1_failed and
                 entry2_standalone_valid and
-                entry2_standalone_result.get('confidence_score', 0.0) >= 50.0 and  # Entry 2 must have at least 50% confidence
-                (has_high_volatility or price_change_pct > 5.0)  # At least 5% movement in 7 days
+                entry2_standalone_result is not None and
+                entry2_price_to_use is not None and
+                entry2_standalone_result.get('confidence_score', 0.0) >= 50.0 and
+                (has_high_volatility or price_change_pct > 5.0)  # At least 5% movement in 7 days (helps ensure fill probability)
             )
             
             if should_use_entry2_only:
                 entry2_confidence = entry2_standalone_result.get('confidence_score', 60.0)
                 logger.info(f"🎯 SPECIAL CASE DETECTED: Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade for {symbol}")
-                logger.info(f"   Entry 1 Analysis: Rejected (not optimal)")
+                logger.info(f"   Entry 1 Analysis: Rejected (is_valid={is_valid}, confidence={confidence_score:.1f}%)")
                 logger.info(f"   Entry 2 Standalone Validation: ✅ APPROVED by AI")
+                logger.info(f"   Entry 2 Price: ${entry2_price_to_use:,.8f} ({'OPTIMIZED' if entry2_price_to_use == entry2_price_optimized else 'ORIGINAL'})")
                 logger.info(f"   Entry 2 Confidence: {entry2_confidence:.1f}%")
                 logger.info(f"   Recent Volatility: {price_change_pct:.2f}% over 7 days (High: {has_high_volatility})")
                 logger.info(f"   Decision: Skipping Entry 1, creating Entry 2 only order with $20 and custom TP (4-5%)")
                 
-                # This will be handled in the order creation section below
-                # We'll set a flag to indicate this special case
+                # Set flags for Entry 2 only trade
                 signal_data['_special_entry2_only'] = True
-                signal_data['_entry2_only_price'] = entry2_price
+                signal_data['_entry2_only_price'] = entry2_price_to_use
                 signal_data['_entry2_standalone_result'] = entry2_standalone_result
                 
                 # Override validation to allow this special case (use Entry 2's validation result)
                 validation_result['is_valid'] = True
-                validation_result['confidence_score'] = entry2_confidence  # Use Entry 2's confidence
+                validation_result['confidence_score'] = entry2_confidence
                 validation_result['risk_level'] = entry2_standalone_result.get('risk_level', 'MEDIUM')
                 validation_result['special_case'] = 'ENTRY2_ONLY'
-                validation_result['special_case_reason'] = f'Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade (Confidence: {entry2_confidence:.1f}%). Recent volatility: {price_change_pct:.2f}%'
+                validation_result['special_case_reason'] = f'Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade (Confidence: {entry2_confidence:.1f}%, Price: ${entry2_price_to_use:,.8f}). Recent volatility: {price_change_pct:.2f}%'
                 validation_result['entry2_standalone_reasoning'] = entry2_standalone_result.get('reasoning', '')
             
-            # Check if signal is valid and meets confidence threshold
-            if not validation_result.get('is_valid', True):
-                rejection_reason = validation_result.get('reasoning', 'Signal validation failed - AI determined signal is invalid')
-                logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
-                
-                # Send rejection notification to Slack exception channel
-                send_signal_rejection_notification(
-                    symbol=symbol,
-                    signal_side=signal_side,
-                    timeframe=timeframe,
-                    entry_price=entry_price,
-                    rejection_reason=f"Signal validation failed - AI determined signal is invalid.\n\n{rejection_reason}",
-                    confidence_score=validation_result.get('confidence_score'),
-                    risk_level=validation_result.get('risk_level'),
-                    validation_result=validation_result
-                )
-                
-                return {
-                    'success': False,
-                    'error': 'Signal validation failed',
-                    'validation_result': validation_result
-                }
+            # APPROVAL LOGIC (More lenient - matches AI prompt instructions):
+            # 1. If AI explicitly approves (is_valid=True) and confidence >= 50%: APPROVE
+            # 2. If confidence >= 55% (threshold): APPROVE
+            # 3. If confidence 50-54% and AI says is_valid=True: APPROVE (AI prompt says "APPROVE with caution")
+            # 4. If confidence 45-49% and is_valid=True and R/R >= 1.0: APPROVE (AI prompt allows this)
+            # 5. Only reject if confidence < 45% OR (confidence < 50% AND is_valid=False)
+            # BUT: If Entry 2 passed validation, we already handled it above, so don't reject here
             
-            confidence_score = validation_result.get('confidence_score', 100.0)
-            # More lenient threshold: If AI explicitly approves (is_valid=True) and confidence is close to threshold (within 5%), approve it
-            # This handles cases where AI says "APPROVE" but confidence is slightly below threshold due to scoring formula
-            confidence_threshold = AI_VALIDATION_MIN_CONFIDENCE
-            if validation_result.get('is_valid', True) and confidence_score >= (confidence_threshold - 5.0):
-                # AI approved and confidence is within 5% of threshold - approve it
-                logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (within 5% of threshold {confidence_threshold}%, AI explicitly approved)")
-            elif confidence_score < confidence_threshold and not signal_data.get('_special_entry2_only', False):
-                # Don't reject if this is the special Entry 2 only case
-                rejection_reason = f"Confidence score {confidence_score:.1f}% is below minimum threshold of {confidence_threshold}%"
-                logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
-                logger.info(f"   Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
-                logger.info(f"   Risk Level: {validation_result.get('risk_level', 'UNKNOWN')}")
+            should_approve = False
+            if is_valid and confidence_score >= 50.0:
+                # AI explicitly approved and confidence is 50%+: APPROVE
+                should_approve = True
+                logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI explicitly approved with is_valid=True)")
+            elif confidence_score >= confidence_threshold:
+                # Confidence meets threshold: APPROVE
+                should_approve = True
+                logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (meets threshold {confidence_threshold}%)")
+            elif is_valid and confidence_score >= 45.0:
+                # AI approved with 45-49% confidence: APPROVE (AI prompt allows this if R/R >= 1.0)
+                should_approve = True
+                logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI approved, within acceptable range 45-49%)")
+            
+            # Only reject if Entry 1 failed AND Entry 2 also failed (both options rejected)
+            if not should_approve and not signal_data.get('_special_entry2_only', False):
+                # Check if Entry 2 validation was attempted but failed
+                if entry1_failed and (entry2_price_original is not None or entry2_price_optimized is not None):
+                    if not entry2_standalone_valid:
+                        # Both Entry 1 and Entry 2 failed - complete rejection
+                        rejection_reason = f"Signal REJECTED: Entry 1 failed (is_valid={is_valid}, confidence={confidence_score:.1f}%) AND Entry 2 standalone validation also failed (both original and optimized prices rejected)"
+                        logger.warning(f"🚫 COMPLETE REJECTION for {symbol}: {rejection_reason}")
+                        logger.info(f"   Entry 1 Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
+                        logger.info(f"   Entry 2 was tested but also rejected by AI")
+                        logger.info(f"   This is a FALSE SIGNAL - both Entry 1 and Entry 2 failed validation")
+                    else:
+                        # Entry 2 passed but conditions not met (shouldn't happen, but safety check)
+                        rejection_reason = f"Entry 1 failed but Entry 2 validation conditions not fully met"
+                        logger.warning(f"⚠️  Edge case: Entry 2 passed but conditions not met")
+                else:
+                    # Entry 1 failed and no Entry 2 available
+                    rejection_reason = f"Confidence score {confidence_score:.1f}% is below acceptable threshold (AI: is_valid={is_valid}, threshold: {confidence_threshold}%)"
+                    logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
+                    logger.info(f"   Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
+                    logger.info(f"   Risk Level: {validation_result.get('risk_level', 'UNKNOWN')}")
                 
                 # Send rejection notification to Slack exception channel
                 full_reason = f"{rejection_reason}\n\n{validation_result.get('reasoning', 'No detailed reasoning provided')}"
@@ -4583,7 +4628,7 @@ def create_limit_order(signal_data):
                 
                 return {
                     'success': False,
-                    'error': f'Signal confidence {confidence_score:.1f}% below minimum {confidence_threshold}%',
+                    'error': f'Signal rejected: Entry 1 failed and Entry 2 also failed validation',
                     'validation_result': validation_result
                 }
             
