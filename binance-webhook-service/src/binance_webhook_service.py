@@ -2306,6 +2306,60 @@ def check_recent_price_volatility(symbol, days=7):
         return False, 0.0
 
 
+def validate_entry2_standalone_with_ai(signal_data, entry2_price, original_validation_result):
+    """Explicitly ask AI to validate Entry 2 as a standalone trade when Entry 1 is rejected
+    
+    Args:
+        signal_data: Original signal data
+        entry2_price: Entry 2 price to validate
+        original_validation_result: Original AI validation result (Entry 1 was rejected)
+    
+    Returns:
+        dict: Validation result with 'is_valid', 'confidence_score', 'reasoning', 'risk_level'
+    """
+    if not entry2_price or entry2_price <= 0:
+        return {
+            'is_valid': False,
+            'confidence_score': 0.0,
+            'reasoning': 'Entry 2 price is missing or invalid',
+            'risk_level': 'HIGH'
+        }
+    
+    symbol = format_symbol(signal_data.get('symbol', ''))
+    signal_side = signal_data.get('signal_side', 'LONG')
+    timeframe = signal_data.get('timeframe', '1H')
+    stop_loss = safe_float(signal_data.get('stop_loss'), default=None)
+    take_profit = safe_float(signal_data.get('take_profit'), default=None)
+    
+    logger.info(f"🔍 [ENTRY 2 STANDALONE VALIDATION] Asking AI to validate Entry 2 as standalone trade for {symbol}")
+    
+    # Create a modified signal data with Entry 2 as the primary entry
+    entry2_signal_data = signal_data.copy()
+    entry2_signal_data['entry_price'] = entry2_price
+    entry2_signal_data['_entry2_standalone_validation'] = True
+    entry2_signal_data['_original_entry1_rejected'] = True
+    entry2_signal_data['_original_rejection_reason'] = original_validation_result.get('reasoning', 'Entry 1 rejected')
+    
+    # Call AI validation with a special prompt for Entry 2 standalone
+    try:
+        validation_result = validate_signal_with_ai(entry2_signal_data)
+        
+        # Add a flag to indicate this is Entry 2 standalone validation
+        validation_result['_entry2_standalone'] = True
+        validation_result['_entry2_price'] = entry2_price
+        
+        logger.info(f"✅ Entry 2 standalone validation result for {symbol}: Valid={validation_result.get('is_valid')}, Confidence={validation_result.get('confidence_score', 0):.1f}%")
+        return validation_result
+    except Exception as e:
+        logger.error(f"❌ Error validating Entry 2 standalone for {symbol}: {e}", exc_info=True)
+        return {
+            'is_valid': False,
+            'confidence_score': 0.0,
+            'reasoning': f'Error validating Entry 2 standalone: {str(e)}',
+            'risk_level': 'HIGH'
+        }
+
+
 def parse_entry_analysis_from_reasoning(reasoning):
     """Parse AI reasoning to detect if Entry 1 is bad but Entry 2 is good
     
@@ -2954,7 +3008,43 @@ PRICE ACTION PATTERNS:
 
 ═══════════════════════════════════════════════════════════════"""
     
-    prompt = f"""You are an INSTITUTIONAL CRYPTO TRADER and WHALE with 20+ years of elite professional trading experience.
+    # Check if this is Entry 2 standalone validation
+    is_entry2_standalone = signal_data.get('_entry2_standalone_validation', False)
+    original_rejection_reason = signal_data.get('_original_rejection_reason', '')
+    
+    # Add special header for Entry 2 standalone validation
+    entry2_standalone_header = ""
+    if is_entry2_standalone:
+        entry2_standalone_header = f"""
+═══════════════════════════════════════════════════════════════
+⚠️ CRITICAL: ENTRY 2 STANDALONE VALIDATION ⚠️
+═══════════════════════════════════════════════════════════════
+
+ENTRY 1 WAS REJECTED - You are now validating Entry 2 as a STANDALONE TRADE.
+
+Original Entry 1 Rejection Reason:
+{original_rejection_reason}
+
+CURRENT TASK: Evaluate Entry 2 (${entry_price:,.8f}) as a STANDALONE trade opportunity.
+- Entry 1 is NOT being used - this is Entry 2 ONLY
+- You must evaluate if Entry 2 alone is worth trading with $20 position size
+- Entry 2 will use a custom TP of 4-5% from entry (not the original TP)
+- This is a RARE case - only approve if Entry 2 is STRONG enough to trade alone
+
+CRITICAL QUESTIONS TO ANSWER:
+1. Is Entry 2 at an optimal institutional liquidity zone?
+2. Does Entry 2 have strong technical support (support/resistance, indicators)?
+3. Is Entry 2's Risk/Reward acceptable for a standalone trade?
+4. Would you trade Entry 2 alone if Entry 1 didn't exist?
+
+DECISION CRITERIA:
+- APPROVE Entry 2 standalone if: Strong technical setup, good R/R, optimal entry zone
+- REJECT Entry 2 standalone if: Weak setup, poor R/R, not at optimal zone, or Entry 1 rejection reasons also apply to Entry 2
+
+═══════════════════════════════════════════════════════════════
+"""
+
+    prompt = f"""{entry2_standalone_header}You are an INSTITUTIONAL CRYPTO TRADER and WHALE with 20+ years of elite professional trading experience.
 You have achieved consistent 200% monthly returns (2x per month) through:
 - Deep understanding of crypto market structure, order flow, and institutional/whale behavior
 - Mastery of multi-timeframe analysis (HTF → LTF) and market structure (BOS, CHoCH)
@@ -4336,32 +4426,60 @@ def create_limit_order(signal_data):
             logger.info(f"🔍 [AI VALIDATION] Processing NEW ENTRY signal for {symbol} - AI validation will run")
             validation_result = validate_signal_with_ai(signal_data)
             
-            # SPECIAL CASE: Check if Entry 1 is bad but Entry 2 is good (rare case)
+            # SPECIAL CASE: Check if Entry 1 is bad but Entry 2 might be good (rare case)
             # In this case, we skip Entry 1 and only take Entry 2 with $20 and custom TP (4-5%)
             reasoning = validation_result.get('reasoning', '')
-            entry1_is_bad, entry2_is_good = parse_entry_analysis_from_reasoning(reasoning)
+            entry1_is_bad, entry2_is_good_from_parsing = parse_entry_analysis_from_reasoning(reasoning)
             has_high_volatility, price_change_pct = check_recent_price_volatility(symbol, days=7)
             
             # Check if we have Entry 2 price
             entry2_price = second_entry_price if second_entry_price and second_entry_price > 0 else None
             
+            # If Entry 1 is rejected/bad and Entry 2 seems good from parsing, explicitly validate Entry 2 with AI
+            entry2_standalone_valid = False
+            entry2_standalone_result = None
+            
+            if (entry1_is_bad and 
+                entry2_is_good_from_parsing and 
+                entry2_price is not None and
+                (not validation_result.get('is_valid', True) or validation_result.get('confidence_score', 100.0) < 50.0)):
+                
+                logger.info(f"🔍 Entry 1 rejected but Entry 2 seems good - Asking AI to explicitly validate Entry 2 as standalone trade")
+                entry2_standalone_result = validate_entry2_standalone_with_ai(
+                    signal_data=signal_data,
+                    entry2_price=entry2_price,
+                    original_validation_result=validation_result
+                )
+                
+                entry2_standalone_valid = entry2_standalone_result.get('is_valid', False)
+                entry2_confidence = entry2_standalone_result.get('confidence_score', 0.0)
+                
+                if entry2_standalone_valid:
+                    logger.info(f"✅ AI APPROVED Entry 2 as standalone trade: Confidence={entry2_confidence:.1f}%")
+                else:
+                    logger.warning(f"🚫 AI REJECTED Entry 2 as standalone trade: {entry2_standalone_result.get('reasoning', 'No reason')}")
+            
             # Special case conditions:
-            # 1. Entry 1 is bad but Entry 2 is good
+            # 1. Entry 1 is bad
             # 2. Entry 2 price is available
-            # 3. Either signal is rejected OR confidence is low (but Entry 2 is good)
-            # 4. High volatility OR price moved significantly recently
+            # 3. Either signal is rejected OR confidence is low
+            # 4. AI explicitly approved Entry 2 as standalone trade (with minimum confidence)
+            # 5. High volatility OR price moved significantly recently
             should_use_entry2_only = (
                 entry1_is_bad and 
-                entry2_is_good and 
                 entry2_price is not None and
                 (not validation_result.get('is_valid', True) or validation_result.get('confidence_score', 100.0) < 50.0) and
+                entry2_standalone_valid and
+                entry2_standalone_result.get('confidence_score', 0.0) >= 50.0 and  # Entry 2 must have at least 50% confidence
                 (has_high_volatility or price_change_pct > 5.0)  # At least 5% movement in 7 days
             )
             
             if should_use_entry2_only:
-                logger.info(f"🎯 SPECIAL CASE DETECTED: Entry 1 is bad but Entry 2 is good for {symbol}")
-                logger.info(f"   Entry 1 Analysis: Bad (not optimal)")
-                logger.info(f"   Entry 2 Analysis: Good (optimal/correct)")
+                entry2_confidence = entry2_standalone_result.get('confidence_score', 60.0)
+                logger.info(f"🎯 SPECIAL CASE DETECTED: Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade for {symbol}")
+                logger.info(f"   Entry 1 Analysis: Rejected (not optimal)")
+                logger.info(f"   Entry 2 Standalone Validation: ✅ APPROVED by AI")
+                logger.info(f"   Entry 2 Confidence: {entry2_confidence:.1f}%")
                 logger.info(f"   Recent Volatility: {price_change_pct:.2f}% over 7 days (High: {has_high_volatility})")
                 logger.info(f"   Decision: Skipping Entry 1, creating Entry 2 only order with $20 and custom TP (4-5%)")
                 
@@ -4369,12 +4487,15 @@ def create_limit_order(signal_data):
                 # We'll set a flag to indicate this special case
                 signal_data['_special_entry2_only'] = True
                 signal_data['_entry2_only_price'] = entry2_price
+                signal_data['_entry2_standalone_result'] = entry2_standalone_result
                 
-                # Override validation to allow this special case
+                # Override validation to allow this special case (use Entry 2's validation result)
                 validation_result['is_valid'] = True
-                validation_result['confidence_score'] = 60.0  # Set a reasonable confidence for Entry 2 only
+                validation_result['confidence_score'] = entry2_confidence  # Use Entry 2's confidence
+                validation_result['risk_level'] = entry2_standalone_result.get('risk_level', 'MEDIUM')
                 validation_result['special_case'] = 'ENTRY2_ONLY'
-                validation_result['special_case_reason'] = f'Entry 1 rejected but Entry 2 is optimal. Recent volatility: {price_change_pct:.2f}%'
+                validation_result['special_case_reason'] = f'Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade (Confidence: {entry2_confidence:.1f}%). Recent volatility: {price_change_pct:.2f}%'
+                validation_result['entry2_standalone_reasoning'] = entry2_standalone_result.get('reasoning', '')
             
             # Check if signal is valid and meets confidence threshold
             if not validation_result.get('is_valid', True):
