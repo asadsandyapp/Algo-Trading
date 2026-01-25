@@ -22,7 +22,7 @@ try:
         format_symbol, safe_float, get_order_side, get_position_side,
         get_position_mode, check_existing_position, check_existing_orders,
         cancel_order, cancel_all_limit_orders, format_quantity_precision,
-        format_price_precision
+        format_price_precision, verify_webhook_token
     )
     from services.risk.risk_manager import validate_risk_per_trade, check_recent_price_volatility
     from services.ai_validation.validator import (
@@ -44,7 +44,7 @@ except ImportError:
         format_symbol, safe_float, get_order_side, get_position_side,
         get_position_mode, check_existing_position, check_existing_orders,
         cancel_order, cancel_all_limit_orders, format_quantity_precision,
-        format_price_precision
+        format_price_precision, verify_webhook_token
     )
     from ...services.risk.risk_manager import validate_risk_per_trade, check_recent_price_volatility
     from ...services.ai_validation.validator import (
