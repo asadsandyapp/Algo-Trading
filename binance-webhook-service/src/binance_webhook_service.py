@@ -36,12 +36,21 @@ import api.routes  # This imports and registers all routes
 from notifications.slack import send_slack_alert
 
 # Start background thread for TP creation (only if client is initialized)
+# This runs when the module is imported (including by gunicorn workers)
 if client:
-    tp_thread = threading.Thread(target=create_missing_tp_orders, daemon=True)
-    tp_thread.start()
-    logger.info("Background TP creation thread started")
+    try:
+        tp_thread = threading.Thread(target=create_missing_tp_orders, daemon=True)
+        tp_thread.start()
+        logger.info("Background TP creation thread started")
+    except Exception as e:
+        logger.error(f"Failed to start background TP thread: {e}")
 else:
     logger.warning("Binance client not initialized - TP creation thread not started")
+
+# Ensure app is available at module level for gunicorn
+# The app is imported from core module above and is already available
+# No need for additional validation - Flask app is already a valid WSGI app
+# Gunicorn will access it via: binance_webhook_service:app
 
 if __name__ == '__main__':
     # Check configuration
