@@ -3,7 +3,7 @@ Utility functions for Binance Webhook Service
 """
 import re
 import math
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 try:
     # Try relative import first (when imported as package)
     from ..config import WEBHOOK_TOKEN
