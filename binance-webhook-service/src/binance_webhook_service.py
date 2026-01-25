@@ -40,11 +40,11 @@ from config import (
 from services.orders.order_manager import create_missing_tp_orders
 
 # Import routes to register them with Flask app (routes are registered via @app.route decorator)
+# This must happen after app is imported from core
 try:
     import api.routes  # This imports and registers all routes
-    logger.info("Routes imported successfully")
 except Exception as e:
-    logger.error(f"Failed to import routes: {e}", exc_info=True)
+    print(f"ERROR: Failed to import api.routes: {e}", file=sys.stderr)
     traceback.print_exc(file=sys.stderr)
     raise
 
@@ -57,21 +57,8 @@ from notifications.slack import send_slack_alert
 # Gunicorn accesses it via: binance_webhook_service:app
 # The app object is a Flask WSGI application and is ready to use
 
-# Final verification that app is accessible (for debugging)
-try:
-    if app is None:
-        raise RuntimeError("Flask app is None")
-    if not hasattr(app, 'wsgi_app'):
-        raise RuntimeError("Flask app missing wsgi_app method")
-    logger.info(f"Flask app verified: {app.name}, routes: {len(list(app.url_map.iter_rules()))}")
-except Exception as e:
-    logger.error(f"App verification failed: {e}", exc_info=True)
-    traceback.print_exc(file=sys.stderr)
-    raise
-
 # Start background thread for TP creation (only if client is initialized)
 # This runs when the module is imported (including by gunicorn workers)
-# Moved after app verification to ensure app is available first
 if client:
     try:
         tp_thread = threading.Thread(target=create_missing_tp_orders, daemon=True)
@@ -79,6 +66,7 @@ if client:
         logger.info("Background TP creation thread started")
     except Exception as e:
         logger.error(f"Failed to start background TP thread: {e}", exc_info=True)
+        # Don't raise - allow service to continue even if thread fails
 else:
     logger.warning("Binance client not initialized - TP creation thread not started")
 
