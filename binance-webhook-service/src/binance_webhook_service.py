@@ -30,7 +30,11 @@ from config import (
 from services.orders.order_manager import create_missing_tp_orders
 
 # Import routes to register them with Flask app (routes are registered via @app.route decorator)
-import api.routes  # This imports and registers all routes
+try:
+    import api.routes  # This imports and registers all routes
+except Exception as e:
+    logger.error(f"Failed to import routes: {e}", exc_info=True)
+    raise
 
 # Import notifications for main block
 from notifications.slack import send_slack_alert

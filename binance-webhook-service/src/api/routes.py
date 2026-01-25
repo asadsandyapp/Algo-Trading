@@ -6,18 +6,22 @@ import json
 import threading
 from datetime import datetime
 from flask import request, jsonify
+
+# Import app and dependencies
+# When src/ is in Python path (gunicorn --pythonpath), use absolute imports
+# When imported as package, use relative imports
 try:
-    # Try relative import first (when imported as package)
-    from ..core import app, client, logger
-    from ..models.state import active_trades
-    from ..notifications.slack import send_slack_alert
-    from ..services.orders.order_manager import create_limit_order
-except ImportError:
-    # Fall back to absolute import (when src/ is in Python path)
+    # Try absolute import first (when src/ is in Python path - gunicorn case)
     from core import app, client, logger
     from models.state import active_trades
     from notifications.slack import send_slack_alert
     from services.orders.order_manager import create_limit_order
+except ImportError:
+    # Fall back to relative import (when imported as package)
+    from ..core import app, client, logger
+    from ..models.state import active_trades
+    from ..notifications.slack import send_slack_alert
+    from ..services.orders.order_manager import create_limit_order
 
 
 @app.route('/webhook', methods=['POST'])
