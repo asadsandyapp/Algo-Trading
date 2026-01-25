@@ -1,3 +1,4 @@
+# Bitcoin (BTC) Webhook Test
 curl -X POST http://localhost:5000/webhook \
   -H "Content-Type: application/json" \
   -d '{
@@ -29,10 +30,61 @@ curl -X POST http://localhost:5000/webhook \
     "bb_basis": 89554.165,
     "bb_lower": 88884.7941,
     "smv_normalized": 1156.2251,
-    "cum_smv": 6413127.2148,
+    "cum_smv": 6413126.2148,
     "supertrend": 88268.0835,
     "supertrend_bull": false,
     "obv": 5433088.862,
+    "relative_volume_percentile": 50,
+    "mfi": 56.0035,
+    "volume_ratio": 0.44469823,
+    "has_bullish_divergence": false,
+    "has_bearish_divergence": false,
+    "at_bottom": true,
+    "at_top": false,
+    "smart_money_buying": true,
+    "smart_money_selling": false,
+    "price_above_ema200": false,
+    "price_below_ema200": true
+  },
+  "quality_score": 6
+}'
+
+# Ethereum (ETH) Webhook Test
+curl -X POST http://localhost:5000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+  "payload_version": 1,
+  "token": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+  "event": "ENTRY",
+  "order_subtype": "primary_entry",
+  "signal_side": "LONG",
+  "reduce_only": false,
+  "symbol": "ETHUSDT.P",
+  "timeframe": "2h",
+  "entry_price": 2717.19,
+  "average_entry_price": 2717.19,
+  "second_entry_price": 2690.02,
+  "second_entry_filled": false,
+  "stop_loss": 2683.38,
+  "take_profit": 2767.87,
+  "exit_price": null,
+  "indicators": {
+    "rsi": 46.4422,
+    "macd_line": -3.65,
+    "macd_signal": -3.36,
+    "macd_histogram": -0.29,
+    "stoch_k": 31.5047,
+    "stoch_d": 29.222,
+    "ema200": 2900.50,
+    "atr": 17.25,
+    "bb_upper": 2760.45,
+    "bb_basis": 2715.20,
+    "bb_lower": 2669.95,
+    "smv_normalized": 36.75,
+    "cum_smv": 203450.25,
+    "supertrend": 2705.15,
+    "supertrend_bull": false,
+    "obv": 172350.50,
     "relative_volume_percentile": 50,
     "mfi": 56.0035,
     "volume_ratio": 0.44469823,

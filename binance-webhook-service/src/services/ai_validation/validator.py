@@ -2,6 +2,7 @@
 AI Validation service for Binance Webhook Service
 Handles Gemini API integration and signal validation
 """
+import json
 import re
 import time
 import math
