@@ -49,7 +49,7 @@ curl -X POST http://localhost:5000/webhook \
   "quality_score": 6
 }'
 
-# Ethereum (ETH) Webhook Test
+# Ethereum (ETH) ENTRY Webhook Test
 curl -X POST http://localhost:5000/webhook \
   -H "Content-Type: application/json" \
   -d '{
@@ -98,4 +98,26 @@ curl -X POST http://localhost:5000/webhook \
     "price_below_ema200": true
   },
   "quality_score": 6
+}'
+
+# Ethereum (ETH) EXIT Webhook Test
+curl -X POST http://localhost:5000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+  "payload_version": 1,
+  "token": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+  "event": "EXIT",
+  "order_subtype": "reduce_only",
+  "signal_side": "LONG",
+  "reduce_only": true,
+  "symbol": "ETHUSDT.P",
+  "timeframe": "2h",
+  "entry_price": 2717.19,
+  "average_entry_price": 2717.19,
+  "second_entry_price": 2690.02,
+  "second_entry_filled": false,
+  "stop_loss": 2683.38,
+  "take_profit": 2767.87,
+  "exit_price": 2680.50,
+  "quality_score": null
 }'
