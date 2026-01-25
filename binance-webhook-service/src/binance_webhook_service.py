@@ -5,7 +5,9 @@ Receives TradingView webhook signals and creates Binance Futures limit orders
 Optimized for low-resource servers (1 CPU, 1 GB RAM)
 """
 import os
+import sys
 import threading
+import traceback
 
 # Load environment variables from .env file (if present)
 # This allows manual testing; systemd service uses EnvironmentFile which takes precedence
@@ -20,7 +22,15 @@ except ImportError:
     pass
 
 # Import core components
-from core import app, client, logger
+try:
+    from core import app, client, logger
+except Exception as e:
+    import sys
+    print(f"CRITICAL: Failed to import core module: {e}", file=sys.stderr)
+    import traceback
+    traceback.print_exc(file=sys.stderr)
+    raise
+
 from config import (
     WEBHOOK_TOKEN, BINANCE_API_KEY, BINANCE_API_SECRET,
     ENTRY_SIZE_USD, LEVERAGE
@@ -32,8 +42,10 @@ from services.orders.order_manager import create_missing_tp_orders
 # Import routes to register them with Flask app (routes are registered via @app.route decorator)
 try:
     import api.routes  # This imports and registers all routes
+    logger.info("Routes imported successfully")
 except Exception as e:
     logger.error(f"Failed to import routes: {e}", exc_info=True)
+    traceback.print_exc(file=sys.stderr)
     raise
 
 # Import notifications for main block
@@ -54,7 +66,7 @@ if client:
         tp_thread.start()
         logger.info("Background TP creation thread started")
     except Exception as e:
-        logger.error(f"Failed to start background TP thread: {e}")
+        logger.error(f"Failed to start background TP thread: {e}", exc_info=True)
 else:
     logger.warning("Binance client not initialized - TP creation thread not started")
 
