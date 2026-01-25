@@ -6,10 +6,18 @@ import json
 import threading
 from datetime import datetime
 from flask import request, jsonify
-from ..core import app, client, logger
-from ..models.state import active_trades
-from ..notifications.slack import send_slack_alert
-from ..services.orders.order_manager import create_limit_order
+try:
+    # Try relative import first (when imported as package)
+    from ..core import app, client, logger
+    from ..models.state import active_trades
+    from ..notifications.slack import send_slack_alert
+    from ..services.orders.order_manager import create_limit_order
+except ImportError:
+    # Fall back to absolute import (when src/ is in Python path)
+    from core import app, client, logger
+    from models.state import active_trades
+    from notifications.slack import send_slack_alert
+    from services.orders.order_manager import create_limit_order
 
 
 @app.route('/webhook', methods=['POST'])

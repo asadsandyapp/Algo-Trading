@@ -8,26 +8,50 @@ import threading
 from typing import Dict, Any, Optional
 
 # Import dependencies
-from ...core import client, logger
-from ...config import (
-    ENTRY_SIZE_USD, LEVERAGE, TP1_PERCENT, TP1_SPLIT, TP2_SPLIT,
-    TP_HIGH_CONFIDENCE_THRESHOLD, ENABLE_TRAILING_STOP_LOSS,
-    TRAILING_SL_BREAKEVEN_PERCENT, ENABLE_RISK_VALIDATION,
-    AI_VALIDATION_MIN_CONFIDENCE, ENABLE_AI_PRICE_SUGGESTIONS
-)
-from ...models.state import active_trades, recent_orders, recent_exits, ORDER_COOLDOWN, EXIT_COOLDOWN
-from ...utils.helpers import (
-    format_symbol, safe_float, get_order_side, get_position_side,
-    get_position_mode, check_existing_position, check_existing_orders,
-    cancel_order, cancel_all_limit_orders, format_quantity_precision,
-    format_price_precision
-)
-from ...services.risk.risk_manager import validate_risk_per_trade, check_recent_price_volatility
-from ...services.ai_validation.validator import (
-    validate_signal_with_ai, validate_entry2_standalone_with_ai,
-    parse_entry_analysis_from_reasoning
-)
-from ...notifications.slack import send_slack_alert, send_signal_notification, send_exit_notification, send_signal_rejection_notification
+try:
+    # Try relative import first (when imported as package)
+    from ...core import client, logger
+    from ...config import (
+        ENTRY_SIZE_USD, LEVERAGE, TP1_PERCENT, TP1_SPLIT, TP2_SPLIT,
+        TP_HIGH_CONFIDENCE_THRESHOLD, ENABLE_TRAILING_STOP_LOSS,
+        TRAILING_SL_BREAKEVEN_PERCENT, ENABLE_RISK_VALIDATION,
+        AI_VALIDATION_MIN_CONFIDENCE, ENABLE_AI_PRICE_SUGGESTIONS
+    )
+    from ...models.state import active_trades, recent_orders, recent_exits, ORDER_COOLDOWN, EXIT_COOLDOWN
+    from ...utils.helpers import (
+        format_symbol, safe_float, get_order_side, get_position_side,
+        get_position_mode, check_existing_position, check_existing_orders,
+        cancel_order, cancel_all_limit_orders, format_quantity_precision,
+        format_price_precision
+    )
+    from ...services.risk.risk_manager import validate_risk_per_trade, check_recent_price_volatility
+    from ...services.ai_validation.validator import (
+        validate_signal_with_ai, validate_entry2_standalone_with_ai,
+        parse_entry_analysis_from_reasoning
+    )
+    from ...notifications.slack import send_slack_alert, send_signal_notification, send_exit_notification, send_signal_rejection_notification
+except ImportError:
+    # Fall back to absolute import (when src/ is in Python path)
+    from core import client, logger
+    from config import (
+        ENTRY_SIZE_USD, LEVERAGE, TP1_PERCENT, TP1_SPLIT, TP2_SPLIT,
+        TP_HIGH_CONFIDENCE_THRESHOLD, ENABLE_TRAILING_STOP_LOSS,
+        TRAILING_SL_BREAKEVEN_PERCENT, ENABLE_RISK_VALIDATION,
+        AI_VALIDATION_MIN_CONFIDENCE, ENABLE_AI_PRICE_SUGGESTIONS
+    )
+    from models.state import active_trades, recent_orders, recent_exits, ORDER_COOLDOWN, EXIT_COOLDOWN
+    from utils.helpers import (
+        format_symbol, safe_float, get_order_side, get_position_side,
+        get_position_mode, check_existing_position, check_existing_orders,
+        cancel_order, cancel_all_limit_orders, format_quantity_precision,
+        format_price_precision
+    )
+    from services.risk.risk_manager import validate_risk_per_trade, check_recent_price_volatility
+    from services.ai_validation.validator import (
+        validate_signal_with_ai, validate_entry2_standalone_with_ai,
+        parse_entry_analysis_from_reasoning
+    )
+    from notifications.slack import send_slack_alert, send_signal_notification, send_exit_notification, send_signal_rejection_notification
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 
 def calculate_quantity(entry_price, symbol_info, entry_size_usd=None):

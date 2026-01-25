@@ -15,10 +15,18 @@ try:
 except ImportError:
     GEMINI_AVAILABLE = False
 
-from ..config import (
-    BINANCE_API_KEY, BINANCE_API_SECRET, BINANCE_TESTNET, BINANCE_SUB_ACCOUNT_EMAIL,
-    GEMINI_API_KEY, ENABLE_AI_VALIDATION, GEMINI_MODEL_NAMES
-)
+try:
+    # Try relative import first (when imported as package)
+    from ..config import (
+        BINANCE_API_KEY, BINANCE_API_SECRET, BINANCE_TESTNET, BINANCE_SUB_ACCOUNT_EMAIL,
+        GEMINI_API_KEY, ENABLE_AI_VALIDATION, GEMINI_MODEL_NAMES
+    )
+except ImportError:
+    # Fall back to absolute import (when src/ is in Python path)
+    from config import (
+        BINANCE_API_KEY, BINANCE_API_SECRET, BINANCE_TESTNET, BINANCE_SUB_ACCOUNT_EMAIL,
+        GEMINI_API_KEY, ENABLE_AI_VALIDATION, GEMINI_MODEL_NAMES
+    )
 
 # Configure logging
 LOG_DIR = os.getenv('LOG_DIR', os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'logs'))
@@ -157,8 +165,16 @@ elif ENABLE_AI_VALIDATION and not GEMINI_AVAILABLE:
 
 # Note: Global state is now managed in models.state module
 # Import them here for backward compatibility
-from ..models.state import (
-    active_trades, recent_orders, recent_exits,
-    account_balance_cache, validation_cache
-)
+try:
+    # Try relative import first (when imported as package)
+    from ..models.state import (
+        active_trades, recent_orders, recent_exits,
+        account_balance_cache, validation_cache
+    )
+except ImportError:
+    # Fall back to absolute import (when src/ is in Python path)
+    from models.state import (
+        active_trades, recent_orders, recent_exits,
+        account_balance_cache, validation_cache
+    )
 

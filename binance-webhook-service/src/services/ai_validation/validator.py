@@ -9,13 +9,24 @@ import threading
 from typing import Dict, Tuple
 
 # Import dependencies
-from ...core import client, logger, gemini_client, gemini_model_name
-from ...config import (
-    ENABLE_AI_VALIDATION, AI_VALIDATION_MIN_CONFIDENCE, ENABLE_AI_PRICE_SUGGESTIONS,
-    GEMINI_MODEL_NAMES, TP1_PERCENT, TP1_SPLIT, TP2_SPLIT
-)
-from ...models.state import validation_cache, VALIDATION_CACHE_TTL
-from ...utils.helpers import format_symbol, safe_float
+try:
+    # Try relative import first (when imported as package)
+    from ...core import client, logger, gemini_client, gemini_model_name
+    from ...config import (
+        ENABLE_AI_VALIDATION, AI_VALIDATION_MIN_CONFIDENCE, ENABLE_AI_PRICE_SUGGESTIONS,
+        GEMINI_MODEL_NAMES, TP1_PERCENT, TP1_SPLIT, TP2_SPLIT
+    )
+    from ...models.state import validation_cache, VALIDATION_CACHE_TTL
+    from ...utils.helpers import format_symbol, safe_float
+except ImportError:
+    # Fall back to absolute import (when src/ is in Python path)
+    from core import client, logger, gemini_client, gemini_model_name
+    from config import (
+        ENABLE_AI_VALIDATION, AI_VALIDATION_MIN_CONFIDENCE, ENABLE_AI_PRICE_SUGGESTIONS,
+        GEMINI_MODEL_NAMES, TP1_PERCENT, TP1_SPLIT, TP2_SPLIT
+    )
+    from models.state import validation_cache, VALIDATION_CACHE_TTL
+    from utils.helpers import format_symbol, safe_float
 
 def validate_entry2_standalone_with_ai(signal_data, entry2_price, original_validation_result):
     """Explicitly ask AI to validate Entry 2 as a standalone trade when Entry 1 is rejected

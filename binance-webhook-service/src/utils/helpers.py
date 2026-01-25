@@ -4,8 +4,14 @@ Utility functions for Binance Webhook Service
 import re
 import math
 from typing import Optional, Tuple
-from ..config import WEBHOOK_TOKEN
-from ..core import client, logger
+try:
+    # Try relative import first (when imported as package)
+    from ..config import WEBHOOK_TOKEN
+    from ..core import client, logger
+except ImportError:
+    # Fall back to absolute import (when src/ is in Python path)
+    from config import WEBHOOK_TOKEN
+    from core import client, logger
 
 
 def verify_webhook_token(payload_token: str) -> bool:
@@ -180,7 +186,10 @@ def format_price_precision(price: float, tick_size: float) -> float:
 def cleanup_closed_positions():
     """Periodically clean up active_trades for symbols with no open positions"""
     try:
-        from ..models import active_trades
+        try:
+            from ..models import active_trades
+        except ImportError:
+            from models import active_trades
         from . import check_existing_position, check_existing_orders
         
         symbols_to_remove = []

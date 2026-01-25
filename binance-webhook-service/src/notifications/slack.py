@@ -5,11 +5,20 @@ Handles Slack notifications for errors, signals, and exits
 import requests
 import threading
 from datetime import datetime
-from ..config import (
-    SLACK_WEBHOOK_URL, SLACK_SIGNAL_WEBHOOK_URL, BINANCE_TESTNET,
-    AI_VALIDATION_MIN_CONFIDENCE, TP1_PERCENT
-)
-from ..core import logger
+try:
+    # Try relative import first (when imported as package)
+    from ..config import (
+        SLACK_WEBHOOK_URL, SLACK_SIGNAL_WEBHOOK_URL, BINANCE_TESTNET,
+        AI_VALIDATION_MIN_CONFIDENCE, TP1_PERCENT
+    )
+    from ..core import logger
+except ImportError:
+    # Fall back to absolute import (when src/ is in Python path)
+    from config import (
+        SLACK_WEBHOOK_URL, SLACK_SIGNAL_WEBHOOK_URL, BINANCE_TESTNET,
+        AI_VALIDATION_MIN_CONFIDENCE, TP1_PERCENT
+    )
+    from core import logger
 
 
 def send_slack_alert(error_type, message, details=None, symbol=None, severity='ERROR'):

@@ -4,10 +4,18 @@ Handles risk validation, calculations, and volatility checks
 """
 import time
 from typing import Tuple, Optional, Dict
-from ...config import MAX_RISK_PERCENT
-from ...core import client, logger
-from ...models.state import account_balance_cache, BALANCE_CACHE_TTL, active_trades
-from ...utils.helpers import safe_float
+try:
+    # Try relative import first (when imported as package)
+    from ...config import MAX_RISK_PERCENT
+    from ...core import client, logger
+    from ...models.state import account_balance_cache, BALANCE_CACHE_TTL, active_trades
+    from ...utils.helpers import safe_float
+except ImportError:
+    # Fall back to absolute import (when src/ is in Python path)
+    from config import MAX_RISK_PERCENT
+    from core import client, logger
+    from models.state import account_balance_cache, BALANCE_CACHE_TTL, active_trades
+    from utils.helpers import safe_float
 
 
 def get_account_balance(cached=True):
