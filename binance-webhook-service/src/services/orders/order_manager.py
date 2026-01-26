@@ -2209,14 +2209,14 @@ def create_limit_order(signal_data):
                 
                 # Store TP/SL for TP creation
                 if stop_loss:
-                    active_trades[symbol]['tp2_price'] = format_price_precision(stop_loss, tick_size)  # Use SL as TP trigger
+                    active_trades[symbol]['original_stop_loss'] = format_price_precision(stop_loss, tick_size)
                 if take_profit:
-                    active_trades[symbol]['tp1_price'] = format_price_precision(take_profit, tick_size)
                     active_trades[symbol]['use_single_tp'] = True
                     active_trades[symbol]['tp2_price'] = format_price_precision(take_profit, tick_size)
+                    active_trades[symbol]['tp2_quantity'] = ai_quantity  # Store as tp2_quantity for single TP mode
                     active_trades[symbol]['tp_side'] = 'SELL' if signal_side == 'LONG' else 'BUY'
-                    active_trades[symbol]['tp_quantity'] = ai_quantity
                     active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
+                    logger.info(f"📊 [POST-EXIT AI TRADE] Stored TP details: TP=${take_profit:,.8f}, Qty={ai_quantity}, Side={active_trades[symbol]['tp_side']}")
                 
                 logger.info(f"✅ POST-EXIT AI order created successfully: Order ID {ai_order_result.get('orderId')} @ ${ai_entry_price:,.8f} (${ai_entry_size} size)")
                 
