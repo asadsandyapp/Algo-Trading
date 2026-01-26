@@ -2107,7 +2107,7 @@ If setup is weak, counter-trend, or lacks institutional confirmation, MODIFY or 
         }
 
 
-def analyze_symbol_for_opportunities(symbol, timeframe='1H'):
+def analyze_symbol_for_opportunities(symbol, timeframe='1H', current_price=None):
     """
     Analyze a symbol after exit to find new trading opportunities (LONG or SHORT)
     This function analyzes both directions and returns the best opportunity if confidence is very high (90%+)
@@ -2115,6 +2115,7 @@ def analyze_symbol_for_opportunities(symbol, timeframe='1H'):
     Args:
         symbol: Trading symbol to analyze
         timeframe: Timeframe for analysis (default: 1H)
+        current_price: Current market price (optional, will be fetched if not provided)
     
     Returns:
         dict: {
@@ -2158,21 +2159,24 @@ def analyze_symbol_for_opportunities(symbol, timeframe='1H'):
     logger.info(f"🔍 [POST-EXIT AI ANALYSIS] Analyzing {symbol} for new trading opportunities...")
     
     try:
-        # Get current market price
+        # Get current market price if not provided
         if not client:
             return {
                 'opportunity_found': False,
                 'error': 'Binance client not available'
             }
         
-        ticker = client.futures_symbol_ticker(symbol=symbol)
-        current_price = float(ticker.get('price', 0))
+        if current_price is None or current_price <= 0:
+            ticker = client.futures_symbol_ticker(symbol=symbol)
+            current_price = float(ticker.get('price', 0))
         
         if current_price <= 0:
             return {
                 'opportunity_found': False,
                 'error': f'Invalid current price: {current_price}'
             }
+        
+        logger.info(f"📊 [POST-EXIT AI ANALYSIS] Current price for {symbol}: ${current_price:,.8f}")
         
         # Fetch market data (similar to validate_signal_with_ai)
         market_data = {}
@@ -2288,12 +2292,15 @@ REAL-TIME MARKET DATA:
 
 CRITICAL REQUIREMENTS:
 1. Only suggest a trade if you are 90%+ CONFIDENT it will be profitable
-2. Analyze BOTH LONG and SHORT opportunities
+2. Analyze BOTH LONG and SHORT opportunities FROM THE CURRENT PRICE (${current_price:,.8f})
 3. Choose the BEST opportunity (highest confidence, best setup)
-4. Provide specific entry, stop loss, and take profit prices
-5. Entry should be at institutional liquidity zones (order blocks, support/resistance, FVGs)
+4. Entry price MUST be CLOSE to current price (within 2% for immediate execution) - prioritize trades from current price level
+5. If current price is at a good entry zone, use current price or very close to it (±0.5%)
 6. Stop loss should be tight (1.5-3% from entry) at nearest support/resistance
 7. Take profit should be CONSERVATIVE and ACHIEVABLE (2-5% from entry) - can be below resistance, focus on realistic profit target
+
+CURRENT PRICE: ${current_price:,.8f}
+IMPORTANT: Entry should be near current price (±2%) for immediate execution. Do NOT suggest entries far from current price.
 
 {market_info}
 

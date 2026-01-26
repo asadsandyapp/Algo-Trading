@@ -1733,7 +1733,16 @@ def create_limit_order(signal_data):
             try:
                 logger.info(f"🤖 [POST-EXIT AI ANALYSIS] Analyzing {symbol} for new trading opportunities...")
                 timeframe = signal_data.get('timeframe', '1H')
-                opportunity = analyze_symbol_for_opportunities(symbol, timeframe)
+                
+                # Get current market price first
+                try:
+                    ticker = client.futures_symbol_ticker(symbol=symbol)
+                    current_price = float(ticker.get('price', 0))
+                except Exception as e:
+                    logger.warning(f"Could not get current price for {symbol}: {e}")
+                    current_price = None
+                
+                opportunity = analyze_symbol_for_opportunities(symbol, timeframe, current_price=current_price)
                 
                 if opportunity.get('opportunity_found') and opportunity.get('confidence_score', 0) >= 90:
                     opp_side = opportunity.get('signal_side')
@@ -1742,6 +1751,41 @@ def create_limit_order(signal_data):
                     opp_tp = opportunity.get('take_profit')
                     opp_confidence = opportunity.get('confidence_score', 0)
                     opp_reasoning = opportunity.get('reasoning', '')
+                    
+                    # Validate entry price is close to current price (within 2% for immediate execution)
+                    if current_price and current_price > 0 and opp_entry:
+                        entry_distance_pct = abs((opp_entry - current_price) / current_price) * 100
+                        MAX_ENTRY_DISTANCE_PCT = 2.0  # Maximum 2% away from current price
+                        
+                        if entry_distance_pct > MAX_ENTRY_DISTANCE_PCT:
+                            logger.warning(f"⚠️ [POST-EXIT AI ANALYSIS] Entry price ${opp_entry:,.8f} is {entry_distance_pct:.2f}% away from current price ${current_price:,.8f} (max: {MAX_ENTRY_DISTANCE_PCT}%)")
+                            logger.warning(f"   Adjusting entry to current price and recalculating SL/TP")
+                            
+                            # Adjust entry to current price and recalculate SL/TP based on percentages
+                            old_entry = opp_entry
+                            opp_entry = current_price
+                            
+                            # Recalculate SL and TP based on original percentages
+                            if opp_sl and old_entry > 0:
+                                # Calculate original SL percentage
+                                if opp_side == 'LONG':
+                                    sl_percent = ((old_entry - opp_sl) / old_entry) * 100
+                                    opp_sl = opp_entry * (1 - sl_percent / 100)
+                                else:  # SHORT
+                                    sl_percent = ((opp_sl - old_entry) / old_entry) * 100
+                                    opp_sl = opp_entry * (1 + sl_percent / 100)
+                            
+                            # Recalculate TP to 3.5% from new entry (ensuring it's in 2-5% range)
+                            target_tp_percent = 3.5
+                            if opp_side == 'LONG':
+                                opp_tp = opp_entry * (1 + target_tp_percent / 100)
+                            else:  # SHORT
+                                opp_tp = opp_entry * (1 - target_tp_percent / 100)
+                            
+                            logger.info(f"🔄 [POST-EXIT AI ANALYSIS] Adjusted entry from ${old_entry:,.8f} to ${opp_entry:,.8f} (current price)")
+                            logger.info(f"   New SL: ${opp_sl:,.8f}, New TP: ${opp_tp:,.8f}")
+                        else:
+                            logger.info(f"✅ [POST-EXIT AI ANALYSIS] Entry price ${opp_entry:,.8f} is {entry_distance_pct:.2f}% from current price ${current_price:,.8f} (acceptable)")
                     
                     # Ensure TP is in 2-5% range (more achievable)
                     # If AI didn't provide TP, calculate it as 3.5% from entry
