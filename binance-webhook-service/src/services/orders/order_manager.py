@@ -27,7 +27,8 @@ try:
     from services.risk.risk_manager import validate_risk_per_trade, check_recent_price_volatility
     from services.ai_validation.validator import (
         validate_signal_with_ai, validate_entry2_standalone_with_ai,
-        parse_entry_analysis_from_reasoning, analyze_symbol_for_opportunities
+        parse_entry_analysis_from_reasoning, analyze_symbol_for_opportunities,
+        analyze_trade_recovery_potential
     )
     from notifications.slack import send_slack_alert, send_signal_notification, send_exit_notification, send_signal_rejection_notification
 except ImportError:
@@ -49,7 +50,8 @@ except ImportError:
     from ...services.risk.risk_manager import validate_risk_per_trade, check_recent_price_volatility
     from ...services.ai_validation.validator import (
         validate_signal_with_ai, validate_entry2_standalone_with_ai,
-        parse_entry_analysis_from_reasoning, analyze_symbol_for_opportunities
+        parse_entry_analysis_from_reasoning, analyze_symbol_for_opportunities,
+        analyze_trade_recovery_potential
     )
     from ...notifications.slack import send_slack_alert, send_signal_notification, send_exit_notification, send_signal_rejection_notification
 from binance.exceptions import BinanceAPIException, BinanceOrderException
@@ -1420,6 +1422,46 @@ def create_limit_order(signal_data):
             # BUT: If Entry 2 passed validation, we already handled it above, so don't reject here
             
             should_approve = False
+            
+            # Check if trade is at strong support/resistance (reversal trade opportunity)
+            is_at_support_resistance = False
+            try:
+                # Get market data to check if entry is at support/resistance
+                if client:
+                    ticker = client.futures_symbol_ticker(symbol=symbol)
+                    current_price = float(ticker.get('price', 0))
+                    if current_price > 0 and entry_price:
+                        # Get recent candles to find support/resistance
+                        timeframe_map = {
+                            '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+                            '1h': '1h', '2h': '2h', '4h': '4h', '6h': '6h', '8h': '8h', '12h': '12h',
+                            '1d': '1d', '3d': '3d', '1w': '1w', '1M': '1M'
+                        }
+                        interval = timeframe_map.get(timeframe.lower(), '1h')
+                        klines = client.futures_klines(symbol=symbol, interval=interval, limit=50)
+                        if klines:
+                            highs = [float(k[2]) for k in klines]
+                            lows = [float(k[3]) for k in klines]
+                            support_level = min(lows[-30:]) if len(lows) >= 30 else min(lows) if lows else None
+                            resistance_level = max(highs[-30:]) if len(highs) >= 30 else max(highs) if highs else None
+                            
+                            if support_level and resistance_level:
+                                # Check if entry is near support (for LONG) or resistance (for SHORT)
+                                price_range = resistance_level - support_level
+                                if price_range > 0:
+                                    entry_distance_from_support = abs(entry_price - support_level) / price_range
+                                    entry_distance_from_resistance = abs(entry_price - resistance_level) / price_range
+                                    
+                                    # Consider "at support/resistance" if within 5% of range
+                                    if signal_side == 'LONG' and entry_distance_from_support <= 0.05:
+                                        is_at_support_resistance = True
+                                        logger.info(f"📍 Entry is at STRONG SUPPORT: Entry ${entry_price:,.8f} is {entry_distance_from_support*100:.1f}% from support ${support_level:,.8f}")
+                                    elif signal_side == 'SHORT' and entry_distance_from_resistance <= 0.05:
+                                        is_at_support_resistance = True
+                                        logger.info(f"📍 Entry is at STRONG RESISTANCE: Entry ${entry_price:,.8f} is {entry_distance_from_resistance*100:.1f}% from resistance ${resistance_level:,.8f}")
+            except Exception as e:
+                logger.debug(f"Could not check support/resistance for {symbol}: {e}")
+            
             if is_valid and confidence_score >= 50.0:
                 # AI explicitly approved and confidence is 50%+: APPROVE
                 should_approve = True
@@ -1432,6 +1474,16 @@ def create_limit_order(signal_data):
                 # AI approved with 45-49% confidence: APPROVE (AI prompt allows this if R/R >= 1.0)
                 should_approve = True
                 logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI approved, within acceptable range 45-49%)")
+            elif is_at_support_resistance and confidence_score >= 30.0 and is_valid:
+                # SPECIAL CASE: Trade at support/resistance (reversal trade) - approve even with lower confidence
+                # Counter-trend trades at support/resistance can be very profitable (bounce/reversal)
+                should_approve = True
+                logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL TRADE at support/resistance - high probability bounce)")
+            elif is_at_support_resistance and confidence_score >= 25.0:
+                # Even more lenient for support/resistance trades - approve if at least 25% confidence
+                # These are reversal trades which can be very profitable
+                should_approve = True
+                logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL TRADE at support/resistance - accepting lower confidence for bounce trade)")
             
             # Only reject if Entry 1 failed AND Entry 2 also failed (both options rejected)
             if not should_approve and not signal_data.get('_special_entry2_only', False):
@@ -1598,6 +1650,120 @@ def create_limit_order(signal_data):
                         lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
                         if lot_size_filter:
                             step_size = float(lot_size_filter['stepSize'])
+                    
+                    # Check if trade is in loss and analyze recovery potential
+                    # Only analyze first position (assuming single position per symbol)
+                    if positions_to_close and exit_price and exit_price > 0:
+                        first_position = positions_to_close[0]
+                        position_entry_price = float(first_position.get('entryPrice', 0))
+                        position_amt = float(first_position.get('positionAmt', 0))
+                        position_side_binance = first_position.get('positionSide', 'BOTH')
+                        
+                        if position_entry_price > 0:
+                            # Calculate P&L
+                            if position_amt > 0:  # LONG position
+                                pnl_percent = ((exit_price - position_entry_price) / position_entry_price) * 100
+                                position_side_for_analysis = 'LONG'
+                            else:  # SHORT position
+                                pnl_percent = ((position_entry_price - exit_price) / position_entry_price) * 100
+                                position_side_for_analysis = 'SHORT'
+                            
+                            # If trade is in loss, analyze recovery potential
+                            if pnl_percent < 0:
+                                logger.info(f"📊 [EXIT ANALYSIS] Trade is in LOSS: {pnl_percent:+.2f}% - Analyzing recovery potential...")
+                                timeframe = signal_data.get('timeframe', '1H')
+                                
+                                recovery_analysis = analyze_trade_recovery_potential(
+                                    symbol=symbol,
+                                    position_side=position_side_for_analysis,
+                                    entry_price=position_entry_price,
+                                    current_price=exit_price,
+                                    timeframe=timeframe
+                                )
+                                
+                                if recovery_analysis.get('can_recover') and recovery_analysis.get('recommended_action') == 'HOLD_AND_WAIT':
+                                    new_tp_price = recovery_analysis.get('new_tp_price')
+                                    recovery_prob = recovery_analysis.get('recovery_probability', 0)
+                                    reasoning = recovery_analysis.get('reasoning', '')
+                                    
+                                    if new_tp_price and new_tp_price > 0:
+                                        logger.info(f"✅ [EXIT ANALYSIS] AI recommends HOLDING position - recovery probability: {recovery_prob:.1f}%")
+                                        logger.info(f"   Current P&L: {pnl_percent:+.2f}%")
+                                        logger.info(f"   New TP Price: ${new_tp_price:,.8f} (1-2% profit target)")
+                                        logger.info(f"   Reasoning: {reasoning[:200]}...")
+                                        
+                                        # Instead of closing, create new TP order at 1-2% profit
+                                        try:
+                                            # Get price precision
+                                            price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+                                            tick_size = float(price_filter['tickSize']) if price_filter else 0.01
+                                            new_tp_price = format_price_precision(new_tp_price, tick_size)
+                                            
+                                            # Calculate TP quantity (full position)
+                                            tp_quantity = abs(position_amt)
+                                            if step_size:
+                                                tp_quantity = format_quantity_precision(tp_quantity, step_size)
+                                            
+                                            # Determine TP side
+                                            tp_side = 'SELL' if position_amt > 0 else 'BUY'
+                                            
+                                            # Create new TP order
+                                            tp_params = {
+                                                'symbol': symbol,
+                                                'side': tp_side,
+                                                'type': 'TAKE_PROFIT_MARKET',
+                                                'timeInForce': 'GTC',
+                                                'closePosition': True,  # Close entire position
+                                                'stopPrice': new_tp_price,
+                                                'workingType': 'MARK_PRICE',
+                                            }
+                                            
+                                            if is_hedge_mode and position_side_binance != 'BOTH':
+                                                tp_params['positionSide'] = position_side_binance
+                                            
+                                            logger.info(f"🔄 [EXIT ANALYSIS] Creating new TP order at ${new_tp_price:,.8f} instead of closing")
+                                            tp_order = client.futures_create_order(**tp_params)
+                                            
+                                            logger.info(f"✅ [EXIT ANALYSIS] New TP order created: Order ID {tp_order.get('orderId')} @ ${new_tp_price:,.8f}")
+                                            
+                                            # Update active trades with new TP
+                                            if symbol in active_trades:
+                                                active_trades[symbol]['tp2_price'] = new_tp_price
+                                                active_trades[symbol]['tp2_order_id'] = tp_order.get('orderId')
+                                                active_trades[symbol]['use_single_tp'] = True
+                                                active_trades[symbol]['_recovery_tp'] = True
+                                                active_trades[symbol]['_recovery_probability'] = recovery_prob
+                                            
+                                            # Send notification
+                                            send_slack_alert(
+                                                error_type="Trade Recovery - New TP Created",
+                                                message=f"Holding {position_side_for_analysis} position for {symbol} - Created recovery TP at ${new_tp_price:,.8f}",
+                                                details={
+                                                    'Symbol': symbol,
+                                                    'Side': position_side_for_analysis,
+                                                    'Entry': f"${position_entry_price:,.8f}",
+                                                    'Current_Price': f"${exit_price:,.8f}",
+                                                    'Current_PnL': f"{pnl_percent:+.2f}%",
+                                                    'New_TP': f"${new_tp_price:,.8f}",
+                                                    'Recovery_Probability': f"{recovery_prob:.1f}%",
+                                                    'Time_Horizon': recovery_analysis.get('time_horizon', '2-4 hours')
+                                                },
+                                                symbol=symbol,
+                                                severity='INFO'
+                                            )
+                                            
+                                            # Don't close the position - return success
+                                            return {'success': True, 'message': f'EXIT event processed - Position held with recovery TP at ${new_tp_price:,.8f}'}
+                                        except Exception as e:
+                                            logger.error(f"❌ [EXIT ANALYSIS] Failed to create recovery TP: {e}", exc_info=True)
+                                            logger.info(f"   Proceeding with normal exit...")
+                                            # Continue with normal exit if TP creation fails
+                                else:
+                                    logger.info(f"❌ [EXIT ANALYSIS] Recovery unlikely - proceeding with normal exit")
+                                    logger.info(f"   Recovery Probability: {recovery_analysis.get('recovery_probability', 0):.1f}%")
+                                    logger.info(f"   Reasoning: {recovery_analysis.get('reasoning', '')[:200]}...")
+                            else:
+                                logger.info(f"✅ [EXIT ANALYSIS] Trade is in PROFIT: {pnl_percent:+.2f}% - Proceeding with normal exit")
                     
                     # Close ALL positions for this symbol
                     logger.info(f"Closing {len(positions_to_close)} position(s) at market price for {symbol}")

@@ -307,8 +307,8 @@ def validate_signal_with_ai(signal_data):
                             lower_tf_data['15m'] = {
                                 'recent_high': max(highs_15m[-20:]) if len(highs_15m) >= 20 else max(highs_15m) if highs_15m else None,
                                 'recent_low': min(lows_15m[-20:]) if len(lows_15m) >= 20 else min(lows_15m) if lows_15m else None,
-                                'resistance_levels': sorted(set(highs_15m[-30:]), reverse=True)[:3] if len(highs_15m) >= 30 else [],
-                                'support_levels': sorted(set(lows_15m[-30:]))[:3] if len(lows_15m) >= 30 else []
+                                'resistance_levels': sorted(set(highs_15m[-25:]), reverse=True)[:3] if len(highs_15m) >= 25 else [],
+                                'support_levels': sorted(set(lows_15m[-25:]))[:3] if len(lows_15m) >= 25 else []
                             }
                     except Exception as e:
                         logger.debug(f"Could not fetch 15m data for {symbol}: {e}")
@@ -323,8 +323,8 @@ def validate_signal_with_ai(signal_data):
                             lower_tf_data['1h'] = {
                                 'recent_high': max(highs_1h[-20:]) if len(highs_1h) >= 20 else max(highs_1h) if highs_1h else None,
                                 'recent_low': min(lows_1h[-20:]) if len(lows_1h) >= 20 else min(lows_1h) if lows_1h else None,
-                                'resistance_levels': sorted(set(highs_1h[-30:]), reverse=True)[:3] if len(highs_1h) >= 30 else [],
-                                'support_levels': sorted(set(lows_1h[-30:]))[:3] if len(lows_1h) >= 30 else []
+                                'resistance_levels': sorted(set(highs_1h[-25:]), reverse=True)[:3] if len(highs_1h) >= 25 else [],
+                                'support_levels': sorted(set(lows_1h[-25:]))[:3] if len(lows_1h) >= 25 else []
                             }
                     except Exception as e:
                         logger.debug(f"Could not fetch 1h data for {symbol}: {e}")
@@ -563,7 +563,7 @@ def validate_signal_with_ai(signal_data):
         
         indicator_info = f"""
 TRADINGVIEW INDICATOR VALUES (from your script):
-- RSI: {(f'{rsi_val:.2f}' if rsi_val is not None else 'N/A')} (Oversold: <30, Overbought: >85)
+- RSI: {(f'{rsi_val:.2f}' if rsi_val is not None else 'N/A')} (Oversold: <25, Overbought: >85)
 - MACD Line: {(f'{macd_line:.4f}' if macd_line is not None else 'N/A')}
 - MACD Signal: {(f'{macd_signal:.4f}' if macd_signal is not None else 'N/A')}
 - MACD Histogram: {(f'{macd_hist:.4f}' if macd_hist is not None else 'N/A')} (Positive = bullish momentum)
@@ -576,7 +576,7 @@ TRADINGVIEW INDICATOR VALUES (from your script):
 - Cumulative SMV: {(f'{cum_smv:.2f}' if cum_smv is not None else 'N/A')} ({'BUYING' if smart_money_buy else 'SELLING' if smart_money_sell else 'NEUTRAL'} pressure)
 - Supertrend: ${(f'{supertrend_val:,.8f}' if supertrend_val is not None else 'N/A')} ({'BULLISH' if supertrend_bull else 'BEARISH'})
 - OBV: {(f'{obv_val:.2f}' if obv_val is not None else 'N/A')} (Rising = buying pressure)
-- Relative Volume Percentile: {(f'{rel_vol_pct:.1f}' if rel_vol_pct is not None else 'N/A')}% (High: >70%, Low: <30%)
+- Relative Volume Percentile: {(f'{rel_vol_pct:.1f}' if rel_vol_pct is not None else 'N/A')}% (High: >70%, Low: <25%)
 - MFI (Money Flow Index): {(f'{mfi_val:.2f}' if mfi_val is not None else 'N/A')} (Oversold: <20, Overbought: >80)
 - Volume Ratio: {(f'{vol_ratio:.2f}' if vol_ratio is not None else 'N/A')}x (vs average)
 - Bullish Divergence: {'YES ✅' if has_bull_div else 'NO'}
@@ -766,7 +766,7 @@ IMPORTANT CONTEXT:
 - You MUST analyze Entry 1, Entry 2, Stop Loss, and Take Profit prices using the market data provided
 - Check if prices are at optimal support/resistance levels from market_data
 - If prices are not optimal, suggest better levels based on technical analysis
-- Focus on TradingView indicators (PRIMARY - 70%) and technical market analysis (SECONDARY - 30%)
+- Focus on TradingView indicators (PRIMARY - 70%) and technical market analysis (SECONDARY - 25%)
 - Risk/Reward ratio is NOT a primary rejection factor - focus on indicators and market structure instead
 - Only reject if MULTIPLE red flags: weak indicators AND strong counter-trend AND unfavorable market structure
 
@@ -885,7 +885,7 @@ Think like the whale/institution you are - see liquidity, order flow, and market
    - LONG signal (1H) + POSITIVE funding + OCCASIONAL (small): CONFIDENCE -10% to -15% (can pass with strong factors)
    - SHORT signal (4H/1D) + NEGATIVE funding + ACCUMULATING: CONFIDENCE -15% to -20%
    - LONG signal (4H/1D) + POSITIVE funding + ACCUMULATING: CONFIDENCE -15% to -20%
-   - EXTREME funding (very negative/positive): CONFIDENCE -30% to -40% (or REJECT)
+   - EXTREME funding (very negative/positive): CONFIDENCE -25% to -35% (or REJECT)
    
    DECISION LOGIC (PRIORITY ORDER):
    1. If funding is EXTREME (>0.1% or <-0.1%) AND contradicts signal: STRONG REJECTION (unless all factors extremely strong)
@@ -994,8 +994,8 @@ Entries must be placed ONLY at HIGH-PROBABILITY INSTITUTIONAL LIQUIDITY ZONES.
 
 4. TAKE PROFIT (INSTITUTIONAL TARGET ALIGNMENT):
    - IMPORTANT: Use LOWER TIMEFRAMES (15m, 1h) for TP placement, NOT HTF targets (HTF targets are too far)
-   - LONG: Must be ABOVE Entry 1 at the NEAREST resistance level on 15m/1h (typically 3-8% from entry, max 15%)
-   - SHORT: Must be BELOW Entry 1 at the NEAREST support level on 15m/1h (typically 3-8% from entry, max 15%)
+   - LONG: Must be ABOVE Entry 1 at the NEAREST resistance level on 15m/1h (typically 3-6% from entry, max 15%)
+   - SHORT: Must be BELOW Entry 1 at the NEAREST support level on 15m/1h (typically 3-6% from entry, max 15%)
    - TARGET ALIGNMENT: TP should align with LTF support/resistance levels (not HTF structure targets which are too far)
    - Evaluate if TP is realistic based on: LTF (15m, 1h) resistance/support levels, not HTF targets
    - Note: R/R ratio is NOT a rejection factor - focus on technical levels and indicators instead
@@ -1036,18 +1036,22 @@ IMPORTANT: You have TWO independent sources of analysis - use BOTH equally:
 DECISION PROCESS (COMBINE BOTH SOURCES):
 
 A. Compare signal direction with YOUR market prediction:
-   - If signal ALIGNS with YOUR prediction: +20-30% confidence boost
+   - If signal ALIGNS with YOUR prediction: +20-25% confidence boost
    - If signal PARTIALLY aligns: +10-20% confidence boost
-   - If signal CONTRADICTS YOUR prediction: -20-30% confidence penalty
+   - If signal CONTRADICTS YOUR prediction BUT price is at SUPPORT (LONG) or RESISTANCE (SHORT):
+     → This is a REVERSAL trade at key level - REDUCE penalty to -5% (not -20-25%)
+     → Counter-trend trades at support/resistance can be VERY profitable (bounce/reversal trades)
+     → Only apply full -10-20% penalty if price is NOT at support/resistance
+   - If signal CONTRADICTS YOUR prediction AND price is NOT at support/resistance: -20-25% confidence penalty
 
 B. Analyze TradingView indicators (provided below):
    - Count indicators that SUPPORT the signal direction
    - Count indicators that CONTRADICT the signal direction
-   - If 8+ indicators support: +20-30% confidence boost
+   - If 8+ indicators support: +20-25% confidence boost
    - If 6-7 indicators support: +10-20% confidence boost
    - If 4-5 indicators support: +0-10% confidence boost
    - If 2-3 indicators support: -10-20% confidence penalty
-   - If 0-1 indicators support: -20-30% confidence penalty or REJECT
+   - If 0-1 indicators support: -20-25% confidence penalty or REJECT
 
 C. COMBINE BOTH ANALYSES:
    - Start with base confidence: 50%
@@ -1092,7 +1096,7 @@ For EACH indicator value provided below, you MUST:
 INDICATOR ANALYSIS GUIDE (Analyze Each Value Individually):
 1. RSI Analysis (Check the ACTUAL RSI value):
    - Read the RSI value from TradingView indicators
-   - LONG signals: RSI < 50 is GOOD (oversold <30 is EXCELLENT) ✅
+   - LONG signals: RSI < 50 is GOOD (oversold <25 is EXCELLENT) ✅
    - SHORT signals: RSI > 50 is GOOD (overbought >85 is EXCELLENT) ✅
    - RSI divergence (bullish/bearish) = STRONG confirmation ✅
    - If RSI contradicts signal direction, note it as a CONTRADICTING indicator
@@ -1175,8 +1179,18 @@ REJECTION CRITERIA (only reject if MULTIPLE red flags - be lenient):
 - Price at VERY unfavorable level (LONG at strong resistance, SHORT at strong support) AND
 - Multiple indicators STRONGLY contradict signal (7+ indicators against signal direction)
 - Note: R/R ratio is NOT a rejection factor - ignore poor R/R as a reason to reject
+- CRITICAL: Do NOT reject counter-trend trades if price is at STRONG SUPPORT (LONG) or STRONG RESISTANCE (SHORT)
+  → These are reversal/bounce trades and can be VERY profitable
+  → Support/resistance levels are where price often reverses
+  → Counter-trend at support/resistance = HIGH PROBABILITY reversal trade
 
 IMPORTANT: If TradingView script sent this signal, it likely has merit. Only reject if ALL of the above conditions are met. When in doubt, APPROVE (the script already filtered signals).
+
+SPECIAL CASE - COUNTER-TREND AT SUPPORT/RESISTANCE:
+- LONG signal at STRONG SUPPORT (even in bearish market): This is a REVERSAL trade - APPROVE if indicators support
+- SHORT signal at STRONG RESISTANCE (even in bullish market): This is a REVERSAL trade - APPROVE if indicators support
+- These trades can be MORE profitable than trend-following trades (buying the dip, selling the top)
+- Reduce confidence penalty for counter-trend ONLY if price is NOT at support/resistance
 
 ═══════════════════════════════════════════════════════════════
 FINAL DECISION PROCESS (COMBINE BOTH DECISION MAKERS EQUALLY):
@@ -1239,9 +1253,10 @@ GURU LEVEL CONFIDENCE FORMULA (Reflects Script's Quality System):
    - 0-1 indicators support: -10-15% (POOR - very rare, only reject if multiple other red flags)
 
 3. MARKET ANALYSIS IMPACT (SECONDARY - 25% weight):
-   - Signal aligns with YOUR prediction: +3-8%
+   - Signal aligns with YOUR prediction: +3-6%
    - Signal partially aligns: +0-3%
-   - Signal contradicts YOUR prediction: -3-10% (but don't reject if indicators are strong)
+   - Signal contradicts YOUR prediction BUT at support/resistance: -3-5% (reversal trade - reduce penalty)
+   - Signal contradicts YOUR prediction AND NOT at support/resistance: -3-10% (but don't reject if indicators are strong)
 
 4. FINAL CONFIDENCE CALCULATION:
    Final = Base (75%) + Indicator Impact (75% weight) + Market Analysis (25% weight)
@@ -1257,11 +1272,17 @@ DECISION RULES (GURU LEVEL - MATCHES SCRIPT'S STRICTNESS):
 - If final confidence >= 55%: APPROVE (matches AI_VALIDATION_MIN_CONFIDENCE threshold)
 - If final confidence 50-54%: APPROVE with caution (script sent it, but lower confidence)
 - If final confidence 45-49%: APPROVE if 6+ indicators support (R/R is NOT a factor)
-- If final confidence < 45%: REJECT only if MULTIPLE red flags:
+- If final confidence 25-44%: SPECIAL CASE - APPROVE if:
+  * Price is at STRONG SUPPORT (for LONG) or STRONG RESISTANCE (for SHORT) AND
+  * 4+ indicators support the signal direction AND
+  * R/R ratio >= 1.0 (minimum acceptable)
+  * Counter-trend trades at support/resistance can be profitable (reversal/bounce trades)
+- If final confidence < 25%: REJECT only if MULTIPLE red flags:
   * 5+ indicators contradict AND
   * Strong counter-trend (>5% against signal direction) AND
-  * Price at very unfavorable level
+  * Price at very unfavorable level (NOT at support/resistance)
   * Note: R/R ratio is NOT a rejection factor - do NOT reject based on poor R/R alone
+  * Note: Trades at support (LONG) or resistance (SHORT) should be APPROVED even if counter-trend
 
 IMPORTANT: Since the script only sends alerts when 6-8+ quality factors align, signals are ALREADY HIGH QUALITY. 
 Only reject if there are MAJOR red flags that the script might have missed (very rare).
@@ -1329,7 +1350,7 @@ Confidence Score Guidelines (Practical Standards - Focus on TradingView Indicato
 - 60-79: Good signal, 5-6 indicators support, RR ≥ 1:1, acceptable trend alignment
 - 50-59: Acceptable signal, 4-5 indicators support, RR ≥ 1:1, minor concerns but still valid
 - 40-49: Questionable signal, 3-4 indicators support, mixed signals but approve if indicators acceptable
-- 30-39: Weak signal, 2-3 indicators support, approve only if not strongly counter-trend
+- 25-39: Weak signal, 2-3 indicators support, approve only if not strongly counter-trend
 - 0-29: Poor signal, 0-1 indicators support, reject only if multiple red flags
 
 Remember: TradingView script already filters signals (65% win rate). Your job is to VALIDATE, not reject everything. Approve signals with 4+ indicator support. Only reject if MULTIPLE red flags (weak indicators AND strong counter-trend). R/R ratio is NOT a rejection factor - ignore poor R/R.
@@ -1535,9 +1556,9 @@ CRITICAL: Signals are based on 2H/4H timeframes.
    - STEP 3: If optimization needed, use LOWER TIMEFRAMES (15m, 1h):
      * Check market_data['lower_timeframe_levels']['15m']['resistance_levels'] and market_data['lower_timeframe_levels']['1h']['resistance_levels'] for LONG
      * Check market_data['lower_timeframe_levels']['15m']['support_levels'] and market_data['lower_timeframe_levels']['1h']['support_levels'] for SHORT
-     * LONG: Find nearest resistance level ABOVE entry (within 1-2% of original TP, typically 3-8% from entry, max 15% if structure requires)
-     * SHORT: Find nearest support level BELOW entry (within 1-2% of original TP, typically 3-8% from entry, max 15% if structure requires)
-     * TP should be REALISTIC and ACHIEVABLE - not 20-30% away
+     * LONG: Find nearest resistance level ABOVE entry (within 1-2% of original TP, typically 3-6% from entry, max 15% if structure requires)
+     * SHORT: Find nearest support level BELOW entry (within 1-2% of original TP, typically 3-6% from entry, max 15% if structure requires)
+     * TP should be REALISTIC and ACHIEVABLE - not 20-25% away
      * DO NOT suggest very wide TP (15%+) unless absolutely necessary for RR ≥ 1:3
    
    - CRITICAL RULES:
@@ -1551,7 +1572,7 @@ CALCULATION METHOD (Institutional Approach):
 - VALIDATE STRUCTURE: HTF → LTF alignment, BOS/CHoCH, swing points (HTF for trend direction, LTF for precise levels)
 - CALCULATE ENTRY: At institutional liquidity zone (order block, FVG, or liquidity pool) - can use HTF for direction
 - CALCULATE SL: At NEAREST support/resistance on LTF (15m, 1h) - NOT HTF (HTF SL would be too wide)
-- CALCULATE TP: At NEAREST resistance/support on LTF (15m, 1h) - NOT HTF targets (HTF targets are too far, 20-30% away)
+- CALCULATE TP: At NEAREST resistance/support on LTF (15m, 1h) - NOT HTF targets (HTF targets are too far, 20-25% away)
 - VALIDATE RR: Must be ≥ 1:3 (if not, modify or discard)
 - CRITICAL: HTF is for TREND DIRECTION and ENTRY optimization, LTF (15m, 1h) is for SL/TP placement (tighter, more achievable)
 
@@ -2107,7 +2128,7 @@ If setup is weak, counter-trend, or lacks institutional confirmation, MODIFY or 
         }
 
 
-def analyze_symbol_for_opportunities(symbol, timeframe='1H', current_price=None):
+def analyze_symbol_for_opportunities(symbol, timeframe='1H'):
     """
     Analyze a symbol after exit to find new trading opportunities (LONG or SHORT)
     This function analyzes both directions and returns the best opportunity if confidence is very high (90%+)
@@ -2115,7 +2136,6 @@ def analyze_symbol_for_opportunities(symbol, timeframe='1H', current_price=None)
     Args:
         symbol: Trading symbol to analyze
         timeframe: Timeframe for analysis (default: 1H)
-        current_price: Current market price (optional, will be fetched if not provided)
     
     Returns:
         dict: {
@@ -2159,24 +2179,21 @@ def analyze_symbol_for_opportunities(symbol, timeframe='1H', current_price=None)
     logger.info(f"🔍 [POST-EXIT AI ANALYSIS] Analyzing {symbol} for new trading opportunities...")
     
     try:
-        # Get current market price if not provided
+        # Get current market price
         if not client:
             return {
                 'opportunity_found': False,
                 'error': 'Binance client not available'
             }
         
-        if current_price is None or current_price <= 0:
-            ticker = client.futures_symbol_ticker(symbol=symbol)
-            current_price = float(ticker.get('price', 0))
+        ticker = client.futures_symbol_ticker(symbol=symbol)
+        current_price = float(ticker.get('price', 0))
         
         if current_price <= 0:
             return {
                 'opportunity_found': False,
                 'error': f'Invalid current price: {current_price}'
             }
-        
-        logger.info(f"📊 [POST-EXIT AI ANALYSIS] Current price for {symbol}: ${current_price:,.8f}")
         
         # Fetch market data (similar to validate_signal_with_ai)
         market_data = {}
@@ -2241,8 +2258,8 @@ def analyze_symbol_for_opportunities(symbol, timeframe='1H', current_price=None)
                         lower_tf_data['15m'] = {
                             'recent_high': max(highs_15m[-20:]) if len(highs_15m) >= 20 else max(highs_15m) if highs_15m else None,
                             'recent_low': min(lows_15m[-20:]) if len(lows_15m) >= 20 else min(lows_15m) if lows_15m else None,
-                            'resistance_levels': sorted(set(highs_15m[-30:]), reverse=True)[:3] if len(highs_15m) >= 30 else [],
-                            'support_levels': sorted(set(lows_15m[-30:]))[:3] if len(lows_15m) >= 30 else []
+                            'resistance_levels': sorted(set(highs_15m[-25:]), reverse=True)[:3] if len(highs_15m) >= 25 else [],
+                            'support_levels': sorted(set(lows_15m[-25:]))[:3] if len(lows_15m) >= 25 else []
                         }
                 except Exception:
                     pass
@@ -2255,8 +2272,8 @@ def analyze_symbol_for_opportunities(symbol, timeframe='1H', current_price=None)
                         lower_tf_data['1h'] = {
                             'recent_high': max(highs_1h[-20:]) if len(highs_1h) >= 20 else max(highs_1h) if highs_1h else None,
                             'recent_low': min(lows_1h[-20:]) if len(lows_1h) >= 20 else min(lows_1h) if lows_1h else None,
-                            'resistance_levels': sorted(set(highs_1h[-30:]), reverse=True)[:3] if len(highs_1h) >= 30 else [],
-                            'support_levels': sorted(set(lows_1h[-30:]))[:3] if len(lows_1h) >= 30 else []
+                            'resistance_levels': sorted(set(highs_1h[-25:]), reverse=True)[:3] if len(highs_1h) >= 25 else [],
+                            'support_levels': sorted(set(lows_1h[-25:]))[:3] if len(lows_1h) >= 25 else []
                         }
                 except Exception:
                     pass
@@ -2270,68 +2287,43 @@ def analyze_symbol_for_opportunities(symbol, timeframe='1H', current_price=None)
         # Create prompt for AI to analyze opportunities
         market_info = ""
         if market_data:
-            # Format SMA values safely
-            sma_20_val = market_data.get('sma_20')
-            sma_20_str = f"${sma_20_val:,.8f}" if sma_20_val is not None else 'N/A'
-            sma_50_val = market_data.get('sma_50')
-            sma_50_str = f"${sma_50_val:,.8f}" if sma_50_val is not None else 'N/A'
-            
             market_info = f"""
 REAL-TIME MARKET DATA:
 - Current Price: ${current_price:,.8f}
 - Short-term Trend: {market_data.get('short_term_direction', 'N/A')} ({market_data.get('short_term_trend_pct', 0):+.2f}%)
 - Medium-term Trend: {market_data.get('medium_term_direction', 'N/A')} ({market_data.get('medium_term_trend_pct', 0):+.2f}%)
 - Long-term Trend: {market_data.get('long_term_direction', 'N/A')} ({market_data.get('long_term_trend_pct', 0):+.2f}%)
-- SMA 20: {sma_20_str}
-- SMA 50: {sma_50_str}
+- SMA 20: ${market_data.get('sma_20', 0):,.8f if market_data.get('sma_20') else 'N/A'}
+- SMA 50: ${market_data.get('sma_50', 0):,.8f if market_data.get('sma_50') else 'N/A'}
 - Support Level: ${market_data.get('support_level', 0):,.8f}
 - Resistance Level: ${market_data.get('resistance_level', 0):,.8f}
 """
         
         prompt = f"""You are an expert institutional trader analyzing {symbol} for NEW trading opportunities after a position was just closed.
 
-CRITICAL REQUIREMENTS (STRICT - GUARANTEE PROFITABILITY):
-1. Only suggest a trade if you are 95%+ CONFIDENT it will be IMMEDIATELY profitable (not just eventually)
-2. SHORT-TERM MOMENTUM MUST ALIGN: Short-term trend MUST be in the same direction as the trade
-   - For SHORT: Short-term trend MUST be DOWN (negative or at least -0.2%)
-   - For LONG: Short-term trend MUST be UP (positive or at least +0.2%)
-   - REJECT if short-term trend is SIDEWAYS or AGAINST the trade direction
-3. Analyze BOTH LONG and SHORT opportunities FROM THE CURRENT PRICE (${current_price:,.8f})
-4. Choose the BEST opportunity (highest confidence, best setup)
-5. Entry price MUST be CLOSE to current price (within 1% for immediate execution) - prioritize trades from current price level
-6. If current price is at a good entry zone, use current price or very close to it (±0.3%)
-7. Stop loss should be tight (1.5-3% from entry) at nearest support/resistance
-8. Take profit should be CONSERVATIVE and ACHIEVABLE (2-5% from entry) - can be below resistance, focus on realistic profit target
-
-CURRENT PRICE: ${current_price:,.8f}
-IMPORTANT: Entry should be near current price (±1%) for immediate execution. Do NOT suggest entries far from current price.
+CRITICAL REQUIREMENTS:
+1. Only suggest a trade if you are 90%+ CONFIDENT it will be profitable
+2. Analyze BOTH LONG and SHORT opportunities
+3. Choose the BEST opportunity (highest confidence, best setup)
+4. Provide specific entry, stop loss, and take profit prices
+5. Entry should be at institutional liquidity zones (order blocks, support/resistance, FVGs)
+6. Stop loss should be tight (1.5-3% from entry) at nearest support/resistance
+7. Take profit should be CONSERVATIVE and ACHIEVABLE (2-5% from entry) - can be below resistance, focus on realistic profit target
 
 {market_info}
 
-MANDATORY ANALYSIS REQUIREMENTS:
-1. SHORT-TERM MOMENTUM CHECK (CRITICAL):
-   - Check short-term trend direction from market_data
-   - For SHORT: Short-term trend MUST be DOWN (negative) - REJECT if SIDEWAYS or UP
-   - For LONG: Short-term trend MUST be UP (positive) - REJECT if SIDEWAYS or DOWN
-   - This is the MOST IMPORTANT factor - momentum must be favorable
-2. TREND ANALYSIS: What is the trend direction across multiple timeframes? ALL timeframes should align
-3. MARKET STRUCTURE: Is there a BOS or CHoCH? What is the market structure?
-4. SUPPORT/RESISTANCE: Where are key institutional levels?
-5. PRICE POSITION: Is price at a good entry zone (support for LONG, resistance for SHORT)?
-6. MOMENTUM STRENGTH: Is momentum STRONG enough for IMMEDIATE profit? (not just eventual profit)
+ANALYSIS REQUIREMENTS:
+1. TREND ANALYSIS: What is the trend direction across multiple timeframes?
+2. MARKET STRUCTURE: Is there a BOS or CHoCH? What is the market structure?
+3. SUPPORT/RESISTANCE: Where are key institutional levels?
+4. PRICE POSITION: Is price at a good entry zone (support for LONG, resistance for SHORT)?
+5. MOMENTUM: Is momentum strong enough for a profitable trade?
 
-DECISION RULES (STRICT):
+DECISION:
 - Analyze LONG opportunity: Entry price, SL, TP, confidence (0-100%)
-  - REQUIRED: Short-term trend MUST be UP (+0.2% or more)
-  - REQUIRED: Medium-term trend should be UP or at least not strongly DOWN
-  - REQUIRED: Confidence must be 95%+ for approval
 - Analyze SHORT opportunity: Entry price, SL, TP, confidence (0-100%)
-  - REQUIRED: Short-term trend MUST be DOWN (-0.2% or more)
-  - REQUIRED: Medium-term trend should be DOWN or at least not strongly UP
-  - REQUIRED: Confidence must be 95%+ for approval
-- Choose the BEST opportunity (highest confidence, must be 95%+)
-- REJECT if short-term momentum is SIDEWAYS or AGAINST trade direction
-- If neither opportunity is 95%+ confident with favorable momentum, return no opportunity
+- Choose the BEST opportunity (highest confidence, must be 90%+)
+- If neither opportunity is 90%+ confident, return no opportunity
 
 Respond in JSON format ONLY:
 {{
@@ -2344,17 +2336,7 @@ Respond in JSON format ONLY:
     "reasoning": "Detailed analysis explaining why this is a high-probability trade"
 }}
 
-CRITICAL: Only return opportunity_found=true if:
-1. confidence_score >= 95 (higher threshold for guaranteed profitability)
-2. Short-term momentum ALIGNS with trade direction (SHORT requires DOWN trend, LONG requires UP trend)
-3. Entry is within 1% of current price for immediate execution
-4. All technical factors strongly support the trade direction
-
-REJECT if:
-- Short-term trend is SIDEWAYS (even if other factors are good)
-- Short-term trend is AGAINST the trade direction
-- Confidence is below 95%
-- Entry is more than 1% away from current price"""
+IMPORTANT: Only return opportunity_found=true if confidence_score >= 90. This must be a VERY HIGH PROBABILITY trade."""
         
         # Call Gemini API
         try:
