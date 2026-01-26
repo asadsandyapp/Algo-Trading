@@ -2287,14 +2287,20 @@ def analyze_symbol_for_opportunities(symbol, timeframe='1H'):
         # Create prompt for AI to analyze opportunities
         market_info = ""
         if market_data:
+            # Format SMA values properly (handle None values)
+            sma_20_val = market_data.get('sma_20')
+            sma_50_val = market_data.get('sma_50')
+            sma_20_str = f"{sma_20_val:,.8f}" if sma_20_val is not None else 'N/A'
+            sma_50_str = f"{sma_50_val:,.8f}" if sma_50_val is not None else 'N/A'
+            
             market_info = f"""
 REAL-TIME MARKET DATA:
 - Current Price: ${current_price:,.8f}
 - Short-term Trend: {market_data.get('short_term_direction', 'N/A')} ({market_data.get('short_term_trend_pct', 0):+.2f}%)
 - Medium-term Trend: {market_data.get('medium_term_direction', 'N/A')} ({market_data.get('medium_term_trend_pct', 0):+.2f}%)
 - Long-term Trend: {market_data.get('long_term_direction', 'N/A')} ({market_data.get('long_term_trend_pct', 0):+.2f}%)
-- SMA 20: ${market_data.get('sma_20', 0):,.8f if market_data.get('sma_20') else 'N/A'}
-- SMA 50: ${market_data.get('sma_50', 0):,.8f if market_data.get('sma_50') else 'N/A'}
+- SMA 20: ${sma_20_str}
+- SMA 50: ${sma_50_str}
 - Support Level: ${market_data.get('support_level', 0):,.8f}
 - Resistance Level: ${market_data.get('resistance_level', 0):,.8f}
 """
