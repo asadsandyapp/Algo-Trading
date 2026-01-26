@@ -27,7 +27,7 @@ try:
     from services.risk.risk_manager import validate_risk_per_trade, check_recent_price_volatility
     from services.ai_validation.validator import (
         validate_signal_with_ai, validate_entry2_standalone_with_ai,
-        parse_entry_analysis_from_reasoning
+        parse_entry_analysis_from_reasoning, analyze_symbol_for_opportunities
     )
     from notifications.slack import send_slack_alert, send_signal_notification, send_exit_notification, send_signal_rejection_notification
 except ImportError:
@@ -49,7 +49,7 @@ except ImportError:
     from ...services.risk.risk_manager import validate_risk_per_trade, check_recent_price_volatility
     from ...services.ai_validation.validator import (
         validate_signal_with_ai, validate_entry2_standalone_with_ai,
-        parse_entry_analysis_from_reasoning
+        parse_entry_analysis_from_reasoning, analyze_symbol_for_opportunities
     )
     from ...notifications.slack import send_slack_alert, send_signal_notification, send_exit_notification, send_signal_rejection_notification
 from binance.exceptions import BinanceAPIException, BinanceOrderException
@@ -1729,6 +1729,108 @@ def create_limit_order(signal_data):
                 for key, _ in sorted_exits[:-1000]:
                     del recent_exits[key]
             
+            # AI Analysis: Find new trading opportunities after exit
+            try:
+                logger.info(f"🤖 [POST-EXIT AI ANALYSIS] Analyzing {symbol} for new trading opportunities...")
+                timeframe = signal_data.get('timeframe', '1H')
+                opportunity = analyze_symbol_for_opportunities(symbol, timeframe)
+                
+                if opportunity.get('opportunity_found') and opportunity.get('confidence_score', 0) >= 90:
+                    opp_side = opportunity.get('signal_side')
+                    opp_entry = opportunity.get('entry_price')
+                    opp_sl = opportunity.get('stop_loss')
+                    opp_tp = opportunity.get('take_profit')
+                    opp_confidence = opportunity.get('confidence_score', 0)
+                    opp_reasoning = opportunity.get('reasoning', '')
+                    
+                    # Ensure TP is in 2-5% range (more achievable)
+                    # If AI didn't provide TP, calculate it as 3.5% from entry
+                    if opp_entry and not opp_tp:
+                        # Calculate TP as 3.5% from entry (middle of 2-5% range)
+                        target_tp_percent = 3.5
+                        if opp_side == 'LONG':
+                            opp_tp = opp_entry * (1 + target_tp_percent / 100)
+                        else:  # SHORT
+                            opp_tp = opp_entry * (1 - target_tp_percent / 100)
+                        logger.info(f"📊 [POST-EXIT AI ANALYSIS] Calculated TP as {target_tp_percent}% from entry (AI didn't provide TP)")
+                    elif opp_entry and opp_tp:
+                        # Calculate current TP percentage
+                        if opp_side == 'LONG':
+                            tp_percent = ((opp_tp - opp_entry) / opp_entry) * 100
+                        else:  # SHORT
+                            tp_percent = ((opp_entry - opp_tp) / opp_entry) * 100
+                        
+                        # If TP is outside 2-5% range, adjust it
+                        if tp_percent < 2.0 or tp_percent > 5.0:
+                            # Use 3.5% as default (middle of 2-5% range)
+                            target_tp_percent = 3.5
+                            if opp_side == 'LONG':
+                                opp_tp = opp_entry * (1 + target_tp_percent / 100)
+                            else:  # SHORT
+                                opp_tp = opp_entry * (1 - target_tp_percent / 100)
+                            logger.info(f"🔄 [POST-EXIT AI ANALYSIS] Adjusted TP to {target_tp_percent}% (was {tp_percent:.2f}%) for better achievability")
+                        else:
+                            logger.info(f"✅ [POST-EXIT AI ANALYSIS] TP is {tp_percent:.2f}% (within 2-5% range)")
+                    
+                    logger.info(f"✅ [POST-EXIT AI ANALYSIS] Found {opp_side} opportunity for {symbol}")
+                    logger.info(f"   Entry: ${opp_entry:,.8f}, SL: ${opp_sl:,.8f}, TP: ${opp_tp:,.8f}")
+                    logger.info(f"   Confidence: {opp_confidence:.1f}%")
+                    logger.info(f"   Reasoning: {opp_reasoning[:200]}...")
+                    
+                    # Create new signal data for the opportunity
+                    if opp_entry and opp_sl and opp_tp:
+                        new_signal_data = {
+                            'token': signal_data.get('token'),  # Use same token
+                            'event': 'ENTRY',
+                            'signal_side': opp_side,
+                            'symbol': symbol,
+                            'timeframe': timeframe,
+                            'entry_price': opp_entry,
+                            'stop_loss': opp_sl,
+                            'take_profit': opp_tp,
+                            'second_entry_price': None,  # Single entry only
+                            '_post_exit_ai_trade': True,  # Flag to indicate this is from post-exit AI
+                            '_ai_confidence': opp_confidence,
+                            '_ai_reasoning': opp_reasoning,
+                            '_entry_size_usd': 10.0  # Use $10 entry size as requested
+                        }
+                        
+                        # Create the new trade with $10 entry size
+                        logger.info(f"💰 [POST-EXIT AI TRADE] Creating new {opp_side} trade for {symbol} with $10 entry size")
+                        try:
+                            # Call create_limit_order with the new signal data
+                            # This will use the $10 entry size from _entry_size_usd
+                            trade_result = create_limit_order(new_signal_data)
+                            
+                            if trade_result.get('success'):
+                                logger.info(f"✅ [POST-EXIT AI TRADE] Successfully created {opp_side} trade for {symbol}")
+                                send_slack_alert(
+                                    error_type="Post-Exit AI Trade Created",
+                                    message=f"Created {opp_side} trade for {symbol} after exit (AI confidence: {opp_confidence:.1f}%)",
+                                    details={
+                                        'Symbol': symbol,
+                                        'Side': opp_side,
+                                        'Entry': f"${opp_entry:,.8f}",
+                                        'SL': f"${opp_sl:,.8f}",
+                                        'TP': f"${opp_tp:,.8f}",
+                                        'Confidence': f"{opp_confidence:.1f}%",
+                                        'Entry_Size': "$10"
+                                    },
+                                    symbol=symbol,
+                                    severity='INFO'
+                                )
+                            else:
+                                logger.warning(f"⚠️ [POST-EXIT AI TRADE] Failed to create trade: {trade_result.get('error', 'Unknown error')}")
+                        except Exception as e:
+                            logger.error(f"❌ [POST-EXIT AI TRADE] Error creating trade for {symbol}: {e}", exc_info=True)
+                    else:
+                        logger.warning(f"⚠️ [POST-EXIT AI ANALYSIS] Opportunity found but missing required prices (entry: {opp_entry}, sl: {opp_sl}, tp: {opp_tp})")
+                else:
+                    logger.info(f"❌ [POST-EXIT AI ANALYSIS] No high-confidence opportunity found for {symbol} (confidence: {opportunity.get('confidence_score', 0):.1f}%)")
+            except Exception as e:
+                logger.error(f"❌ [POST-EXIT AI ANALYSIS] Error analyzing {symbol} for opportunities: {e}", exc_info=True)
+                # Don't fail the exit if AI analysis fails
+            
             return {'success': True, 'message': 'EXIT event processed'}
         
         # Only process ENTRY events
@@ -1935,13 +2037,20 @@ def create_limit_order(signal_data):
         if dca_entry_price:
             dca_entry_price = format_price_precision(dca_entry_price, tick_size)
         
+        # Get custom entry size from signal_data if present (for post-exit AI trades)
+        custom_entry_size = safe_float(signal_data.get('_entry_size_usd'), default=None)
+        
         # Calculate quantities for 3 orders:
-        # Order 1: $10 with original Entry 1
-        # Order 2: $5 with optimized Entry 1 (if exists)
-        # Order 3: $10 with Entry 2 (original or optimized)
-        order1_quantity = calculate_quantity(original_entry1_price, symbol_info, entry_size_usd=10.0)
-        order2_quantity = calculate_quantity(optimized_entry1_price, symbol_info, entry_size_usd=5.0) if optimized_entry1_price else None
-        order3_quantity = calculate_quantity(dca_entry_price, symbol_info, entry_size_usd=10.0) if dca_entry_price else None
+        # Order 1: Custom size or $10 with original Entry 1
+        # Order 2: Custom size/2 or $5 with optimized Entry 1 (if exists)
+        # Order 3: Custom size or $10 with Entry 2 (original or optimized)
+        entry1_size = custom_entry_size if custom_entry_size else 10.0
+        entry2_size = (custom_entry_size / 2.0) if custom_entry_size else 5.0
+        entry3_size = custom_entry_size if custom_entry_size else 10.0
+        
+        order1_quantity = calculate_quantity(original_entry1_price, symbol_info, entry_size_usd=entry1_size)
+        order2_quantity = calculate_quantity(optimized_entry1_price, symbol_info, entry_size_usd=entry2_size) if optimized_entry1_price else None
+        order3_quantity = calculate_quantity(dca_entry_price, symbol_info, entry_size_usd=entry3_size) if dca_entry_price else None
         
         # Legacy variables for backward compatibility (used in TP calculations)
         primary_quantity = order1_quantity
@@ -2013,6 +2122,96 @@ def create_limit_order(signal_data):
         
         current_time = time.time()
         order_results = []
+        
+        # SPECIAL CASE: Post-exit AI trade (single entry with $10 size)
+        if signal_data.get('_post_exit_ai_trade', False):
+            ai_entry_price = format_price_precision(entry_price, tick_size)
+            ai_entry_size = safe_float(signal_data.get('_entry_size_usd'), default=10.0)
+            ai_quantity = calculate_quantity(ai_entry_price, symbol_info, entry_size_usd=ai_entry_size)
+            
+            logger.info(f"🤖 [POST-EXIT AI TRADE] Creating single entry order for {symbol}")
+            logger.info(f"   Entry Price: ${ai_entry_price:,.8f}")
+            logger.info(f"   Order Size: ${ai_entry_size}")
+            logger.info(f"   Side: {signal_side}")
+            
+            # Create single entry order
+            ai_order_params = {
+                'symbol': symbol,
+                'side': side,
+                'type': 'LIMIT',
+                'timeInForce': 'GTC',
+                'quantity': ai_quantity,
+                'price': ai_entry_price,
+            }
+            if is_hedge_mode:
+                ai_order_params['positionSide'] = position_side
+            
+            logger.info(f"Creating POST-EXIT AI order: {ai_order_params}")
+            try:
+                ai_order_result = client.futures_create_order(**ai_order_params)
+                order_results.append(ai_order_result)
+                active_trades[symbol]['primary_order_id'] = ai_order_result.get('orderId')
+                active_trades[symbol]['primary_filled'] = False
+                active_trades[symbol]['dca_filled'] = False
+                active_trades[symbol]['optimized_entry1_filled'] = False
+                active_trades[symbol]['position_open'] = True
+                active_trades[symbol]['dca_order_id'] = None
+                active_trades[symbol]['optimized_entry1_order_id'] = None
+                active_trades[symbol]['original_entry1'] = ai_entry_price
+                active_trades[symbol]['original_entry2'] = None
+                active_trades[symbol]['_post_exit_ai_trade'] = True
+                active_trades[symbol]['_ai_confidence'] = safe_float(signal_data.get('_ai_confidence'), default=0.0)
+                active_trades[symbol]['_ai_reasoning'] = signal_data.get('_ai_reasoning', '')
+                
+                # Store TP/SL for TP creation
+                if stop_loss:
+                    active_trades[symbol]['tp2_price'] = format_price_precision(stop_loss, tick_size)  # Use SL as TP trigger
+                if take_profit:
+                    active_trades[symbol]['tp1_price'] = format_price_precision(take_profit, tick_size)
+                    active_trades[symbol]['use_single_tp'] = True
+                    active_trades[symbol]['tp2_price'] = format_price_precision(take_profit, tick_size)
+                    active_trades[symbol]['tp_side'] = 'SELL' if signal_side == 'LONG' else 'BUY'
+                    active_trades[symbol]['tp_quantity'] = ai_quantity
+                    active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
+                
+                logger.info(f"✅ POST-EXIT AI order created successfully: Order ID {ai_order_result.get('orderId')} @ ${ai_entry_price:,.8f} (${ai_entry_size} size)")
+                
+                # Send notification
+                ai_confidence = active_trades[symbol]['_ai_confidence']
+                send_signal_notification(
+                    symbol=symbol,
+                    signal_side=signal_side,
+                    timeframe=timeframe,
+                    confidence_score=ai_confidence,
+                    risk_level='LOW' if ai_confidence >= 95 else 'MEDIUM' if ai_confidence >= 90 else 'HIGH',
+                    entry1_price=ai_entry_price,
+                    entry2_price=None,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    tp1_price=take_profit,
+                    use_single_tp=True,
+                    optimized_entry1_price=None
+                )
+                
+                return {
+                    'success': True,
+                    'message': f'POST-EXIT AI trade created: {signal_side} {symbol} @ ${ai_entry_price:,.8f}',
+                    'order_id': ai_order_result.get('orderId'),
+                    'orders': order_results
+                }
+            except BinanceAPIException as e:
+                logger.error(f"❌ Failed to create POST-EXIT AI order: {e}", exc_info=True)
+                send_slack_alert(
+                    error_type="POST-EXIT AI Order Creation Failed",
+                    message=str(e),
+                    details={'Symbol': symbol, 'Side': signal_side, 'Price': ai_entry_price},
+                    symbol=symbol,
+                    severity='ERROR'
+                )
+                return {'success': False, 'error': f'Failed to create POST-EXIT AI order: {str(e)}'}
+            except Exception as e:
+                logger.error(f"❌ Unexpected error creating POST-EXIT AI order: {e}", exc_info=True)
+                return {'success': False, 'error': f'Unexpected error: {str(e)}'}
         
         # SPECIAL CASE: Entry 2 only (Entry 1 is bad but Entry 2 is good)
         if signal_data.get('_special_entry2_only', False):

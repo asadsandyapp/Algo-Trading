@@ -2105,3 +2105,284 @@ If setup is weak, counter-trend, or lacks institutional confirmation, MODIFY or 
             'risk_level': 'MEDIUM',
             'error': str(e)
         }
+
+
+def analyze_symbol_for_opportunities(symbol, timeframe='1H'):
+    """
+    Analyze a symbol after exit to find new trading opportunities (LONG or SHORT)
+    This function analyzes both directions and returns the best opportunity if confidence is very high (90%+)
+    
+    Args:
+        symbol: Trading symbol to analyze
+        timeframe: Timeframe for analysis (default: 1H)
+    
+    Returns:
+        dict: {
+            'opportunity_found': bool,
+            'signal_side': 'LONG' or 'SHORT' or None,
+            'entry_price': float or None,
+            'stop_loss': float or None,
+            'take_profit': float or None,
+            'confidence_score': float (0-100),
+            'reasoning': str,
+            'error': str or None
+        }
+    """
+    if not ENABLE_AI_VALIDATION:
+        logger.debug("AI validation is disabled, skipping opportunity analysis")
+        return {
+            'opportunity_found': False,
+            'signal_side': None,
+            'entry_price': None,
+            'stop_loss': None,
+            'take_profit': None,
+            'confidence_score': 0.0,
+            'reasoning': 'AI validation disabled',
+            'error': None
+        }
+    
+    if not gemini_client:
+        logger.warning("Gemini client not available, skipping opportunity analysis")
+        return {
+            'opportunity_found': False,
+            'signal_side': None,
+            'entry_price': None,
+            'stop_loss': None,
+            'take_profit': None,
+            'confidence_score': 0.0,
+            'reasoning': 'AI validation unavailable',
+            'error': None
+        }
+    
+    symbol = format_symbol(symbol)
+    logger.info(f"🔍 [POST-EXIT AI ANALYSIS] Analyzing {symbol} for new trading opportunities...")
+    
+    try:
+        # Get current market price
+        if not client:
+            return {
+                'opportunity_found': False,
+                'error': 'Binance client not available'
+            }
+        
+        ticker = client.futures_symbol_ticker(symbol=symbol)
+        current_price = float(ticker.get('price', 0))
+        
+        if current_price <= 0:
+            return {
+                'opportunity_found': False,
+                'error': f'Invalid current price: {current_price}'
+            }
+        
+        # Fetch market data (similar to validate_signal_with_ai)
+        market_data = {}
+        try:
+            # Get recent candles for technical analysis
+            timeframe_map = {
+                '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+                '1h': '1h', '2h': '2h', '4h': '4h', '6h': '6h', '8h': '8h', '12h': '12h',
+                '1d': '1d', '3d': '3d', '1w': '1w', '1M': '1M'
+            }
+            interval = timeframe_map.get(timeframe.lower(), '1h')
+            
+            klines = client.futures_klines(symbol=symbol, interval=interval, limit=100)
+            if klines:
+                opens = [float(k[1]) for k in klines]
+                highs = [float(k[2]) for k in klines]
+                lows = [float(k[3]) for k in klines]
+                closes = [float(k[4]) for k in klines]
+                volumes = [float(k[5]) for k in klines]
+                
+                market_data['current_price'] = current_price
+                market_data['candle_count'] = len(klines)
+                
+                # Calculate trends
+                if len(closes) >= 5:
+                    short_trend = ((closes[-1] - closes[-5]) / closes[-5]) * 100
+                    market_data['short_term_trend_pct'] = short_trend
+                    market_data['short_term_direction'] = 'UP' if short_trend > 0.3 else 'DOWN' if short_trend < -0.3 else 'SIDEWAYS'
+                
+                if len(closes) >= 20:
+                    medium_trend = ((closes[-1] - closes[-20]) / closes[-20]) * 100
+                    market_data['medium_term_trend_pct'] = medium_trend
+                    market_data['medium_term_direction'] = 'UP' if medium_trend > 0.5 else 'DOWN' if medium_trend < -0.5 else 'SIDEWAYS'
+                
+                if len(closes) >= 50:
+                    long_trend = ((closes[-1] - closes[-50]) / closes[-50]) * 100
+                    market_data['long_term_trend_pct'] = long_trend
+                    market_data['long_term_direction'] = 'UP' if long_trend > 0.5 else 'DOWN' if long_trend < -0.5 else 'SIDEWAYS'
+                
+                # Calculate SMAs
+                if len(closes) >= 20:
+                    sma_20 = sum(closes[-20:]) / 20
+                    market_data['sma_20'] = sma_20
+                
+                if len(closes) >= 50:
+                    sma_50 = sum(closes[-50:]) / 50
+                    market_data['sma_50'] = sma_50
+                
+                # Support/Resistance
+                market_data['recent_high'] = max(highs[-50:]) if len(highs) >= 50 else max(highs) if highs else current_price
+                market_data['recent_low'] = min(lows[-50:]) if len(lows) >= 50 else min(lows) if lows else current_price
+                market_data['resistance_level'] = market_data['recent_high']
+                market_data['support_level'] = market_data['recent_low']
+                
+                # Get lower timeframe data
+                lower_tf_data = {}
+                try:
+                    klines_15m = client.futures_klines(symbol=symbol, interval='15m', limit=50)
+                    if klines_15m:
+                        highs_15m = [float(k[2]) for k in klines_15m]
+                        lows_15m = [float(k[3]) for k in klines_15m]
+                        lower_tf_data['15m'] = {
+                            'recent_high': max(highs_15m[-20:]) if len(highs_15m) >= 20 else max(highs_15m) if highs_15m else None,
+                            'recent_low': min(lows_15m[-20:]) if len(lows_15m) >= 20 else min(lows_15m) if lows_15m else None,
+                            'resistance_levels': sorted(set(highs_15m[-30:]), reverse=True)[:3] if len(highs_15m) >= 30 else [],
+                            'support_levels': sorted(set(lows_15m[-30:]))[:3] if len(lows_15m) >= 30 else []
+                        }
+                except Exception:
+                    pass
+                
+                try:
+                    klines_1h = client.futures_klines(symbol=symbol, interval='1h', limit=50)
+                    if klines_1h:
+                        highs_1h = [float(k[2]) for k in klines_1h]
+                        lows_1h = [float(k[3]) for k in klines_1h]
+                        lower_tf_data['1h'] = {
+                            'recent_high': max(highs_1h[-20:]) if len(highs_1h) >= 20 else max(highs_1h) if highs_1h else None,
+                            'recent_low': min(lows_1h[-20:]) if len(lows_1h) >= 20 else min(lows_1h) if lows_1h else None,
+                            'resistance_levels': sorted(set(highs_1h[-30:]), reverse=True)[:3] if len(highs_1h) >= 30 else [],
+                            'support_levels': sorted(set(lows_1h[-30:]))[:3] if len(lows_1h) >= 30 else []
+                        }
+                except Exception:
+                    pass
+                
+                if lower_tf_data:
+                    market_data['lower_timeframe_levels'] = lower_tf_data
+        except Exception as e:
+            logger.warning(f"Error fetching market data for {symbol}: {e}")
+            market_data = {'current_price': current_price}
+        
+        # Create prompt for AI to analyze opportunities
+        market_info = ""
+        if market_data:
+            market_info = f"""
+REAL-TIME MARKET DATA:
+- Current Price: ${current_price:,.8f}
+- Short-term Trend: {market_data.get('short_term_direction', 'N/A')} ({market_data.get('short_term_trend_pct', 0):+.2f}%)
+- Medium-term Trend: {market_data.get('medium_term_direction', 'N/A')} ({market_data.get('medium_term_trend_pct', 0):+.2f}%)
+- Long-term Trend: {market_data.get('long_term_direction', 'N/A')} ({market_data.get('long_term_trend_pct', 0):+.2f}%)
+- SMA 20: ${market_data.get('sma_20', 0):,.8f if market_data.get('sma_20') else 'N/A'}
+- SMA 50: ${market_data.get('sma_50', 0):,.8f if market_data.get('sma_50') else 'N/A'}
+- Support Level: ${market_data.get('support_level', 0):,.8f}
+- Resistance Level: ${market_data.get('resistance_level', 0):,.8f}
+"""
+        
+        prompt = f"""You are an expert institutional trader analyzing {symbol} for NEW trading opportunities after a position was just closed.
+
+CRITICAL REQUIREMENTS:
+1. Only suggest a trade if you are 90%+ CONFIDENT it will be profitable
+2. Analyze BOTH LONG and SHORT opportunities
+3. Choose the BEST opportunity (highest confidence, best setup)
+4. Provide specific entry, stop loss, and take profit prices
+5. Entry should be at institutional liquidity zones (order blocks, support/resistance, FVGs)
+6. Stop loss should be tight (1.5-3% from entry) at nearest support/resistance
+7. Take profit should be CONSERVATIVE and ACHIEVABLE (2-5% from entry) - can be below resistance, focus on realistic profit target
+
+{market_info}
+
+ANALYSIS REQUIREMENTS:
+1. TREND ANALYSIS: What is the trend direction across multiple timeframes?
+2. MARKET STRUCTURE: Is there a BOS or CHoCH? What is the market structure?
+3. SUPPORT/RESISTANCE: Where are key institutional levels?
+4. PRICE POSITION: Is price at a good entry zone (support for LONG, resistance for SHORT)?
+5. MOMENTUM: Is momentum strong enough for a profitable trade?
+
+DECISION:
+- Analyze LONG opportunity: Entry price, SL, TP, confidence (0-100%)
+- Analyze SHORT opportunity: Entry price, SL, TP, confidence (0-100%)
+- Choose the BEST opportunity (highest confidence, must be 90%+)
+- If neither opportunity is 90%+ confident, return no opportunity
+
+Respond in JSON format ONLY:
+{{
+    "opportunity_found": true/false,
+    "signal_side": "LONG" or "SHORT" or null,
+    "entry_price": <number> or null,
+    "stop_loss": <number> or null,
+    "take_profit": <number> or null,
+    "confidence_score": 0-100,
+    "reasoning": "Detailed analysis explaining why this is a high-probability trade"
+}}
+
+IMPORTANT: Only return opportunity_found=true if confidence_score >= 90. This must be a VERY HIGH PROBABILITY trade."""
+        
+        # Call Gemini API
+        try:
+            response = gemini_client.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.3,
+                    "top_p": 0.95,
+                    "top_k": 40,
+                    "max_output_tokens": 2048,
+                }
+            )
+            
+            response_text = response.text.strip()
+            
+            # Parse JSON response
+            # Remove markdown code blocks if present
+            if response_text.startswith('```'):
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:]
+                response_text = response_text.strip()
+            
+            result = json.loads(response_text)
+            
+            # Validate result
+            if result.get('opportunity_found') and result.get('confidence_score', 0) >= 90:
+                logger.info(f"✅ [POST-EXIT AI ANALYSIS] Found {result.get('signal_side')} opportunity for {symbol} with {result.get('confidence_score', 0):.1f}% confidence")
+                return {
+                    'opportunity_found': True,
+                    'signal_side': result.get('signal_side'),
+                    'entry_price': safe_float(result.get('entry_price'), default=None),
+                    'stop_loss': safe_float(result.get('stop_loss'), default=None),
+                    'take_profit': safe_float(result.get('take_profit'), default=None),
+                    'confidence_score': safe_float(result.get('confidence_score'), default=0.0),
+                    'reasoning': result.get('reasoning', ''),
+                    'error': None
+                }
+            else:
+                logger.info(f"❌ [POST-EXIT AI ANALYSIS] No high-confidence opportunity found for {symbol} (confidence: {result.get('confidence_score', 0):.1f}%)")
+                return {
+                    'opportunity_found': False,
+                    'signal_side': None,
+                    'entry_price': None,
+                    'stop_loss': None,
+                    'take_profit': None,
+                    'confidence_score': safe_float(result.get('confidence_score'), default=0.0),
+                    'reasoning': result.get('reasoning', 'No high-confidence opportunity found'),
+                    'error': None
+                }
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse AI response for {symbol}: {e}")
+            logger.debug(f"Response text: {response_text}")
+            return {
+                'opportunity_found': False,
+                'error': f'Failed to parse AI response: {str(e)}'
+            }
+        except Exception as e:
+            logger.error(f"Error calling AI for opportunity analysis on {symbol}: {e}", exc_info=True)
+            return {
+                'opportunity_found': False,
+                'error': str(e)
+            }
+            
+    except Exception as e:
+        logger.error(f"Error analyzing {symbol} for opportunities: {e}", exc_info=True)
+        return {
+            'opportunity_found': False,
+            'error': str(e)
+        }
