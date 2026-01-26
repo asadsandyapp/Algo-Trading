@@ -9,6 +9,12 @@ import math
 import threading
 from typing import Dict, Tuple
 
+# Import Google Generative AI (for fallback model creation)
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
+
 # Import dependencies
 try:
     # Try relative import first (when imported as package)
@@ -1644,7 +1650,7 @@ If setup is weak, counter-trend, or lacks institutional confirmation, MODIFY or 
                     should_try_alternatives = True
                 
                 # Try alternative models if applicable
-                if should_try_alternatives:
+                if should_try_alternatives and genai:
                     # Try other FREE TIER models in order of preference (skip current model and paid models)
                     paid_models_to_skip = ['2.5-pro', '2.0-pro', 'ultra']
                     for alt_model_name in GEMINI_MODEL_NAMES:
