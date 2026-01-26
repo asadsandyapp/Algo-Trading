@@ -2419,3 +2419,263 @@ IMPORTANT: Only return opportunity_found=true if confidence_score >= 90. This mu
             'opportunity_found': False,
             'error': str(e)
         }
+
+
+def analyze_trade_recovery_potential(symbol, position_side, entry_price, current_price, timeframe='1H'):
+    """
+    Analyze whether a losing trade can recover and recommend action (HOLD or EXIT)
+    This function analyzes the market structure to determine if price can recover to breakeven or small profit
+    
+    Args:
+        symbol: Trading symbol
+        position_side: 'LONG' or 'SHORT'
+        entry_price: Original entry price
+        current_price: Current market price
+        timeframe: Timeframe for analysis (default: 1H)
+    
+    Returns:
+        dict: {
+            'can_recover': bool,
+            'recommended_action': 'HOLD_AND_WAIT' or 'EXIT_NOW',
+            'new_tp_price': float or None (suggested TP for 1-2% profit if holding),
+            'recovery_probability': float (0-100),
+            'reasoning': str,
+            'error': str or None
+        }
+    """
+    if not ENABLE_AI_VALIDATION:
+        logger.debug("AI validation is disabled, skipping recovery analysis")
+        return {
+            'can_recover': False,
+            'recommended_action': 'EXIT_NOW',
+            'new_tp_price': None,
+            'recovery_probability': 0.0,
+            'reasoning': 'AI validation disabled',
+            'error': None
+        }
+    
+    if not gemini_client:
+        logger.warning("Gemini client not available, skipping recovery analysis")
+        return {
+            'can_recover': False,
+            'recommended_action': 'EXIT_NOW',
+            'new_tp_price': None,
+            'recovery_probability': 0.0,
+            'reasoning': 'AI validation unavailable',
+            'error': None
+        }
+    
+    symbol = format_symbol(symbol)
+    logger.info(f"🔍 [RECOVERY ANALYSIS] Analyzing recovery potential for {symbol} {position_side} trade...")
+    
+    try:
+        # Calculate current P&L
+        if position_side == 'LONG':
+            pnl_pct = ((current_price - entry_price) / entry_price) * 100
+        else:  # SHORT
+            pnl_pct = ((entry_price - current_price) / entry_price) * 100
+        
+        # Get market data
+        if not client:
+            return {
+                'can_recover': False,
+                'recommended_action': 'EXIT_NOW',
+                'new_tp_price': None,
+                'recovery_probability': 0.0,
+                'reasoning': 'Binance client not available',
+                'error': 'Binance client not available'
+            }
+        
+        # Fetch market data
+        market_data = {}
+        try:
+            # Get recent candles
+            timeframe_map = {
+                '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+                '1h': '1h', '2h': '2h', '4h': '4h', '6h': '6h', '8h': '8h', '12h': '12h',
+                '1d': '1d', '3d': '3d', '1w': '1w', '1M': '1M'
+            }
+            interval = timeframe_map.get(timeframe.lower(), '1h')
+            
+            klines = client.futures_klines(symbol=symbol, interval=interval, limit=100)
+            if klines:
+                opens = [float(k[1]) for k in klines]
+                highs = [float(k[2]) for k in klines]
+                lows = [float(k[3]) for k in klines]
+                closes = [float(k[4]) for k in klines]
+                volumes = [float(k[5]) for k in klines]
+                
+                market_data['current_price'] = current_price
+                market_data['entry_price'] = entry_price
+                market_data['pnl_percent'] = pnl_pct
+                market_data['position_side'] = position_side
+                market_data['recent_closes'] = closes[-20:] if len(closes) >= 20 else closes
+                market_data['recent_highs'] = highs[-20:] if len(highs) >= 20 else highs
+                market_data['recent_lows'] = lows[-20:] if len(lows) >= 20 else lows
+                market_data['recent_volumes'] = volumes[-20:] if len(volumes) >= 20 else volumes
+                
+                # Calculate support/resistance levels
+                if position_side == 'LONG':
+                    # For LONG, we need price to go UP to recover
+                    market_data['nearest_support'] = min(lows[-20:]) if len(lows) >= 20 else min(lows)
+                    market_data['nearest_resistance'] = max(highs[-20:]) if len(highs) >= 20 else max(highs)
+                    market_data['price_to_breakeven'] = entry_price
+                    market_data['price_to_1pct_profit'] = entry_price * 1.01
+                    market_data['price_to_2pct_profit'] = entry_price * 1.02
+                else:  # SHORT
+                    # For SHORT, we need price to go DOWN to recover
+                    market_data['nearest_support'] = min(lows[-20:]) if len(lows) >= 20 else min(lows)
+                    market_data['nearest_resistance'] = max(highs[-20:]) if len(highs) >= 20 else max(highs)
+                    market_data['price_to_breakeven'] = entry_price
+                    market_data['price_to_1pct_profit'] = entry_price * 0.99
+                    market_data['price_to_2pct_profit'] = entry_price * 0.98
+        except Exception as e:
+            logger.warning(f"Error fetching market data for recovery analysis: {e}")
+            market_data = {}
+        
+        # Build prompt for AI
+        market_info = f"""
+CURRENT TRADE STATUS:
+- Symbol: {symbol}
+- Position Side: {position_side}
+- Entry Price: ${entry_price:,.8f}
+- Current Price: ${current_price:,.8f}
+- Current P&L: {pnl_pct:+.2f}%
+- Timeframe: {timeframe}
+"""
+        
+        if market_data:
+            market_info += f"""
+MARKET DATA:
+- Recent Price Range: ${market_data.get('nearest_support', 0):,.8f} - ${market_data.get('nearest_resistance', 0):,.8f}
+- Price to Breakeven: ${market_data.get('price_to_breakeven', 0):,.8f}
+- Price for 1% Profit: ${market_data.get('price_to_1pct_profit', 0):,.8f}
+- Price for 2% Profit: ${market_data.get('price_to_2pct_profit', 0):,.8f}
+"""
+        
+        prompt = f"""You are an expert institutional trader analyzing whether a losing {position_side} trade on {symbol} can recover.
+
+{market_info}
+
+CRITICAL REQUIREMENTS:
+1. Analyze if price can recover to breakeven or achieve 1-2% profit
+2. Consider market structure, support/resistance, and momentum
+3. Only recommend HOLD if recovery probability is 70%+ and price can reach 1-2% profit
+4. If recovery is unlikely, recommend EXIT to cut losses
+5. If holding, suggest a realistic TP price for 1-2% profit (conservative target)
+
+ANALYSIS FACTORS:
+1. MARKET STRUCTURE: Is there a clear reversal pattern or continuation pattern?
+2. SUPPORT/RESISTANCE: Are there key levels that can help price recover?
+3. MOMENTUM: Is momentum building in favor of recovery or against it?
+4. RISK/REWARD: Is the potential recovery worth the risk of further loss?
+5. TIME FACTOR: Can recovery happen within reasonable time?
+
+DECISION CRITERIA:
+- HOLD_AND_WAIT: Only if recovery probability >= 70% AND price can realistically reach 1-2% profit
+- EXIT_NOW: If recovery probability < 70% OR price is likely to continue against position
+
+Respond in JSON format ONLY:
+{{
+    "can_recover": true/false,
+    "recommended_action": "HOLD_AND_WAIT" or "EXIT_NOW",
+    "new_tp_price": <number> or null (suggested TP for 1-2% profit if holding),
+    "recovery_probability": 0-100,
+    "reasoning": "Detailed analysis explaining the recommendation"
+}}
+
+IMPORTANT: Be conservative. Only recommend HOLD if recovery is highly likely (70%+)."""
+        
+        # Call Gemini API
+        try:
+            response = gemini_client.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.3,
+                    "top_p": 0.95,
+                    "top_k": 40,
+                    "max_output_tokens": 1024,
+                }
+            )
+            
+            response_text = response.text.strip()
+            
+            # Parse JSON response
+            if response_text.startswith('```'):
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:]
+                response_text = response_text.strip()
+            
+            result = json.loads(response_text)
+            
+            # Validate and return result
+            can_recover = result.get('can_recover', False)
+            recommended_action = result.get('recommended_action', 'EXIT_NOW')
+            new_tp_price = safe_float(result.get('new_tp_price'), default=None)
+            recovery_probability = safe_float(result.get('recovery_probability'), default=0.0)
+            reasoning = result.get('reasoning', '')
+            
+            # Validate action
+            if recommended_action not in ['HOLD_AND_WAIT', 'EXIT_NOW']:
+                recommended_action = 'EXIT_NOW'
+            
+            # If holding, ensure TP price is reasonable (1-2% profit)
+            if recommended_action == 'HOLD_AND_WAIT' and new_tp_price:
+                if position_side == 'LONG':
+                    # For LONG, TP should be 1-2% above entry
+                    min_tp = entry_price * 1.01
+                    max_tp = entry_price * 1.02
+                    if new_tp_price < min_tp or new_tp_price > max_tp:
+                        # Adjust to reasonable range
+                        new_tp_price = entry_price * 1.015  # 1.5% profit
+                else:  # SHORT
+                    # For SHORT, TP should be 1-2% below entry
+                    min_tp = entry_price * 0.98
+                    max_tp = entry_price * 0.99
+                    if new_tp_price > max_tp or new_tp_price < min_tp:
+                        # Adjust to reasonable range
+                        new_tp_price = entry_price * 0.985  # 1.5% profit
+            
+            logger.info(f"✅ [RECOVERY ANALYSIS] Result for {symbol}: Action={recommended_action}, Recovery Prob={recovery_probability:.1f}%")
+            
+            return {
+                'can_recover': can_recover,
+                'recommended_action': recommended_action,
+                'new_tp_price': new_tp_price,
+                'recovery_probability': recovery_probability,
+                'reasoning': reasoning,
+                'error': None
+            }
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse AI recovery analysis response for {symbol}: {e}")
+            logger.debug(f"Response text: {response_text}")
+            return {
+                'can_recover': False,
+                'recommended_action': 'EXIT_NOW',
+                'new_tp_price': None,
+                'recovery_probability': 0.0,
+                'reasoning': 'Failed to parse AI response',
+                'error': f'Failed to parse AI response: {str(e)}'
+            }
+        except Exception as e:
+            logger.error(f"Error calling AI for recovery analysis on {symbol}: {e}", exc_info=True)
+            return {
+                'can_recover': False,
+                'recommended_action': 'EXIT_NOW',
+                'new_tp_price': None,
+                'recovery_probability': 0.0,
+                'reasoning': f'AI analysis error: {str(e)}',
+                'error': str(e)
+            }
+            
+    except Exception as e:
+        logger.error(f"Error analyzing recovery potential for {symbol}: {e}", exc_info=True)
+        return {
+            'can_recover': False,
+            'recommended_action': 'EXIT_NOW',
+            'new_tp_price': None,
+            'recovery_probability': 0.0,
+            'reasoning': f'Analysis error: {str(e)}',
+            'error': str(e)
+        }
