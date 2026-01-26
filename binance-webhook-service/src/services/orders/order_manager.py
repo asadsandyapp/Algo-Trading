@@ -1744,13 +1744,60 @@ def create_limit_order(signal_data):
                 
                 opportunity = analyze_symbol_for_opportunities(symbol, timeframe, current_price=current_price)
                 
-                if opportunity.get('opportunity_found') and opportunity.get('confidence_score', 0) >= 90:
+                if opportunity.get('opportunity_found') and opportunity.get('confidence_score', 0) >= 95:
                     opp_side = opportunity.get('signal_side')
                     opp_entry = opportunity.get('entry_price')
                     opp_sl = opportunity.get('stop_loss')
                     opp_tp = opportunity.get('take_profit')
                     opp_confidence = opportunity.get('confidence_score', 0)
                     opp_reasoning = opportunity.get('reasoning', '')
+                    
+                    # CRITICAL: Validate short-term momentum aligns with trade direction
+                    # Get recent price data to check momentum
+                    try:
+                        # Get recent candles to check short-term momentum
+                        timeframe_map = {
+                            '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+                            '1h': '1h', '2h': '2h', '4h': '4h', '6h': '6h', '8h': '8h', '12h': '12h',
+                            '1d': '1d', '3d': '3d', '1w': '1w', '1M': '1M'
+                        }
+                        interval = timeframe_map.get(timeframe.lower(), '1h')
+                        klines = client.futures_klines(symbol=symbol, interval=interval, limit=10)
+                        
+                        if klines and len(klines) >= 5:
+                            closes = [float(k[4]) for k in klines]
+                            # Calculate short-term momentum (last 5 candles)
+                            short_trend_pct = ((closes[-1] - closes[-5]) / closes[-5]) * 100
+                            
+                            # Validate momentum alignment
+                            if opp_side == 'SHORT':
+                                # For SHORT: momentum must be DOWN (negative or at least not strongly up)
+                                if short_trend_pct > 0.2:  # Price is moving UP - bad for SHORT
+                                    logger.warning(f"❌ [POST-EXIT AI ANALYSIS] REJECTING SHORT trade: Short-term momentum is UP (+{short_trend_pct:.2f}%) - price moving against trade")
+                                    logger.warning(f"   Entry: ${opp_entry:,.8f}, Current momentum: +{short_trend_pct:.2f}%")
+                                    return {'success': True, 'message': f'EXIT event processed (AI opportunity rejected - momentum moving UP for SHORT trade)'}
+                                elif short_trend_pct > -0.2:  # Momentum is sideways or barely down
+                                    logger.warning(f"⚠️ [POST-EXIT AI ANALYSIS] WARNING: Short-term momentum is SIDEWAYS ({short_trend_pct:+.2f}%) for SHORT trade")
+                                    logger.warning(f"   This is risky - momentum not clearly DOWN. Rejecting for safety.")
+                                    return {'success': True, 'message': f'EXIT event processed (AI opportunity rejected - sideways momentum for SHORT trade)'}
+                                else:
+                                    logger.info(f"✅ [POST-EXIT AI ANALYSIS] Short-term momentum is DOWN ({short_trend_pct:+.2f}%) - favorable for SHORT trade")
+                            else:  # LONG
+                                # For LONG: momentum must be UP (positive or at least not strongly down)
+                                if short_trend_pct < -0.2:  # Price is moving DOWN - bad for LONG
+                                    logger.warning(f"❌ [POST-EXIT AI ANALYSIS] REJECTING LONG trade: Short-term momentum is DOWN ({short_trend_pct:.2f}%) - price moving against trade")
+                                    logger.warning(f"   Entry: ${opp_entry:,.8f}, Current momentum: {short_trend_pct:.2f}%")
+                                    return {'success': True, 'message': f'EXIT event processed (AI opportunity rejected - momentum moving DOWN for LONG trade)'}
+                                elif short_trend_pct < 0.2:  # Momentum is sideways or barely up
+                                    logger.warning(f"⚠️ [POST-EXIT AI ANALYSIS] WARNING: Short-term momentum is SIDEWAYS ({short_trend_pct:+.2f}%) for LONG trade")
+                                    logger.warning(f"   This is risky - momentum not clearly UP. Rejecting for safety.")
+                                    return {'success': True, 'message': f'EXIT event processed (AI opportunity rejected - sideways momentum for LONG trade)'}
+                                else:
+                                    logger.info(f"✅ [POST-EXIT AI ANALYSIS] Short-term momentum is UP ({short_trend_pct:+.2f}%) - favorable for LONG trade")
+                        else:
+                            logger.warning(f"⚠️ [POST-EXIT AI ANALYSIS] Could not get enough price data to validate momentum - proceeding with caution")
+                    except Exception as e:
+                        logger.warning(f"⚠️ [POST-EXIT AI ANALYSIS] Error checking momentum: {e} - proceeding with caution")
                     
                     # Validate entry price is close to current price (within 2% for immediate execution)
                     if current_price and current_price > 0 and opp_entry:

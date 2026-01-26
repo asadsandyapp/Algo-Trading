@@ -2290,32 +2290,48 @@ REAL-TIME MARKET DATA:
         
         prompt = f"""You are an expert institutional trader analyzing {symbol} for NEW trading opportunities after a position was just closed.
 
-CRITICAL REQUIREMENTS:
-1. Only suggest a trade if you are 90%+ CONFIDENT it will be profitable
-2. Analyze BOTH LONG and SHORT opportunities FROM THE CURRENT PRICE (${current_price:,.8f})
-3. Choose the BEST opportunity (highest confidence, best setup)
-4. Entry price MUST be CLOSE to current price (within 2% for immediate execution) - prioritize trades from current price level
-5. If current price is at a good entry zone, use current price or very close to it (±0.5%)
-6. Stop loss should be tight (1.5-3% from entry) at nearest support/resistance
-7. Take profit should be CONSERVATIVE and ACHIEVABLE (2-5% from entry) - can be below resistance, focus on realistic profit target
+CRITICAL REQUIREMENTS (STRICT - GUARANTEE PROFITABILITY):
+1. Only suggest a trade if you are 95%+ CONFIDENT it will be IMMEDIATELY profitable (not just eventually)
+2. SHORT-TERM MOMENTUM MUST ALIGN: Short-term trend MUST be in the same direction as the trade
+   - For SHORT: Short-term trend MUST be DOWN (negative or at least -0.2%)
+   - For LONG: Short-term trend MUST be UP (positive or at least +0.2%)
+   - REJECT if short-term trend is SIDEWAYS or AGAINST the trade direction
+3. Analyze BOTH LONG and SHORT opportunities FROM THE CURRENT PRICE (${current_price:,.8f})
+4. Choose the BEST opportunity (highest confidence, best setup)
+5. Entry price MUST be CLOSE to current price (within 1% for immediate execution) - prioritize trades from current price level
+6. If current price is at a good entry zone, use current price or very close to it (±0.3%)
+7. Stop loss should be tight (1.5-3% from entry) at nearest support/resistance
+8. Take profit should be CONSERVATIVE and ACHIEVABLE (2-5% from entry) - can be below resistance, focus on realistic profit target
 
 CURRENT PRICE: ${current_price:,.8f}
-IMPORTANT: Entry should be near current price (±2%) for immediate execution. Do NOT suggest entries far from current price.
+IMPORTANT: Entry should be near current price (±1%) for immediate execution. Do NOT suggest entries far from current price.
 
 {market_info}
 
-ANALYSIS REQUIREMENTS:
-1. TREND ANALYSIS: What is the trend direction across multiple timeframes?
-2. MARKET STRUCTURE: Is there a BOS or CHoCH? What is the market structure?
-3. SUPPORT/RESISTANCE: Where are key institutional levels?
-4. PRICE POSITION: Is price at a good entry zone (support for LONG, resistance for SHORT)?
-5. MOMENTUM: Is momentum strong enough for a profitable trade?
+MANDATORY ANALYSIS REQUIREMENTS:
+1. SHORT-TERM MOMENTUM CHECK (CRITICAL):
+   - Check short-term trend direction from market_data
+   - For SHORT: Short-term trend MUST be DOWN (negative) - REJECT if SIDEWAYS or UP
+   - For LONG: Short-term trend MUST be UP (positive) - REJECT if SIDEWAYS or DOWN
+   - This is the MOST IMPORTANT factor - momentum must be favorable
+2. TREND ANALYSIS: What is the trend direction across multiple timeframes? ALL timeframes should align
+3. MARKET STRUCTURE: Is there a BOS or CHoCH? What is the market structure?
+4. SUPPORT/RESISTANCE: Where are key institutional levels?
+5. PRICE POSITION: Is price at a good entry zone (support for LONG, resistance for SHORT)?
+6. MOMENTUM STRENGTH: Is momentum STRONG enough for IMMEDIATE profit? (not just eventual profit)
 
-DECISION:
+DECISION RULES (STRICT):
 - Analyze LONG opportunity: Entry price, SL, TP, confidence (0-100%)
+  - REQUIRED: Short-term trend MUST be UP (+0.2% or more)
+  - REQUIRED: Medium-term trend should be UP or at least not strongly DOWN
+  - REQUIRED: Confidence must be 95%+ for approval
 - Analyze SHORT opportunity: Entry price, SL, TP, confidence (0-100%)
-- Choose the BEST opportunity (highest confidence, must be 90%+)
-- If neither opportunity is 90%+ confident, return no opportunity
+  - REQUIRED: Short-term trend MUST be DOWN (-0.2% or more)
+  - REQUIRED: Medium-term trend should be DOWN or at least not strongly UP
+  - REQUIRED: Confidence must be 95%+ for approval
+- Choose the BEST opportunity (highest confidence, must be 95%+)
+- REJECT if short-term momentum is SIDEWAYS or AGAINST trade direction
+- If neither opportunity is 95%+ confident with favorable momentum, return no opportunity
 
 Respond in JSON format ONLY:
 {{
@@ -2328,7 +2344,17 @@ Respond in JSON format ONLY:
     "reasoning": "Detailed analysis explaining why this is a high-probability trade"
 }}
 
-IMPORTANT: Only return opportunity_found=true if confidence_score >= 90. This must be a VERY HIGH PROBABILITY trade."""
+CRITICAL: Only return opportunity_found=true if:
+1. confidence_score >= 95 (higher threshold for guaranteed profitability)
+2. Short-term momentum ALIGNS with trade direction (SHORT requires DOWN trend, LONG requires UP trend)
+3. Entry is within 1% of current price for immediate execution
+4. All technical factors strongly support the trade direction
+
+REJECT if:
+- Short-term trend is SIDEWAYS (even if other factors are good)
+- Short-term trend is AGAINST the trade direction
+- Confidence is below 95%
+- Entry is more than 1% away from current price"""
         
         # Call Gemini API
         try:
