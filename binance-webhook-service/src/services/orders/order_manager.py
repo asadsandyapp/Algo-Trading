@@ -1398,7 +1398,7 @@ def create_limit_order(signal_data):
                 logger.info(f"   Entry 2 Price: ${entry2_price_to_use:,.8f} ({'OPTIMIZED' if entry2_price_to_use == entry2_price_optimized else 'ORIGINAL'})")
                 logger.info(f"   Entry 2 Confidence: {entry2_confidence:.1f}%")
                 logger.info(f"   Recent Volatility: {price_change_pct:.2f}% over 7 days (High: {has_high_volatility})")
-                logger.info(f"   Decision: Skipping Entry 1, creating Entry 2 only order with $20 and custom TP (4-5%)")
+                logger.info(f"   Decision: Skipping Entry 1, creating Entry 2 only order with $25 and custom TP (4-5%)")
                 
                 # Set flags for Entry 2 only trade
                 signal_data['_special_entry2_only'] = True
@@ -2049,7 +2049,7 @@ def create_limit_order(signal_data):
                             '_post_exit_ai_trade': True,  # Flag to indicate this is from post-exit AI
                             '_ai_confidence': opp_confidence,
                             '_ai_reasoning': opp_reasoning,
-                            '_entry_size_usd': 10.0  # Use $10 entry size as requested
+                            '_entry_size_usd': 10.0  # Use $10 entry size for post-exit AI trades
                         }
                         
                         # Create the new trade with $10 entry size
@@ -2298,12 +2298,12 @@ def create_limit_order(signal_data):
         custom_entry_size = safe_float(signal_data.get('_entry_size_usd'), default=None)
         
         # Calculate quantities for 3 orders:
-        # Order 1: Custom size or $10 with original Entry 1
-        # Order 2: Custom size/2 or $5 with optimized Entry 1 (if exists)
-        # Order 3: Custom size or $10 with Entry 2 (original or optimized)
-        entry1_size = custom_entry_size if custom_entry_size else 10.0
-        entry2_size = (custom_entry_size / 2.0) if custom_entry_size else 5.0
-        entry3_size = custom_entry_size if custom_entry_size else 10.0
+        # Order 1: Custom size or $15 with original Entry 1
+        # Order 2: Custom size/2 or $10 with optimized Entry 1 (if exists)
+        # Order 3: Custom size or $15 with Entry 2 (original or optimized)
+        entry1_size = custom_entry_size if custom_entry_size else 15.0
+        entry2_size = (custom_entry_size / 2.0) if custom_entry_size else 10.0
+        entry3_size = custom_entry_size if custom_entry_size else 15.0
         
         order1_quantity = calculate_quantity(original_entry1_price, symbol_info, entry_size_usd=entry1_size)
         order2_quantity = calculate_quantity(optimized_entry1_price, symbol_info, entry_size_usd=entry2_size) if optimized_entry1_price else None
@@ -2480,8 +2480,8 @@ def create_limit_order(signal_data):
             # Format Entry 2 price
             entry2_only_price = format_price_precision(entry2_only_price, tick_size)
             
-            # Calculate quantity for $20 order
-            entry2_quantity = calculate_quantity(entry2_only_price, symbol_info, entry_size_usd=20.0)
+            # Calculate quantity for $25 order
+            entry2_quantity = calculate_quantity(entry2_only_price, symbol_info, entry_size_usd=25.0)
             
             # Calculate custom TP: 4-5% from entry (use 4.5% as default)
             tp_percentage = 4.5  # 4.5% default, can be adjusted
@@ -2493,7 +2493,7 @@ def create_limit_order(signal_data):
             
             logger.info(f"🎯 SPECIAL CASE: Creating Entry 2 only order for {symbol}")
             logger.info(f"   Entry 2 Price: ${entry2_only_price:,.8f}")
-            logger.info(f"   Order Size: $20")
+            logger.info(f"   Order Size: $25")
             logger.info(f"   Custom TP: ${custom_tp:,.8f} ({tp_percentage}% from entry)")
             
             # Create Entry 2 only order
@@ -2528,7 +2528,7 @@ def create_limit_order(signal_data):
                 active_trades[symbol]['tp_side'] = 'SELL' if signal_side == 'LONG' else 'BUY'
                 active_trades[symbol]['tp_quantity'] = entry2_quantity  # Store quantity for TP
                 active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'  # Use mark price for trigger
-                logger.info(f"✅ SPECIAL Entry 2 only order created successfully: Order ID {entry2_order_result.get('orderId')} @ ${entry2_only_price:,.8f} (${20.0} size)")
+                logger.info(f"✅ SPECIAL Entry 2 only order created successfully: Order ID {entry2_order_result.get('orderId')} @ ${entry2_only_price:,.8f} (${25.0} size)")
             except BinanceAPIException as e:
                 logger.error(f"❌ Failed to create SPECIAL Entry 2 only order: {e.message} (Code: {e.code})")
                 send_slack_alert(
@@ -2570,7 +2570,7 @@ def create_limit_order(signal_data):
 🎯 *SPECIAL CASE: Entry 1 Rejected, Entry 2 Only*
 
 *Entry Order:*
-  • Entry 2 Only: ${entry2_only_price:,.8f} - $20.00 (Entry 1 skipped - not optimal)
+  • Entry 2 Only: ${entry2_only_price:,.8f} - $25.00 (Entry 1 skipped - not optimal)
 
 *Risk Management:*
   • Stop Loss: {f'${stop_loss:,.8f}' if stop_loss else 'N/A'}
@@ -2611,11 +2611,11 @@ def create_limit_order(signal_data):
             }
         
         # If this is a primary entry, create 3 entry orders:
-        # Order 1: $10 with original Entry 1 price
-        # Order 2: $5 with optimized Entry 1 price (if AI optimized, otherwise skip)
-        # Order 3: $10 with Entry 2 price (original or optimized)
+        # Order 1: $15 with original Entry 1 price
+        # Order 2: $10 with optimized Entry 1 price (if AI optimized, otherwise skip)
+        # Order 3: $15 with Entry 2 price (original or optimized)
         if is_primary_entry:
-            # ORDER 1: $10 with original Entry 1 price
+            # ORDER 1: $15 with original Entry 1 price
             # Re-format price and quantity to ensure correct precision before creating order
             price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
             tick_size = float(price_filter['tickSize']) if price_filter else 0.01
@@ -2638,14 +2638,14 @@ def create_limit_order(signal_data):
             if is_hedge_mode:
                 order1_params['positionSide'] = position_side
             
-            logger.info(f"Creating ORDER 1 (Original Entry 1, $10): {order1_params}")
+            logger.info(f"Creating ORDER 1 (Original Entry 1, $15): {order1_params}")
             try:
                 order1_result = client.futures_create_order(**order1_params)
                 order_results.append(order1_result)
                 active_trades[symbol]['primary_order_id'] = order1_result.get('orderId')
                 active_trades[symbol]['primary_filled'] = False
                 active_trades[symbol]['position_open'] = True
-                logger.info(f"✅ ORDER 1 created successfully: Order ID {order1_result.get('orderId')} @ ${original_entry1_price:,.8f} (${10.0} size)")
+                logger.info(f"✅ ORDER 1 created successfully: Order ID {order1_result.get('orderId')} @ ${original_entry1_price:,.8f} (${15.0} size)")
             except BinanceAPIException as e:
                 logger.error(f"❌ Failed to create ORDER 1: {e.message} (Code: {e.code})")
                 send_slack_alert(
@@ -2671,7 +2671,7 @@ def create_limit_order(signal_data):
             order_key = f"{symbol}_{original_entry1_price}_{side}_ORDER1"
             recent_orders[order_key] = current_time
             
-            # ORDER 2: $5 with optimized Entry 1 price (only if AI optimized Entry 1 AND it's actually better)
+            # ORDER 2: $10 with optimized Entry 1 price (only if AI optimized Entry 1 AND it's actually better)
             # Double-check: Optimized price must be different from original AND better (lower for LONG, higher for SHORT)
             should_create_order2 = False
             if optimized_entry1_price and order2_quantity:
@@ -2716,13 +2716,13 @@ def create_limit_order(signal_data):
                 if is_hedge_mode:
                     order2_params['positionSide'] = position_side
                 
-                logger.info(f"Creating ORDER 2 (Optimized Entry 1, $5): {order2_params}")
+                logger.info(f"Creating ORDER 2 (Optimized Entry 1, $10): {order2_params}")
                 try:
                     order2_result = client.futures_create_order(**order2_params)
                     order_results.append(order2_result)
                     active_trades[symbol]['optimized_entry1_order_id'] = order2_result.get('orderId')
                     active_trades[symbol]['optimized_entry1_filled'] = False
-                    logger.info(f"✅ ORDER 2 created successfully: Order ID {order2_result.get('orderId')} @ ${optimized_entry1_price:,.8f} (${5.0} size)")
+                    logger.info(f"✅ ORDER 2 created successfully: Order ID {order2_result.get('orderId')} @ ${optimized_entry1_price:,.8f} (${10.0} size)")
                     
                     # Track Order 2
                     order_key = f"{symbol}_{optimized_entry1_price}_{side}_ORDER2"
@@ -2753,7 +2753,7 @@ def create_limit_order(signal_data):
                 else:
                     logger.info(f"ℹ️  ORDER 2 skipped: Entry 1 was not optimized by AI (using original Entry 1 only)")
             
-            # ORDER 3: $10 with Entry 2 price (original or optimized)
+            # ORDER 3: $15 with Entry 2 price (original or optimized)
             if dca_entry_price and order3_quantity:
                 # Re-format price and quantity to ensure correct precision before creating order
                 # This is important because dca_entry_price might have been recalculated
@@ -2778,13 +2778,13 @@ def create_limit_order(signal_data):
                 if is_hedge_mode:
                     order3_params['positionSide'] = position_side
                 
-                logger.info(f"Creating ORDER 3 (Entry 2, $10): {order3_params}")
+                logger.info(f"Creating ORDER 3 (Entry 2, $15): {order3_params}")
                 try:
                     order3_result = client.futures_create_order(**order3_params)
                     order_results.append(order3_result)
                     active_trades[symbol]['dca_order_id'] = order3_result.get('orderId')
                     active_trades[symbol]['dca_filled'] = False
-                    logger.info(f"✅ ORDER 3 created successfully: Order ID {order3_result.get('orderId')} @ ${dca_entry_price:,.8f} (${10.0} size)")
+                    logger.info(f"✅ ORDER 3 created successfully: Order ID {order3_result.get('orderId')} @ ${dca_entry_price:,.8f} (${15.0} size)")
                     
                     # Track Order 3
                     order_key = f"{symbol}_{dca_entry_price}_{side}_ORDER3"
@@ -2827,21 +2827,21 @@ def create_limit_order(signal_data):
             entry_price_for_tp1 = original_entry1_price  # Always original Entry 1 for TP1
             
             # Calculate weighted average entry price for TP2 (accounting for all 3 orders)
-            # Order 1: $10 at original Entry 1
-            # Order 2: $5 at optimized Entry 1 (if exists)
-            # Order 3: $10 at Entry 2 (if exists)
-            total_usd = 10.0  # Order 1
-            weighted_sum = original_entry1_price * 10.0
+            # Order 1: $15 at original Entry 1
+            # Order 2: $10 at optimized Entry 1 (if exists)
+            # Order 3: $15 at Entry 2 (if exists)
+            total_usd = 15.0  # Order 1
+            weighted_sum = original_entry1_price * 15.0
             
             if optimized_entry1_price and order2_quantity:
-                total_usd += 5.0
-                weighted_sum += optimized_entry1_price * 5.0
+                total_usd += 10.0
+                weighted_sum += optimized_entry1_price * 10.0
             
             if dca_entry_price and order3_quantity:
-                total_usd += 10.0
-                weighted_sum += dca_entry_price * 10.0
+                total_usd += 15.0
+                weighted_sum += dca_entry_price * 15.0
             
-            if total_usd > 10.0:
+            if total_usd > 15.0:
                 entry_price_for_tp2 = weighted_sum / total_usd
                 logger.info(f"📊 Weighted average entry for TP2: ${entry_price_for_tp2:,.8f} (based on ${total_usd} total USD across orders)")
             else:
