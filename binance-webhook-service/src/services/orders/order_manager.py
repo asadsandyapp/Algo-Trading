@@ -56,6 +56,87 @@ except ImportError:
     from ...notifications.slack import send_slack_alert, send_signal_notification, send_exit_notification, send_signal_rejection_notification
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 
+def find_resistance_levels(symbol, signal_side, current_price, timeframes=['2h', '4h']):
+    """
+    Find strong resistance levels on higher timeframes (2H, 4H) for SHORT entries
+    or support levels for LONG entries.
+    
+    Args:
+        symbol: Trading symbol
+        signal_side: 'LONG' or 'SHORT'
+        current_price: Current market price
+        timeframes: List of timeframes to check (default: ['2h', '4h'])
+    
+    Returns:
+        float or None: Best resistance/support level found, or None if not found
+    """
+    try:
+        best_level = None
+        best_level_timeframe = None
+        
+        for timeframe in timeframes:
+            try:
+                # Get klines for the timeframe
+                klines = client.futures_klines(symbol=symbol, interval=timeframe, limit=100)
+                if not klines or len(klines) < 20:
+                    continue
+                
+                # Extract highs and lows
+                highs = [float(k[2]) for k in klines]
+                lows = [float(k[3]) for k in klines]
+                closes = [float(k[4]) for k in klines]
+                
+                if signal_side == 'SHORT':
+                    # For SHORT: Find resistance levels (highs) above current price
+                    # Look for recent swing highs that are above current price
+                    recent_highs = [h for h in highs[-50:] if h > current_price]
+                    if recent_highs:
+                        # Find the strongest resistance (most touches or highest)
+                        # Use recent swing highs
+                        swing_highs = []
+                        for i in range(2, len(highs) - 2):
+                            if highs[i] > highs[i-1] and highs[i] > highs[i-2] and \
+                               highs[i] > highs[i+1] and highs[i] > highs[i+2]:
+                                if highs[i] > current_price:
+                                    swing_highs.append(highs[i])
+                        
+                        if swing_highs:
+                            # Use the closest resistance level above current price
+                            closest_resistance = min(swing_highs)
+                            if best_level is None or (closest_resistance < best_level and closest_resistance > current_price):
+                                best_level = closest_resistance
+                                best_level_timeframe = timeframe
+                else:  # LONG
+                    # For LONG: Find support levels (lows) below current price
+                    recent_lows = [l for l in lows[-50:] if l < current_price]
+                    if recent_lows:
+                        # Find the strongest support (most touches or lowest)
+                        # Use recent swing lows
+                        swing_lows = []
+                        for i in range(2, len(lows) - 2):
+                            if lows[i] < lows[i-1] and lows[i] < lows[i-2] and \
+                               lows[i] < lows[i+1] and lows[i] < lows[i+2]:
+                                if lows[i] < current_price:
+                                    swing_lows.append(lows[i])
+                        
+                        if swing_lows:
+                            # Use the closest support level below current price
+                            closest_support = max(swing_lows)
+                            if best_level is None or (closest_support > best_level and closest_support < current_price):
+                                best_level = closest_support
+                                best_level_timeframe = timeframe
+            except Exception as e:
+                logger.debug(f"Error finding resistance/support on {timeframe} for {symbol}: {e}")
+                continue
+        
+        if best_level:
+            logger.info(f"📍 Found {'resistance' if signal_side == 'SHORT' else 'support'} level on {best_level_timeframe}: ${best_level:,.8f} for {symbol}")
+        
+        return best_level
+    except Exception as e:
+        logger.warning(f"Error finding resistance/support levels for {symbol}: {e}")
+        return None
+
 def calculate_quantity(entry_price, symbol_info, entry_size_usd=None):
     """Calculate quantity based on entry size and leverage
     
@@ -1894,6 +1975,22 @@ def create_limit_order(signal_data):
                         else:  # SHORT
                             optimized_entry2 = opt_prices['entry_price'] * (1 + original_spacing_pct / 100)
                         
+                        # Validate minimum distance: Entry 2 must be at least 2% away from Entry 1
+                        min_distance_pct = 2.0
+                        if signal_side == 'LONG':
+                            distance_pct = ((opt_prices['entry_price'] - optimized_entry2) / opt_prices['entry_price']) * 100
+                        else:  # SHORT
+                            distance_pct = ((optimized_entry2 - opt_prices['entry_price']) / opt_prices['entry_price']) * 100
+                        
+                        if distance_pct < min_distance_pct:
+                            # Adjust to meet minimum distance
+                            logger.warning(f"⚠️  Calculated Entry 2 ${optimized_entry2:,.8f} is too close ({distance_pct:.2f}% away). Adjusting to meet minimum {min_distance_pct}% distance.")
+                            if signal_side == 'LONG':
+                                optimized_entry2 = opt_prices['entry_price'] * (1 - min_distance_pct / 100)
+                            else:  # SHORT
+                                optimized_entry2 = opt_prices['entry_price'] * (1 + min_distance_pct / 100)
+                            logger.info(f"🔄 [PRICE UPDATE] Adjusted Entry 2 to ${optimized_entry2:,.8f} ({min_distance_pct}% away from optimized Entry 1)")
+                        
                         opt_prices['second_entry_price'] = optimized_entry2
                         logger.info(f"🔄 [PRICE UPDATE] Calculated optimized Entry 2: ${optimized_entry2:,.8f} (maintaining original {original_spacing_pct:.2f}% spacing from optimized Entry 1, original Entry 2 was ${original_entry2:,.8f})")
         
@@ -2531,6 +2628,7 @@ def create_limit_order(signal_data):
         # CRITICAL: Only use optimized price if it's BETTER than original:
         # - For LONG: Optimized price must be LOWER than original (better entry)
         # - For SHORT: Optimized price must be HIGHER than original (better entry)
+        # CRITICAL: Entry 2 must be at least 2% away from Entry 1
         optimized_entry1_price = None
         if 'optimized_prices' in validation_result and validation_result.get('optimized_prices', {}).get('entry_price'):
             opt_entry1 = validation_result['optimized_prices']['entry_price']
@@ -2538,34 +2636,111 @@ def create_limit_order(signal_data):
             if signal_side == 'LONG':
                 # For LONG: Optimized price must be LOWER (better entry closer to support)
                 if opt_entry1 < original_entry1_price:
-                    optimized_entry1_price = opt_entry1
-                    logger.info(f"🔄 [PRICE UPDATE] AI optimized Entry 1 for LONG: ${original_entry1_price:,.8f} → ${optimized_entry1_price:,.8f} (better entry - lower)")
+                    # Validate minimum distance: Entry 2 must be at least 2% away from Entry 1
+                    distance_pct = ((original_entry1_price - opt_entry1) / original_entry1_price) * 100
+                    min_distance_pct = 2.0  # Minimum 2% distance
+                    
+                    if distance_pct >= min_distance_pct:
+                        optimized_entry1_price = opt_entry1
+                        logger.info(f"🔄 [PRICE UPDATE] AI optimized Entry 1 for LONG: ${original_entry1_price:,.8f} → ${optimized_entry1_price:,.8f} (better entry - lower, {distance_pct:.2f}% away)")
+                    else:
+                        logger.warning(f"⚠️  [PRICE UPDATE] AI suggested Entry 1 ${opt_entry1:,.8f} is too close to Entry 1 (${original_entry1_price:,.8f}) - only {distance_pct:.2f}% away. Minimum required: {min_distance_pct}%. Skipping Order 2.")
                 else:
                     logger.info(f"⚠️  [PRICE UPDATE] AI suggested Entry 1 ${opt_entry1:,.8f} is NOT LOWER than original ${original_entry1_price:,.8f} - skipping Order 2 (not better for LONG)")
             else:  # SHORT
                 # For SHORT: Optimized price must be HIGHER (better entry closer to resistance)
                 if opt_entry1 > original_entry1_price:
-                    optimized_entry1_price = opt_entry1
-                    logger.info(f"🔄 [PRICE UPDATE] AI optimized Entry 1 for SHORT: ${original_entry1_price:,.8f} → ${optimized_entry1_price:,.8f} (better entry - higher)")
+                    # Validate minimum distance: Entry 2 must be at least 2% away from Entry 1
+                    distance_pct = ((opt_entry1 - original_entry1_price) / original_entry1_price) * 100
+                    min_distance_pct = 2.0  # Minimum 2% distance
+                    
+                    if distance_pct >= min_distance_pct:
+                        optimized_entry1_price = opt_entry1
+                        logger.info(f"🔄 [PRICE UPDATE] AI optimized Entry 1 for SHORT: ${original_entry1_price:,.8f} → ${optimized_entry1_price:,.8f} (better entry - higher, {distance_pct:.2f}% away)")
+                    else:
+                        logger.warning(f"⚠️  [PRICE UPDATE] AI suggested Entry 1 ${opt_entry1:,.8f} is too close to Entry 1 (${original_entry1_price:,.8f}) - only {distance_pct:.2f}% away. Minimum required: {min_distance_pct}%. Skipping Order 2.")
                 else:
                     logger.info(f"⚠️  [PRICE UPDATE] AI suggested Entry 1 ${opt_entry1:,.8f} is NOT HIGHER than original ${original_entry1_price:,.8f} - skipping Order 2 (not better for SHORT)")
         
         # Get primary entry price - use optimized entry_price if available, otherwise original
         primary_entry_price = entry_price
         
-        # Get DCA entry price (second entry) - prioritize AI-suggested Entry 2, then recalculated Entry 2, then original
+        # Get DCA entry price (Entry 3) - prioritize AI-suggested Entry 2, then recalculated Entry 2, then original
         # Priority: 1) AI-suggested Entry 2, 2) Recalculated Entry 2 (if Entry 1 was optimized), 3) Original Entry 2
+        # CRITICAL: Entry 3 must be at least 3-4% away from Entry 1
+        dca_entry_price = None
         if 'optimized_prices' in validation_result and validation_result.get('optimized_prices', {}).get('second_entry_price'):
             dca_entry_price = validation_result['optimized_prices']['second_entry_price']
             # Check if this is AI-suggested (from AI validation) or recalculated (from Entry 1 optimization)
             if 'suggested_second_entry_price' in validation_result.get('price_suggestions', {}):
-                logger.info(f"🔄 [PRICE UPDATE] Using AI-suggested Entry 2 (DCA): ${dca_entry_price:,.8f}")
+                logger.info(f"🔄 [PRICE UPDATE] Using AI-suggested Entry 3 (DCA): ${dca_entry_price:,.8f}")
             else:
-                logger.info(f"🔄 [PRICE UPDATE] Using recalculated Entry 2 (DCA): ${dca_entry_price:,.8f} (based on Entry 1 optimization)")
+                logger.info(f"🔄 [PRICE UPDATE] Using recalculated Entry 3 (DCA): ${dca_entry_price:,.8f} (based on Entry 1 optimization)")
         else:
             dca_entry_price = second_entry_price if second_entry_price and second_entry_price > 0 else None
             if dca_entry_price:
-                logger.info(f"ℹ️  [PRICE] Using original Entry 2 (DCA): ${dca_entry_price:,.8f}")
+                logger.info(f"ℹ️  [PRICE] Using original Entry 3 (DCA): ${dca_entry_price:,.8f}")
+        
+        # Validate Entry 3 distance from Entry 1 (minimum 3-4%)
+        if dca_entry_price and original_entry1_price:
+            if signal_side == 'LONG':
+                # For LONG: Entry 3 should be below Entry 1
+                distance_pct = ((original_entry1_price - dca_entry_price) / original_entry1_price) * 100
+                min_distance_pct = 3.0  # Minimum 3% distance
+                preferred_distance_pct = 4.0  # Preferred 4% distance
+            else:  # SHORT
+                # For SHORT: Entry 3 should be above Entry 1
+                distance_pct = ((dca_entry_price - original_entry1_price) / original_entry1_price) * 100
+                min_distance_pct = 3.0  # Minimum 3% distance
+                preferred_distance_pct = 4.0  # Preferred 4% distance
+            
+            if distance_pct < min_distance_pct:
+                # Entry 3 is too close - try to find resistance/support level on 2H/4H
+                logger.warning(f"⚠️  [PRICE UPDATE] Entry 3 ${dca_entry_price:,.8f} is too close to Entry 1 ${original_entry1_price:,.8f} - only {distance_pct:.2f}% away. Minimum required: {min_distance_pct}%.")
+                logger.info(f"🔍 Searching for {'resistance' if signal_side == 'SHORT' else 'support'} levels on 2H/4H timeframes...")
+                
+                # Get current price for resistance/support search
+                try:
+                    ticker = client.futures_symbol_ticker(symbol=symbol)
+                    current_price = float(ticker.get('price', 0))
+                except Exception as e:
+                    logger.warning(f"Could not get current price for resistance search: {e}")
+                    current_price = original_entry1_price
+                
+                # Find resistance/support level
+                resistance_level = find_resistance_levels(symbol, signal_side, current_price, timeframes=['2h', '4h'])
+                
+                if resistance_level:
+                    # Check if resistance level provides better distance
+                    if signal_side == 'LONG':
+                        new_distance_pct = ((original_entry1_price - resistance_level) / original_entry1_price) * 100
+                    else:  # SHORT
+                        new_distance_pct = ((resistance_level - original_entry1_price) / original_entry1_price) * 100
+                    
+                    if new_distance_pct >= min_distance_pct:
+                        old_dca = dca_entry_price
+                        dca_entry_price = resistance_level
+                        logger.info(f"✅ [PRICE UPDATE] Using {'resistance' if signal_side == 'SHORT' else 'support'} level from 2H/4H for Entry 3: ${old_dca:,.8f} → ${dca_entry_price:,.8f} ({new_distance_pct:.2f}% away from Entry 1)")
+                    else:
+                        logger.warning(f"⚠️  Found {'resistance' if signal_side == 'SHORT' else 'support'} level ${resistance_level:,.8f} but it's still too close ({new_distance_pct:.2f}% away). Adjusting to meet minimum {min_distance_pct}% distance.")
+                        # Adjust to meet minimum distance
+                        if signal_side == 'LONG':
+                            dca_entry_price = original_entry1_price * (1 - min_distance_pct / 100)
+                        else:  # SHORT
+                            dca_entry_price = original_entry1_price * (1 + min_distance_pct / 100)
+                        logger.info(f"🔄 [PRICE UPDATE] Adjusted Entry 3 to ${dca_entry_price:,.8f} ({min_distance_pct}% away from Entry 1)")
+                else:
+                    # No resistance level found - adjust Entry 3 to meet minimum distance
+                    logger.warning(f"⚠️  No suitable {'resistance' if signal_side == 'SHORT' else 'support'} level found. Adjusting Entry 3 to meet minimum {min_distance_pct}% distance.")
+                    if signal_side == 'LONG':
+                        dca_entry_price = original_entry1_price * (1 - min_distance_pct / 100)
+                    else:  # SHORT
+                        dca_entry_price = original_entry1_price * (1 + min_distance_pct / 100)
+                    logger.info(f"🔄 [PRICE UPDATE] Adjusted Entry 3 to ${dca_entry_price:,.8f} ({min_distance_pct}% away from Entry 1)")
+            elif distance_pct < preferred_distance_pct:
+                logger.info(f"ℹ️  Entry 3 distance: {distance_pct:.2f}% (minimum: {min_distance_pct}%, preferred: {preferred_distance_pct}%)")
+            else:
+                logger.info(f"✅ Entry 3 distance: {distance_pct:.2f}% (meets preferred distance of {preferred_distance_pct}%)")
         
         # If this is a primary entry, we need both prices to create both orders
         if is_primary_entry and not dca_entry_price:
