@@ -1110,81 +1110,81 @@ def create_missing_tp_orders():
                                     
                                     # Recalculate TP quantities based on current position size
                                     if use_single_tp:
-                                # Single TP: 100% of position
-                                new_tp2_qty = current_position_size
-                                tp2_price = trade_info.get('tp2_price')
-                                
-                                if tp2_price:
-                                    # Cancel old TP2 and create new one with updated quantity
-                                    if 'tp2_order_id' in trade_info:
-                                        try:
-                                            client.futures_cancel_order(symbol=symbol, orderId=trade_info['tp2_order_id'])
-                                            logger.info(f"🔄 Cancelled old TP2 order for {symbol} (updating quantity)")
-                                        except Exception as e:
-                                            logger.debug(f"Error cancelling old TP2: {e}")
-                                    
-                                    # Update stored quantity and create new TP
-                                    trade_info['tp2_quantity'] = new_tp2_qty
-                                    tp_side = trade_info.get('tp_side', 'SELL')
-                                    tp2_order_id = create_single_tp_order(symbol, tp2_price, new_tp2_qty, tp_side, trade_info, tp_number=2)
-                                    if tp2_order_id:
-                                        trade_info['tp2_order_id'] = tp2_order_id
-                                        logger.info(f"✅ Updated TP2 order for {symbol} with new quantity: {new_tp2_qty}")
-                            else:
-                                # TP1 + TP2: Recalculate based on current position size
-                                tp1_price = trade_info.get('tp1_price')
-                                tp2_price = trade_info.get('tp2_price')
-                                
-                                if tp1_price and tp2_price:
-                                    # Calculate new quantities based on current position size
-                                    new_tp1_qty = current_position_size * (TP1_SPLIT / 100.0)  # 70% of position
-                                    new_tp2_qty = current_position_size * (TP2_SPLIT / 100.0)  # 30% of position
-                                    
-                                    # Get symbol info for formatting
-                                    try:
-                                        exchange_info = client.futures_exchange_info()
-                                        symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
-                                        if symbol_info:
-                                            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
-                                            if lot_size_filter:
-                                                step_size = float(lot_size_filter['stepSize'])
-                                                new_tp1_qty = format_quantity_precision(new_tp1_qty, step_size)
-                                                new_tp2_qty = format_quantity_precision(new_tp2_qty, step_size)
-                                    except Exception as e:
-                                        logger.debug(f"Error formatting quantities: {e}")
-                                    
-                                    tp_side = trade_info.get('tp_side', 'SELL')
-                                    
-                                    # Cancel old TP orders and create new ones
-                                    if 'tp1_order_id' in trade_info:
-                                        try:
-                                            client.futures_cancel_order(symbol=symbol, orderId=trade_info['tp1_order_id'])
-                                            logger.info(f"🔄 Cancelled old TP1 order for {symbol} (updating quantity)")
-                                        except Exception as e:
-                                            logger.debug(f"Error cancelling old TP1: {e}")
-                                    
-                                    if 'tp2_order_id' in trade_info:
-                                        try:
-                                            client.futures_cancel_order(symbol=symbol, orderId=trade_info['tp2_order_id'])
-                                            logger.info(f"🔄 Cancelled old TP2 order for {symbol} (updating quantity)")
-                                        except Exception as e:
-                                            logger.debug(f"Error cancelling old TP2: {e}")
-                                    
-                                    # Update stored quantities and create new TP orders
-                                    trade_info['tp1_quantity'] = new_tp1_qty
-                                    trade_info['tp2_quantity'] = new_tp2_qty
-                                    
-                                    # Create TP1
-                                    tp1_order_id = create_single_tp_order(symbol, tp1_price, new_tp1_qty, tp_side, trade_info, tp_number=1)
-                                    if tp1_order_id:
-                                        trade_info['tp1_order_id'] = tp1_order_id
-                                        logger.info(f"✅ Updated TP1 order for {symbol} with new quantity: {new_tp1_qty}")
-                                    
-                                    # Create TP2
-                                    tp2_order_id = create_single_tp_order(symbol, tp2_price, new_tp2_qty, tp_side, trade_info, tp_number=2)
-                                    if tp2_order_id:
-                                        trade_info['tp2_order_id'] = tp2_order_id
-                                        logger.info(f"✅ Updated TP2 order for {symbol} with new quantity: {new_tp2_qty}")
+                                        # Single TP: 100% of position
+                                        new_tp2_qty = current_position_size
+                                        tp2_price = trade_info.get('tp2_price')
+                                        
+                                        if tp2_price:
+                                            # Cancel old TP2 and create new one with updated quantity
+                                            if 'tp2_order_id' in trade_info:
+                                                try:
+                                                    client.futures_cancel_order(symbol=symbol, orderId=trade_info['tp2_order_id'])
+                                                    logger.info(f"🔄 Cancelled old TP2 order for {symbol} (updating quantity)")
+                                                except Exception as e:
+                                                    logger.debug(f"Error cancelling old TP2: {e}")
+                                            
+                                            # Update stored quantity and create new TP
+                                            trade_info['tp2_quantity'] = new_tp2_qty
+                                            tp_side = trade_info.get('tp_side', 'SELL')
+                                            tp2_order_id = create_single_tp_order(symbol, tp2_price, new_tp2_qty, tp_side, trade_info, tp_number=2)
+                                            if tp2_order_id:
+                                                trade_info['tp2_order_id'] = tp2_order_id
+                                                logger.info(f"✅ Updated TP2 order for {symbol} with new quantity: {new_tp2_qty}")
+                                    else:
+                                        # TP1 + TP2: Recalculate based on current position size
+                                        tp1_price = trade_info.get('tp1_price')
+                                        tp2_price = trade_info.get('tp2_price')
+                                        
+                                        if tp1_price and tp2_price:
+                                            # Calculate new quantities based on current position size
+                                            new_tp1_qty = current_position_size * (TP1_SPLIT / 100.0)  # 70% of position
+                                            new_tp2_qty = current_position_size * (TP2_SPLIT / 100.0)  # 30% of position
+                                            
+                                            # Get symbol info for formatting
+                                            try:
+                                                exchange_info = client.futures_exchange_info()
+                                                symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+                                                if symbol_info:
+                                                    lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+                                                    if lot_size_filter:
+                                                        step_size = float(lot_size_filter['stepSize'])
+                                                        new_tp1_qty = format_quantity_precision(new_tp1_qty, step_size)
+                                                        new_tp2_qty = format_quantity_precision(new_tp2_qty, step_size)
+                                            except Exception as e:
+                                                logger.debug(f"Error formatting quantities: {e}")
+                                            
+                                            tp_side = trade_info.get('tp_side', 'SELL')
+                                            
+                                            # Cancel old TP orders and create new ones
+                                            if 'tp1_order_id' in trade_info:
+                                                try:
+                                                    client.futures_cancel_order(symbol=symbol, orderId=trade_info['tp1_order_id'])
+                                                    logger.info(f"🔄 Cancelled old TP1 order for {symbol} (updating quantity)")
+                                                except Exception as e:
+                                                    logger.debug(f"Error cancelling old TP1: {e}")
+                                            
+                                            if 'tp2_order_id' in trade_info:
+                                                try:
+                                                    client.futures_cancel_order(symbol=symbol, orderId=trade_info['tp2_order_id'])
+                                                    logger.info(f"🔄 Cancelled old TP2 order for {symbol} (updating quantity)")
+                                                except Exception as e:
+                                                    logger.debug(f"Error cancelling old TP2: {e}")
+                                            
+                                            # Update stored quantities and create new TP orders
+                                            trade_info['tp1_quantity'] = new_tp1_qty
+                                            trade_info['tp2_quantity'] = new_tp2_qty
+                                            
+                                            # Create TP1
+                                            tp1_order_id = create_single_tp_order(symbol, tp1_price, new_tp1_qty, tp_side, trade_info, tp_number=1)
+                                            if tp1_order_id:
+                                                trade_info['tp1_order_id'] = tp1_order_id
+                                                logger.info(f"✅ Updated TP1 order for {symbol} with new quantity: {new_tp1_qty}")
+                                            
+                                            # Create TP2
+                                            tp2_order_id = create_single_tp_order(symbol, tp2_price, new_tp2_qty, tp_side, trade_info, tp_number=2)
+                                            if tp2_order_id:
+                                                trade_info['tp2_order_id'] = tp2_order_id
+                                                logger.info(f"✅ Updated TP2 order for {symbol} with new quantity: {new_tp2_qty}")
                                     
                                     # Continue to next symbol after creating/updating TP orders
                                     continue
