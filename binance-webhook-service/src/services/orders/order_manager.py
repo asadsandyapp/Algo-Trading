@@ -534,7 +534,7 @@ def create_single_tp_order(symbol, tp_price, tp_quantity, tp_side, trade_info, t
                         symbol=symbol,
                         severity='WARNING'
                     )
-                return None
+                    return None
             else:
                 logger.error(f"❌ Failed to create TP{tp_number} order for {symbol}: {e.message} (Code: {e.code})")
                 return None
@@ -1338,8 +1338,8 @@ def create_missing_tp_orders():
                             active_trades[symbol]['_tp_creation_failures'] = active_trades[symbol].get('_tp_creation_failures', 0) + 1
                             if active_trades[symbol]['_tp_creation_failures'] >= 3:
                                 logger.warning(f"⚠️ Background thread: Failed to create TP1/TP2 for {symbol} ({active_trades[symbol]['_tp_creation_failures']} failures) - will skip after 5 failures")
-                            else:
-                                logger.warning(f"⚠️ Background thread: Failed to create TP1/TP2 for {symbol} (check logs for details)")
+                        else:
+                            logger.warning(f"⚠️ Background thread: Failed to create TP1/TP2 for {symbol} (check logs for details)")
                         
                     
                     except Exception as e:

@@ -168,19 +168,91 @@ def cancel_all_limit_orders(symbol: str, side: Optional[str] = None) -> int:
 
 
 def format_quantity_precision(quantity: float, step_size: float) -> float:
-    """Format quantity to match Binance step size precision"""
+    """Format quantity to match Binance step size precision, removing floating point errors
+    
+    Handles all step_size formats:
+    - Large: 1.0, 10.0, 100.0 (0 decimal places)
+    - Medium: 0.1, 0.5 (1 decimal place)
+    - Small: 0.01, 0.001 (2-3 decimal places)
+    - Very small: 0.0001, 0.00001 (4-5 decimal places)
+    - Extremely small: 0.000001 (6+ decimal places)
+    """
     if step_size <= 0:
         return quantity
-    # Round down to nearest step_size
-    return math.floor(quantity / step_size) * step_size
+    
+    # Calculate decimal places from step_size
+    # Convert step_size to string to count decimal places accurately
+    step_size_str = f"{step_size:.10f}".rstrip('0').rstrip('.')
+    
+    if '.' in step_size_str:
+        # Count decimal places after the decimal point
+        decimal_places = len(step_size_str.split('.')[1])
+    else:
+        # Step size is a whole number (1.0, 10.0, etc.)
+        decimal_places = 0
+    
+    # Round down to nearest step_size: divide by step_size, floor, multiply back
+    # This ensures quantity is a multiple of step_size
+    quantity = math.floor(quantity / step_size) * step_size
+    
+    # Format to correct decimal places to eliminate floating point errors
+    # This converts values like 15.280000000000001 to 15.28
+    quantity = round(quantity, decimal_places)
+    
+    # Final safety check: convert to string and back to float to remove any remaining precision errors
+    # Format with the exact number of decimal places needed
+    if decimal_places > 0:
+        quantity_str = f"{quantity:.{decimal_places}f}"
+        quantity = float(quantity_str)
+    else:
+        # For whole numbers, ensure it's an integer
+        quantity = float(int(quantity))
+    
+    return quantity
 
 
 def format_price_precision(price: float, tick_size: float) -> float:
-    """Format price to match Binance tick size precision"""
+    """Format price to match Binance tick size precision, removing floating point errors
+    
+    Handles all tick_size formats:
+    - Large: 1.0, 10.0, 100.0 (0 decimal places)
+    - Medium: 0.1, 0.5 (1 decimal place)
+    - Small: 0.01, 0.001 (2-3 decimal places)
+    - Very small: 0.0001, 0.00001 (4-5 decimal places)
+    - Extremely small: 0.000001 (6+ decimal places)
+    """
     if tick_size <= 0:
         return price
-    # Round to nearest tick_size
-    return round(price / tick_size) * tick_size
+    
+    # Calculate decimal places from tick_size
+    # Convert tick_size to string to count decimal places accurately
+    tick_size_str = f"{tick_size:.10f}".rstrip('0').rstrip('.')
+    
+    if '.' in tick_size_str:
+        # Count decimal places after the decimal point
+        decimal_places = len(tick_size_str.split('.')[1])
+    else:
+        # Tick size is a whole number (1.0, 10.0, etc.)
+        decimal_places = 0
+    
+    # Round to tick size: divide by tick_size, round to nearest integer, multiply back
+    # This ensures price is a multiple of tick_size
+    price = round(price / tick_size) * tick_size
+    
+    # Format to correct decimal places to eliminate floating point errors
+    # This converts values like 0.7111000000000001 to 0.7111
+    price = round(price, decimal_places)
+    
+    # Final safety check: convert to string and back to float to remove any remaining precision errors
+    # Format with the exact number of decimal places needed
+    if decimal_places > 0:
+        price_str = f"{price:.{decimal_places}f}"
+        price = float(price_str)
+    else:
+        # For whole numbers, ensure it's an integer
+        price = float(int(price))
+    
+    return price
 
 
 def cleanup_closed_positions():
