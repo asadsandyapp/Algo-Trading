@@ -491,7 +491,50 @@ def create_single_tp_order(symbol, tp_price, tp_quantity, tp_side, trade_info, t
                     return order_id
                 except Exception as e2:
                     logger.error(f"❌ Failed to create TP{tp_number} order for {symbol}: {e2}")
+                    # Check if it's order type not supported error
+                    error_code = getattr(e2, 'code', None) if hasattr(e2, 'code') else None
+                    if error_code == -4120 or 'order type not supported' in str(e2).lower():
+                        # Mark symbol as not supporting TP orders
+                        if symbol in active_trades:
+                            active_trades[symbol]['_tp_not_supported'] = True
+                            # Clean up stored TP details
+                            if 'tp1_price' in active_trades[symbol]:
+                                del active_trades[symbol]['tp1_price']
+                            if 'tp2_price' in active_trades[symbol]:
+                                del active_trades[symbol]['tp2_price']
+                            if 'tp1_quantity' in active_trades[symbol]:
+                                del active_trades[symbol]['tp1_quantity']
+                            if 'tp2_quantity' in active_trades[symbol]:
+                                del active_trades[symbol]['tp2_quantity']
+                            if 'tp_working_type' in active_trades[symbol]:
+                                del active_trades[symbol]['tp_working_type']
+                            logger.warning(f"⚠️ Marking {symbol} as not supporting TP orders (Code: {error_code}) - cleaned up stored TP details and will skip future attempts")
                     return None
+            elif e.code == -4120 or 'order type not supported' in str(e).lower():
+                # Order type not supported - mark symbol to skip future attempts
+                logger.error(f"❌ Failed to create TP{tp_number} order for {symbol}: {e.message} (Code: {e.code}) - Order type not supported")
+                if symbol in active_trades:
+                    active_trades[symbol]['_tp_not_supported'] = True
+                    # Clean up stored TP details to prevent background thread from retrying
+                    if 'tp1_price' in active_trades[symbol]:
+                        del active_trades[symbol]['tp1_price']
+                    if 'tp2_price' in active_trades[symbol]:
+                        del active_trades[symbol]['tp2_price']
+                    if 'tp1_quantity' in active_trades[symbol]:
+                        del active_trades[symbol]['tp1_quantity']
+                    if 'tp2_quantity' in active_trades[symbol]:
+                        del active_trades[symbol]['tp2_quantity']
+                    if 'tp_working_type' in active_trades[symbol]:
+                        del active_trades[symbol]['tp_working_type']
+                    logger.warning(f"⚠️ Marked {symbol} as not supporting TP orders - cleaned up stored TP details and will skip future attempts")
+                    send_slack_alert(
+                        error_type="Take Profit Order Type Not Supported",
+                        message=f"TAKE_PROFIT_MARKET orders are not supported for {symbol}. You may need to set TP manually in Binance UI.",
+                        details={'Error_Code': -4120, 'TP_Price': tp_price, 'TP_Quantity': tp_quantity, 'Symbol': symbol},
+                        symbol=symbol,
+                        severity='WARNING'
+                    )
+                return None
             else:
                 logger.error(f"❌ Failed to create TP{tp_number} order for {symbol}: {e.message} (Code: {e.code})")
                 return None
@@ -574,8 +617,25 @@ def create_tp1_tp2_if_needed(symbol, trade_info):
         
         if use_single_tp:
             # Single TP mode: Only create TP2 (main TP)
+            # Get symbol info to format price properly before creating order
+            try:
+                exchange_info = client.futures_exchange_info()
+                symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+                if symbol_info:
+                    price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+                    tick_size = float(price_filter['tickSize']) if price_filter else 0.01
+                else:
+                    tick_size = 0.01
+            except Exception as e:
+                logger.warning(f"Error getting symbol info for {symbol}: {e}")
+                tick_size = 0.01
+            
             tp2_price = trade_info['tp2_price']
             tp2_quantity = trade_info.get('tp2_quantity', 0)
+            
+            # Re-format price to ensure correct precision (safety check)
+            if tp2_price:
+                tp2_price = format_price_precision(float(tp2_price), tick_size)
             
             if not tp2_exists and tp2_price and tp2_quantity > 0:
                 tp2_order_id = create_single_tp_order(symbol, tp2_price, tp2_quantity, tp_side, trade_info, tp_number=2)
@@ -590,10 +650,29 @@ def create_tp1_tp2_if_needed(symbol, trade_info):
                     return True
         else:
             # TP1 + TP2 mode: Create both
+            # Get symbol info to format prices properly before creating orders
+            try:
+                exchange_info = client.futures_exchange_info()
+                symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+                if symbol_info:
+                    price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+                    tick_size = float(price_filter['tickSize']) if price_filter else 0.01
+                else:
+                    tick_size = 0.01
+            except Exception as e:
+                logger.warning(f"Error getting symbol info for {symbol}: {e}")
+                tick_size = 0.01
+            
             tp1_price = trade_info.get('tp1_price')
             tp2_price = trade_info['tp2_price']
             tp1_quantity = trade_info.get('tp1_quantity', 0)
             tp2_quantity = trade_info.get('tp2_quantity', 0)
+            
+            # Re-format prices to ensure correct precision (safety check)
+            if tp1_price:
+                tp1_price = format_price_precision(float(tp1_price), tick_size)
+            if tp2_price:
+                tp2_price = format_price_precision(float(tp2_price), tick_size)
             
             # Create TP1 if it doesn't exist
             if not tp1_exists and tp1_price and tp1_quantity > 0:
@@ -961,17 +1040,233 @@ def create_missing_tp_orders():
                     position_amt = float(position.get('positionAmt', 0))
                     
                     try:
+                        # Check if any order has filled (Order 1, Order 2, or Order 3)
+                        trade_info = active_trades[symbol]
+                        order1_filled = trade_info.get('primary_filled', False)
+                        order2_filled = trade_info.get('optimized_entry1_filled', False)
+                        order3_filled = trade_info.get('dca_filled', False)
+                        
+                        # Check Order 1 status
+                        if not order1_filled and trade_info.get('primary_order_id'):
+                            try:
+                                order1_status = client.futures_get_order(symbol=symbol, orderId=trade_info['primary_order_id'])
+                                if order1_status.get('status') == 'FILLED':
+                                    order1_filled = True
+                                    trade_info['primary_filled'] = True
+                                    logger.info(f"✅ Order 1 filled for {symbol}")
+                            except Exception as e:
+                                logger.debug(f"Error checking Order 1 status for {symbol}: {e}")
+                        
+                        # Check Order 2 status
+                        if not order2_filled and trade_info.get('optimized_entry1_order_id'):
+                            try:
+                                order2_status = client.futures_get_order(symbol=symbol, orderId=trade_info['optimized_entry1_order_id'])
+                                if order2_status.get('status') == 'FILLED':
+                                    order2_filled = True
+                                    trade_info['optimized_entry1_filled'] = True
+                                    logger.info(f"✅ Order 2 filled for {symbol} - position size increased")
+                            except Exception as e:
+                                logger.debug(f"Error checking Order 2 status for {symbol}: {e}")
+                        
+                        # Check Order 3 status
+                        if not order3_filled and trade_info.get('dca_order_id'):
+                            try:
+                                order3_status = client.futures_get_order(symbol=symbol, orderId=trade_info['dca_order_id'])
+                                if order3_status.get('status') == 'FILLED':
+                                    order3_filled = True
+                                    trade_info['dca_filled'] = True
+                                    logger.info(f"✅ Order 3 filled for {symbol} - position size increased")
+                            except Exception as e:
+                                logger.debug(f"Error checking Order 3 status for {symbol}: {e}")
+                        
+                        # Check if TP orders exist
+                        has_tp1 = 'tp1_order_id' in trade_info
+                        has_tp2 = 'tp2_order_id' in trade_info
+                        tp_orders_exist = has_tp1 or has_tp2
+                        
+                        # If any order filled, ensure TP orders are created/updated
+                        if order1_filled or order2_filled or order3_filled:
+                            # Get current position size
+                            current_position_size = abs(position_amt)
+                            
+                            if current_position_size > 0:
+                                # Check if we have stored TP details
+                                has_tp_details = ('tp1_price' in trade_info and trade_info.get('tp1_price')) or \
+                                                ('tp2_price' in trade_info and trade_info.get('tp2_price'))
+                                
+                                if has_tp_details:
+                                    # We have TP details - create or update TP orders
+                                    use_single_tp = trade_info.get('use_single_tp', False)
+                                    
+                                    if tp_orders_exist and (order2_filled or order3_filled):
+                                        # TP orders exist and position size increased - update them
+                                        logger.info(f"🔄 Position size increased for {symbol} (Order 2 or Order 3 filled) - updating TP orders")
+                                    elif not tp_orders_exist:
+                                        # TP orders don't exist - create them for current position
+                                        if order1_filled:
+                                            logger.info(f"🔄 Order 1 filled for {symbol} - creating TP orders")
+                                        elif order2_filled or order3_filled:
+                                            logger.info(f"🔄 Order 2 or Order 3 filled for {symbol} - creating TP orders for current position")
+                                    
+                                    # Recalculate TP quantities based on current position size
+                                    if use_single_tp:
+                                # Single TP: 100% of position
+                                new_tp2_qty = current_position_size
+                                tp2_price = trade_info.get('tp2_price')
+                                
+                                if tp2_price:
+                                    # Cancel old TP2 and create new one with updated quantity
+                                    if 'tp2_order_id' in trade_info:
+                                        try:
+                                            client.futures_cancel_order(symbol=symbol, orderId=trade_info['tp2_order_id'])
+                                            logger.info(f"🔄 Cancelled old TP2 order for {symbol} (updating quantity)")
+                                        except Exception as e:
+                                            logger.debug(f"Error cancelling old TP2: {e}")
+                                    
+                                    # Update stored quantity and create new TP
+                                    trade_info['tp2_quantity'] = new_tp2_qty
+                                    tp_side = trade_info.get('tp_side', 'SELL')
+                                    tp2_order_id = create_single_tp_order(symbol, tp2_price, new_tp2_qty, tp_side, trade_info, tp_number=2)
+                                    if tp2_order_id:
+                                        trade_info['tp2_order_id'] = tp2_order_id
+                                        logger.info(f"✅ Updated TP2 order for {symbol} with new quantity: {new_tp2_qty}")
+                            else:
+                                # TP1 + TP2: Recalculate based on current position size
+                                tp1_price = trade_info.get('tp1_price')
+                                tp2_price = trade_info.get('tp2_price')
+                                
+                                if tp1_price and tp2_price:
+                                    # Calculate new quantities based on current position size
+                                    new_tp1_qty = current_position_size * (TP1_SPLIT / 100.0)  # 70% of position
+                                    new_tp2_qty = current_position_size * (TP2_SPLIT / 100.0)  # 30% of position
+                                    
+                                    # Get symbol info for formatting
+                                    try:
+                                        exchange_info = client.futures_exchange_info()
+                                        symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+                                        if symbol_info:
+                                            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+                                            if lot_size_filter:
+                                                step_size = float(lot_size_filter['stepSize'])
+                                                new_tp1_qty = format_quantity_precision(new_tp1_qty, step_size)
+                                                new_tp2_qty = format_quantity_precision(new_tp2_qty, step_size)
+                                    except Exception as e:
+                                        logger.debug(f"Error formatting quantities: {e}")
+                                    
+                                    tp_side = trade_info.get('tp_side', 'SELL')
+                                    
+                                    # Cancel old TP orders and create new ones
+                                    if 'tp1_order_id' in trade_info:
+                                        try:
+                                            client.futures_cancel_order(symbol=symbol, orderId=trade_info['tp1_order_id'])
+                                            logger.info(f"🔄 Cancelled old TP1 order for {symbol} (updating quantity)")
+                                        except Exception as e:
+                                            logger.debug(f"Error cancelling old TP1: {e}")
+                                    
+                                    if 'tp2_order_id' in trade_info:
+                                        try:
+                                            client.futures_cancel_order(symbol=symbol, orderId=trade_info['tp2_order_id'])
+                                            logger.info(f"🔄 Cancelled old TP2 order for {symbol} (updating quantity)")
+                                        except Exception as e:
+                                            logger.debug(f"Error cancelling old TP2: {e}")
+                                    
+                                    # Update stored quantities and create new TP orders
+                                    trade_info['tp1_quantity'] = new_tp1_qty
+                                    trade_info['tp2_quantity'] = new_tp2_qty
+                                    
+                                    # Create TP1
+                                    tp1_order_id = create_single_tp_order(symbol, tp1_price, new_tp1_qty, tp_side, trade_info, tp_number=1)
+                                    if tp1_order_id:
+                                        trade_info['tp1_order_id'] = tp1_order_id
+                                        logger.info(f"✅ Updated TP1 order for {symbol} with new quantity: {new_tp1_qty}")
+                                    
+                                    # Create TP2
+                                    tp2_order_id = create_single_tp_order(symbol, tp2_price, new_tp2_qty, tp_side, trade_info, tp_number=2)
+                                    if tp2_order_id:
+                                        trade_info['tp2_order_id'] = tp2_order_id
+                                        logger.info(f"✅ Updated TP2 order for {symbol} with new quantity: {new_tp2_qty}")
+                                    
+                                    # Continue to next symbol after creating/updating TP orders
+                                    continue
+                                else:
+                                    # No TP details stored - try to create TP orders using create_tp1_tp2_if_needed
+                                    # This handles the case where Order 1 filled but TP creation failed initially
+                                    logger.info(f"🔄 Order filled for {symbol} but no TP details stored - attempting to create TP orders")
+                                    success = create_tp1_tp2_if_needed(symbol, trade_info)
+                                    if success:
+                                        logger.info(f"✅ TP orders created successfully for {symbol}")
+                                    continue
+                        
                         # Check if TP orders already exist (don't log every check to reduce spam)
                         has_orders, open_orders = check_existing_orders(symbol, log_result=False)
                         existing_tps = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
                         
                         use_single_tp = active_trades.get(symbol, {}).get('use_single_tp', False)
                         
+                        # Track TP creation failures to avoid infinite retries
+                        if symbol not in active_trades:
+                            continue
+                        
+                        # Check if symbol doesn't support TP orders (marked from previous attempts)
+                        if active_trades[symbol].get('_tp_not_supported', False):
+                            logger.debug(f"⏭️ Skipping {symbol} - TP orders not supported for this symbol (Code: -4120)")
+                            # Clean up stored TP details if they still exist
+                            if 'tp1_price' in active_trades[symbol]:
+                                del active_trades[symbol]['tp1_price']
+                            if 'tp2_price' in active_trades[symbol]:
+                                del active_trades[symbol]['tp2_price']
+                            if 'tp1_quantity' in active_trades[symbol]:
+                                del active_trades[symbol]['tp1_quantity']
+                            if 'tp2_quantity' in active_trades[symbol]:
+                                del active_trades[symbol]['tp2_quantity']
+                            if 'tp_working_type' in active_trades[symbol]:
+                                del active_trades[symbol]['tp_working_type']
+                            continue
+                        
+                        # Initialize failure counter if not exists
+                        if '_tp_creation_failures' not in active_trades[symbol]:
+                            active_trades[symbol]['_tp_creation_failures'] = 0
+                        
+                        # If we've failed too many times (5+), skip this symbol to avoid spam
+                        if active_trades[symbol]['_tp_creation_failures'] >= 5:
+                            # Still check if TP orders exist (maybe they were created manually)
+                            if use_single_tp:
+                                if len(existing_tps) >= 1:
+                                    # TP exists now, clean up and reset counter
+                                    active_trades[symbol]['tp2_order_id'] = existing_tps[0].get('orderId')
+                                    active_trades[symbol]['_tp_creation_failures'] = 0
+                                    if 'tp2_price' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp2_price']
+                                    if 'tp2_quantity' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp2_quantity']
+                                    if 'tp_working_type' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp_working_type']
+                            else:
+                                if len(existing_tps) >= 2:
+                                    # Both TPs exist now, clean up and reset counter
+                                    if len(existing_tps) >= 1:
+                                        active_trades[symbol]['tp1_order_id'] = existing_tps[0].get('orderId')
+                                    if len(existing_tps) >= 2:
+                                        active_trades[symbol]['tp2_order_id'] = existing_tps[1].get('orderId')
+                                    active_trades[symbol]['_tp_creation_failures'] = 0
+                                    if 'tp1_price' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp1_price']
+                                    if 'tp2_price' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp2_price']
+                                    if 'tp1_quantity' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp1_quantity']
+                                    if 'tp2_quantity' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp2_quantity']
+                                    if 'tp_working_type' in active_trades[symbol]:
+                                        del active_trades[symbol]['tp_working_type']
+                            continue  # Skip retrying after too many failures
+                        
                         if use_single_tp:
                             # Single TP mode: only need 1 TP order
                             if len(existing_tps) >= 1:
                                 if symbol in active_trades:
                                     active_trades[symbol]['tp2_order_id'] = existing_tps[0].get('orderId')
+                                    active_trades[symbol]['_tp_creation_failures'] = 0  # Reset on success
                                     # Clean up stored TP details
                                     if 'tp2_price' in active_trades[symbol]:
                                         del active_trades[symbol]['tp2_price']
@@ -988,6 +1283,7 @@ def create_missing_tp_orders():
                                         active_trades[symbol]['tp1_order_id'] = existing_tps[0].get('orderId')
                                     if len(existing_tps) >= 2:
                                         active_trades[symbol]['tp2_order_id'] = existing_tps[1].get('orderId')
+                                    active_trades[symbol]['_tp_creation_failures'] = 0  # Reset on success
                                     # Clean up stored TP details
                                     if 'tp1_price' in active_trades[symbol]:
                                         del active_trades[symbol]['tp1_price']
@@ -1000,15 +1296,50 @@ def create_missing_tp_orders():
                                     if 'tp_working_type' in active_trades[symbol]:
                                         del active_trades[symbol]['tp_working_type']
                                 continue  # Both TPs exist, skip
+                            elif len(existing_tps) >= 1:
+                                # Only one TP exists - check which one and update accordingly
+                                if symbol in active_trades:
+                                    # Check if we have TP1 or TP2 order ID stored
+                                    if 'tp1_order_id' in active_trades[symbol]:
+                                        # TP1 exists, only need TP2
+                                        if existing_tps[0].get('orderId') == active_trades[symbol]['tp1_order_id']:
+                                            # This is TP1, need TP2
+                                            pass  # Continue to create TP2
+                                        else:
+                                            # This might be TP2, update and clean up
+                                            active_trades[symbol]['tp2_order_id'] = existing_tps[0].get('orderId')
+                                            if 'tp2_price' in active_trades[symbol]:
+                                                del active_trades[symbol]['tp2_price']
+                                            if 'tp2_quantity' in active_trades[symbol]:
+                                                del active_trades[symbol]['tp2_quantity']
+                                            continue
+                                    elif 'tp2_order_id' in active_trades[symbol]:
+                                        # TP2 exists, only need TP1
+                                        if existing_tps[0].get('orderId') == active_trades[symbol]['tp2_order_id']:
+                                            # This is TP2, need TP1
+                                            pass  # Continue to create TP1
+                                        else:
+                                            # This might be TP1, update and clean up
+                                            active_trades[symbol]['tp1_order_id'] = existing_tps[0].get('orderId')
+                                            if 'tp1_price' in active_trades[symbol]:
+                                                del active_trades[symbol]['tp1_price']
+                                            if 'tp1_quantity' in active_trades[symbol]:
+                                                del active_trades[symbol]['tp1_quantity']
+                                            continue
                         
-                        # No TP orders exist - we have stored TP details, create TP1 and TP2 orders
+                        # No TP orders exist or only partial TPs - we have stored TP details, create TP1 and TP2 orders
                         trade_info = active_trades[symbol]
                         logger.info(f"🔄 Background thread: Position exists for {symbol} with stored TP details - creating TP1 and TP2 orders")
                         success = create_tp1_tp2_if_needed(symbol, trade_info)
                         if success:
                             logger.info(f"✅ Background thread: TP1 and TP2 orders created successfully for {symbol}")
+                            active_trades[symbol]['_tp_creation_failures'] = 0  # Reset on success
                         else:
-                            logger.warning(f"⚠️ Background thread: Failed to create TP1/TP2 for {symbol} (check logs for details)")
+                            active_trades[symbol]['_tp_creation_failures'] = active_trades[symbol].get('_tp_creation_failures', 0) + 1
+                            if active_trades[symbol]['_tp_creation_failures'] >= 3:
+                                logger.warning(f"⚠️ Background thread: Failed to create TP1/TP2 for {symbol} ({active_trades[symbol]['_tp_creation_failures']} failures) - will skip after 5 failures")
+                            else:
+                                logger.warning(f"⚠️ Background thread: Failed to create TP1/TP2 for {symbol} (check logs for details)")
                         
                     
                     except Exception as e:
