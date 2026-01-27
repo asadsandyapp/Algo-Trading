@@ -121,3 +121,54 @@ curl -X POST http://localhost:5000/webhook \
   "exit_price": 2880.50,
   "quality_score": null
 }'
+
+
+curl -X POST http://localhost:5000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+"payload_version": 1,
+"token": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+"event": "ENTRY",
+"order_subtype": "primary_entry",
+"signal_side": "LONG",
+"reduce_only": false,
+"symbol": "ZORAUSDT.P",
+"timeframe": "2h",
+"entry_price": 0.03033871,
+"average_entry_price": 0.03013936,
+"second_entry_price": 0.02994,
+"second_entry_filled": true,
+"stop_loss": 0.02881658,
+"take_profit": 0.03266705,
+"exit_price": null,
+"indicators": {
+"rsi": 43.2363,
+"macd_line": -0.00018235,
+"macd_signal": -0.00011214,
+"macd_histogram": -7.021e-05,
+"stoch_k": 26.738,
+"stoch_d": 18.2008,
+"ema200": 0.03373715,
+"atr": 0.00056171,
+"bb_upper": 0.03162597,
+"bb_basis": 0.030858,
+"bb_lower": 0.03009003,
+"smv_normalized": 6465421.2253,
+"cum_smv": 31564201261.212,
+"supertrend": 0.03164205,
+"supertrend_bull": true,
+"obv": 10703338155,
+"relative_volume_percentile": 90,
+"mfi": 54.448,
+"volume_ratio": 1.1613,
+"has_bullish_divergence": false,
+"has_bearish_divergence": false,
+"at_bottom": true,
+"at_top": true,
+"smart_money_buying": true,
+"smart_money_selling": false,
+"price_above_ema200": false,
+"price_below_ema200": true
+},
+"quality_score": 10
+}'

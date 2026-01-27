@@ -2227,14 +2227,7 @@ def create_limit_order(signal_data):
                 timeframe = signal_data.get('timeframe', '1H')
                 
                 # Get current market price first
-                try:
-                    ticker = client.futures_symbol_ticker(symbol=symbol)
-                    current_price = float(ticker.get('price', 0))
-                except Exception as e:
-                    logger.warning(f"Could not get current price for {symbol}: {e}")
-                    current_price = None
-                
-                opportunity = analyze_symbol_for_opportunities(symbol, timeframe, current_price=current_price)
+                opportunity = analyze_symbol_for_opportunities(symbol, timeframe)
                 
                 if opportunity.get('opportunity_found') and opportunity.get('confidence_score', 0) >= 95:
                     opp_side = opportunity.get('signal_side')
