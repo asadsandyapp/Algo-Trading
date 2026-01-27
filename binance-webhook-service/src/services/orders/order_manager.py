@@ -2732,6 +2732,18 @@ def create_limit_order(signal_data):
             
             # ORDER 3: $10 with Entry 2 price (original or optimized)
             if dca_entry_price and order3_quantity:
+                # Re-format price and quantity to ensure correct precision before creating order
+                # This is important because dca_entry_price might have been recalculated
+                price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+                tick_size = float(price_filter['tickSize']) if price_filter else 0.01
+                dca_entry_price = format_price_precision(dca_entry_price, tick_size)
+                
+                # Re-format quantity precision
+                lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+                if lot_size_filter:
+                    step_size = float(lot_size_filter['stepSize'])
+                    order3_quantity = format_quantity_precision(order3_quantity, step_size)
+                
                 order3_params = {
                     'symbol': symbol,
                     'side': side,
