@@ -1467,13 +1467,8 @@ def create_missing_tp_orders():
                 severity='ERROR'
             )
 
-# Start background thread for TP creation (only if client is initialized)
-if client:
-    tp_thread = threading.Thread(target=create_missing_tp_orders, daemon=True)
-    tp_thread.start()
-    logger.info("Background TP creation thread started")
-else:
-    logger.warning("Binance client not initialized - TP creation thread not started")  # seconds - prevent duplicate EXIT processing
+# Background thread is started in binance_webhook_service.py after all modules are imported
+# Do not start it here to avoid duplicate threads and import-time issues
 
 
 def close_position_at_market(symbol, signal_side, is_hedge_mode=False):
