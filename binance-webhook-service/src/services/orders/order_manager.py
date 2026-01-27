@@ -2056,6 +2056,7 @@ def create_limit_order(signal_data):
                     exit_price = None
                 
                 # Get entry prices and trade info from active_trades for notification
+                entry_prices = None
                 if symbol in active_trades:
                     trade_info = active_trades[symbol]
                     entry_prices = {
@@ -2065,8 +2066,21 @@ def create_limit_order(signal_data):
                         'stop_loss': trade_info.get('original_stop_loss'),
                         'take_profit': trade_info.get('take_profit')
                     }
+                    logger.debug(f"Retrieved entry prices from active_trades for {symbol}: entry1={entry_prices.get('entry1')}, entry2={entry_prices.get('entry2')}, optimized_entry1={entry_prices.get('optimized_entry1')}")
                 else:
-                    entry_prices = None
+                    logger.warning(f"Symbol {symbol} not found in active_trades - entry prices will be retrieved from position")
+                
+                # Fallback: If entry_prices is None or missing values but we have positions, use position entry price
+                if positions_to_close:
+                    first_position = positions_to_close[0]
+                    position_entry_price = float(first_position.get('entryPrice', 0))
+                    if position_entry_price > 0:
+                        # If entry_prices is None or missing entry1, use position entry price
+                        if not entry_prices:
+                            entry_prices = {}
+                        if not entry_prices.get('entry1'):
+                            entry_prices['entry1'] = position_entry_price
+                            logger.info(f"Using position entry price ${position_entry_price:,.8f} as fallback for Entry 1")
                 
                 if positions_to_close:
                     # Get symbol info for quantity precision (once, outside loop)

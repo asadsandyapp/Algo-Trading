@@ -394,29 +394,38 @@ def send_exit_notification(symbol, signal_side, timeframe, exit_price, entry_pri
             slack_message += f"\n  • Reason: {reason}"
         
         # Add entry prices if available
+        has_entry_info = False
         if entry_prices:
-            slack_message += "\n\n*Entry Prices:*"
-            if entry_prices.get('entry1'):
-                entry1_str = f'${entry_prices["entry1"]:,.8f}'
-                slack_message += f"\n  • Order 1: {entry1_str} - $15.00 (Original Entry 1)"
-            
-            if entry_prices.get('optimized_entry1'):
-                opt_entry1_str = f'${entry_prices["optimized_entry1"]:,.8f}'
-                slack_message += f"\n  • Order 2: {opt_entry1_str} - $10.00 (AI Optimized Entry 1)"
-            
-            if entry_prices.get('entry2'):
-                entry2_str = f'${entry_prices["entry2"]:,.8f}'
-                slack_message += f"\n  • Order 3: {entry2_str} - $15.00 (Entry 2 / DCA)"
+            # Check if we have at least one entry price
+            if entry_prices.get('entry1') or entry_prices.get('entry2') or entry_prices.get('optimized_entry1'):
+                has_entry_info = True
+                slack_message += "\n\n*Entry Prices:*"
+                if entry_prices.get('entry1'):
+                    entry1_str = f'${entry_prices["entry1"]:,.8f}'
+                    slack_message += f"\n  • Order 1: {entry1_str} - $15.00 (Original Entry 1)"
+                
+                if entry_prices.get('optimized_entry1'):
+                    opt_entry1_str = f'${entry_prices["optimized_entry1"]:,.8f}'
+                    slack_message += f"\n  • Order 2: {opt_entry1_str} - $10.00 (AI Optimized Entry 1)"
+                
+                if entry_prices.get('entry2'):
+                    entry2_str = f'${entry_prices["entry2"]:,.8f}'
+                    slack_message += f"\n  • Order 3: {entry2_str} - $15.00 (Entry 2 / DCA)"
         
         # Add Stop Loss and Take Profit if available
         if entry_prices:
+            has_sl_tp = False
             if entry_prices.get('stop_loss'):
+                if not has_entry_info:
+                    slack_message += "\n"
                 sl_str = f'${entry_prices["stop_loss"]:,.8f}'
-                slack_message += f"\n\n*Stop Loss:* {sl_str}"
+                slack_message += f"\n*Stop Loss:* {sl_str}"
+                has_sl_tp = True
             
             if entry_prices.get('take_profit'):
                 tp_str = f'${entry_prices["take_profit"]:,.8f}'
                 slack_message += f"\n*Take Profit:* {tp_str}"
+                has_sl_tp = True
         
         # Add P&L if available
         if pnl is not None:
