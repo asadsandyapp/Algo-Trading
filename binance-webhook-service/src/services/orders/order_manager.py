@@ -2061,8 +2061,12 @@ def create_limit_order(signal_data):
                     entry_prices = {
                         'entry1': trade_info.get('original_entry1'),
                         'entry2': trade_info.get('original_entry2'),
-                        'optimized_entry1': None  # We don't store this separately, but could calculate if needed
+                        'optimized_entry1': trade_info.get('optimized_entry1'),
+                        'stop_loss': trade_info.get('original_stop_loss'),
+                        'take_profit': trade_info.get('take_profit')
                     }
+                else:
+                    entry_prices = None
                 
                 if positions_to_close:
                     # Get symbol info for quantity precision (once, outside loop)
@@ -2281,7 +2285,14 @@ def create_limit_order(signal_data):
             
             # Send exit notification to Slack before cleaning up tracking
             try:
-                timeframe = signal_data.get('timeframe', 'Unknown')
+                # Get timeframe and signal_side from active_trades if available, otherwise from signal_data
+                if symbol in active_trades:
+                    trade_info = active_trades[symbol]
+                    timeframe = trade_info.get('timeframe') or signal_data.get('timeframe', 'Unknown')
+                    signal_side = trade_info.get('signal_side') or signal_side
+                else:
+                    timeframe = signal_data.get('timeframe', 'Unknown')
+                
                 # Determine exit reason
                 reason = signal_data.get('exit_reason', 'Manual Exit')
                 if not reason or reason == '':
@@ -2866,10 +2877,14 @@ def create_limit_order(signal_data):
                 'tp1_filled': False
             }
         
-        # Store original prices for trailing stop loss
+        # Store original prices for trailing stop loss and exit notification
         active_trades[symbol]['original_stop_loss'] = stop_loss
         active_trades[symbol]['original_entry1'] = original_entry1_price  # Store original Entry 1
-        active_trades[symbol]['original_entry2'] = dca_entry_price if dca_entry_price else None
+        active_trades[symbol]['optimized_entry1'] = optimized_entry1_price if optimized_entry1_price else None  # Store optimized Entry 1 (Order 2)
+        active_trades[symbol]['original_entry2'] = dca_entry_price if dca_entry_price else None  # Store Entry 3 (DCA)
+        active_trades[symbol]['take_profit'] = take_profit  # Store TP for exit notification
+        active_trades[symbol]['signal_side'] = signal_side  # Store side for exit notification
+        active_trades[symbol]['timeframe'] = timeframe  # Store timeframe for exit notification
         
         current_time = time.time()
         order_results = []
