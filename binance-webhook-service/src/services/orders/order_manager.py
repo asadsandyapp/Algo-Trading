@@ -2616,6 +2616,17 @@ def create_limit_order(signal_data):
         # Order 3: $10 with Entry 2 price (original or optimized)
         if is_primary_entry:
             # ORDER 1: $10 with original Entry 1 price
+            # Re-format price and quantity to ensure correct precision before creating order
+            price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+            tick_size = float(price_filter['tickSize']) if price_filter else 0.01
+            original_entry1_price = format_price_precision(original_entry1_price, tick_size)
+            
+            # Re-format quantity precision
+            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+            if lot_size_filter:
+                step_size = float(lot_size_filter['stepSize'])
+                order1_quantity = format_quantity_precision(order1_quantity, step_size)
+            
             order1_params = {
                 'symbol': symbol,
                 'side': side,
@@ -2682,6 +2693,18 @@ def create_limit_order(signal_data):
                         logger.warning(f"⚠️  ORDER 2 SKIPPED: Optimized Entry 1 ${optimized_entry1_price:,.8f} is NOT HIGHER than original ${original_entry1_price:,.8f} (or difference too small: {price_diff:.8f} < {min_price_diff:.8f})")
             
             if should_create_order2:
+                # Re-format price and quantity to ensure correct precision before creating order
+                # This is important because optimized_entry1_price comes from AI and might have precision issues
+                price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+                tick_size = float(price_filter['tickSize']) if price_filter else 0.01
+                optimized_entry1_price = format_price_precision(optimized_entry1_price, tick_size)
+                
+                # Re-format quantity precision
+                lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+                if lot_size_filter:
+                    step_size = float(lot_size_filter['stepSize'])
+                    order2_quantity = format_quantity_precision(order2_quantity, step_size)
+                
                 order2_params = {
                     'symbol': symbol,
                     'side': side,
