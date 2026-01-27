@@ -2055,32 +2055,51 @@ def create_limit_order(signal_data):
                     logger.warning(f"Could not get current price for {symbol}: {e}")
                     exit_price = None
                 
-                # Get entry prices and trade info from active_trades for notification
-                entry_prices = None
+                # Get entry prices from webhook payload first (most reliable source)
+                entry_prices = {}
+                
+                # Extract from webhook payload (signal_data)
+                if signal_data.get('entry_price'):
+                    entry_prices['entry1'] = safe_float(signal_data.get('entry_price'), default=None)
+                if signal_data.get('second_entry_price'):
+                    entry_prices['entry2'] = safe_float(signal_data.get('second_entry_price'), default=None)
+                if signal_data.get('average_entry_price'):
+                    # Average entry price can be used as a fallback or additional info
+                    entry_prices['average_entry'] = safe_float(signal_data.get('average_entry_price'), default=None)
+                if signal_data.get('stop_loss'):
+                    entry_prices['stop_loss'] = safe_float(signal_data.get('stop_loss'), default=None)
+                if signal_data.get('take_profit'):
+                    entry_prices['take_profit'] = safe_float(signal_data.get('take_profit'), default=None)
+                
+                # Fallback: Get from active_trades if not in webhook payload
                 if symbol in active_trades:
                     trade_info = active_trades[symbol]
-                    entry_prices = {
-                        'entry1': trade_info.get('original_entry1'),
-                        'entry2': trade_info.get('original_entry2'),
-                        'optimized_entry1': trade_info.get('optimized_entry1'),
-                        'stop_loss': trade_info.get('original_stop_loss'),
-                        'take_profit': trade_info.get('take_profit')
-                    }
-                    logger.debug(f"Retrieved entry prices from active_trades for {symbol}: entry1={entry_prices.get('entry1')}, entry2={entry_prices.get('entry2')}, optimized_entry1={entry_prices.get('optimized_entry1')}")
-                else:
-                    logger.warning(f"Symbol {symbol} not found in active_trades - entry prices will be retrieved from position")
+                    if not entry_prices.get('entry1'):
+                        entry_prices['entry1'] = trade_info.get('original_entry1')
+                    if not entry_prices.get('entry2'):
+                        entry_prices['entry2'] = trade_info.get('original_entry2')
+                    if not entry_prices.get('optimized_entry1'):
+                        entry_prices['optimized_entry1'] = trade_info.get('optimized_entry1')
+                    if not entry_prices.get('stop_loss'):
+                        entry_prices['stop_loss'] = trade_info.get('original_stop_loss')
+                    if not entry_prices.get('take_profit'):
+                        entry_prices['take_profit'] = trade_info.get('take_profit')
+                    logger.debug(f"Retrieved additional entry prices from active_trades for {symbol}")
                 
-                # Fallback: If entry_prices is None or missing values but we have positions, use position entry price
+                # Final fallback: Use position entry price if still missing
                 if positions_to_close:
                     first_position = positions_to_close[0]
                     position_entry_price = float(first_position.get('entryPrice', 0))
                     if position_entry_price > 0:
-                        # If entry_prices is None or missing entry1, use position entry price
-                        if not entry_prices:
-                            entry_prices = {}
                         if not entry_prices.get('entry1'):
                             entry_prices['entry1'] = position_entry_price
-                            logger.info(f"Using position entry price ${position_entry_price:,.8f} as fallback for Entry 1")
+                            logger.info(f"Using position entry price ${position_entry_price:,.8f} as final fallback for Entry 1")
+                
+                # Set to None if empty to avoid showing empty sections
+                if not any([entry_prices.get('entry1'), entry_prices.get('entry2'), entry_prices.get('optimized_entry1'), entry_prices.get('average_entry')]):
+                    entry_prices = None
+                else:
+                    logger.info(f"Entry prices for exit notification: entry1={entry_prices.get('entry1')}, entry2={entry_prices.get('entry2')}, optimized_entry1={entry_prices.get('optimized_entry1')}, average_entry={entry_prices.get('average_entry')}")
                 
                 if positions_to_close:
                     # Get symbol info for quantity precision (once, outside loop)

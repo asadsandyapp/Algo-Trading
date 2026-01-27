@@ -397,7 +397,7 @@ def send_exit_notification(symbol, signal_side, timeframe, exit_price, entry_pri
         has_entry_info = False
         if entry_prices:
             # Check if we have at least one entry price
-            if entry_prices.get('entry1') or entry_prices.get('entry2') or entry_prices.get('optimized_entry1'):
+            if entry_prices.get('entry1') or entry_prices.get('entry2') or entry_prices.get('optimized_entry1') or entry_prices.get('average_entry'):
                 has_entry_info = True
                 slack_message += "\n\n*Entry Prices:*"
                 if entry_prices.get('entry1'):
@@ -411,6 +411,11 @@ def send_exit_notification(symbol, signal_side, timeframe, exit_price, entry_pri
                 if entry_prices.get('entry2'):
                     entry2_str = f'${entry_prices["entry2"]:,.8f}'
                     slack_message += f"\n  • Order 3: {entry2_str} - $15.00 (Entry 2 / DCA)"
+                
+                # Show average entry price if available (useful when multiple entries filled)
+                if entry_prices.get('average_entry'):
+                    avg_entry_str = f'${entry_prices["average_entry"]:,.8f}'
+                    slack_message += f"\n  • Average Entry: {avg_entry_str} (Weighted average of filled orders)"
         
         # Add Stop Loss and Take Profit if available
         if entry_prices:
