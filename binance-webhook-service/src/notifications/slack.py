@@ -406,11 +406,11 @@ def send_exit_notification(symbol, signal_side, timeframe, exit_price, entry_pri
             
             if entry_prices.get('optimized_entry1'):
                 opt_entry1_str = f'${entry_prices["optimized_entry1"]:,.8f}'
-                    slack_message += f"\n  • Order 2: {opt_entry1_str} - $10.00 (AI Optimized Entry 1)"
+                slack_message += f"\n  • Order 2: {opt_entry1_str} - $10.00 (AI Optimized Entry 1)"
             
             if entry_prices.get('entry2'):
                 entry2_str = f'${entry_prices["entry2"]:,.8f}'
-                    slack_message += f"\n  • Order 3: {entry2_str} - $10.00 (Entry 2 / DCA)"
+                slack_message += f"\n  • Order 3: {entry2_str} - $10.00 (Entry 2 / DCA)"
                 
                 # Show average entry price if available (useful when multiple entries filled)
                 if entry_prices.get('average_entry'):
