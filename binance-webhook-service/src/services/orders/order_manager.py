@@ -3137,12 +3137,12 @@ def create_limit_order(signal_data):
         custom_entry_size = safe_float(signal_data.get('_entry_size_usd'), default=None)
         
         # Calculate quantities for 3 orders:
-        # Order 1: Custom size or $10 with original Entry 1
+        # Order 1: Custom size or $15 with original Entry 1
         # Order 2: Custom size/2 or $10 with optimized Entry 1 (if exists)
-        # Order 3: Custom size or $10 with Entry 2 (original or optimized)
-        entry1_size = custom_entry_size if custom_entry_size else 10.0
+        # Order 3: Custom size or $15 with Entry 2 (original or optimized)
+        entry1_size = custom_entry_size if custom_entry_size else 15.0
         entry2_size = (custom_entry_size / 2.0) if custom_entry_size else 10.0
-        entry3_size = custom_entry_size if custom_entry_size else 10.0
+        entry3_size = custom_entry_size if custom_entry_size else 15.0
         
         order1_quantity = calculate_quantity(original_entry1_price, symbol_info, entry_size_usd=entry1_size)
         order2_quantity = calculate_quantity(optimized_entry1_price, symbol_info, entry_size_usd=entry2_size) if optimized_entry1_price else None
@@ -3454,9 +3454,9 @@ def create_limit_order(signal_data):
             }
         
         # If this is a primary entry, create 3 entry orders:
-        # Order 1: $10 with original Entry 1 price
+        # Order 1: $15 with original Entry 1 price
         # Order 2: $10 with optimized Entry 1 price (if AI optimized, otherwise skip)
-        # Order 3: $10 with Entry 2 price (original or optimized)
+        # Order 3: $15 with Entry 2 price (original or optimized)
         if is_primary_entry:
             # ORDER 1: $15 with original Entry 1 price
             # Re-format price and quantity to ensure correct precision before creating order
@@ -3481,14 +3481,14 @@ def create_limit_order(signal_data):
             if is_hedge_mode:
                 order1_params['positionSide'] = position_side
             
-            logger.info(f"Creating ORDER 1 (Original Entry 1, $10): {order1_params}")
+            logger.info(f"Creating ORDER 1 (Original Entry 1, ${entry1_size}): {order1_params}")
             try:
                 order1_result = client.futures_create_order(**order1_params)
                 order_results.append(order1_result)
                 active_trades[symbol]['primary_order_id'] = order1_result.get('orderId')
                 active_trades[symbol]['primary_filled'] = False
                 active_trades[symbol]['position_open'] = True
-                logger.info(f"✅ ORDER 1 created successfully: Order ID {order1_result.get('orderId')} @ ${original_entry1_price:,.8f} (${15.0} size)")
+                logger.info(f"✅ ORDER 1 created successfully: Order ID {order1_result.get('orderId')} @ ${original_entry1_price:,.8f} (${entry1_size} size)")
             except BinanceAPIException as e:
                 logger.error(f"❌ Failed to create ORDER 1: {e.message} (Code: {e.code})")
                 send_slack_alert(
@@ -3621,13 +3621,13 @@ def create_limit_order(signal_data):
                 if is_hedge_mode:
                     order3_params['positionSide'] = position_side
                 
-                logger.info(f"Creating ORDER 3 (Entry 2, $10): {order3_params}")
+                logger.info(f"Creating ORDER 3 (Entry 2, ${entry3_size}): {order3_params}")
                 try:
                     order3_result = client.futures_create_order(**order3_params)
                     order_results.append(order3_result)
                     active_trades[symbol]['dca_order_id'] = order3_result.get('orderId')
                     active_trades[symbol]['dca_filled'] = False
-                    logger.info(f"✅ ORDER 3 created successfully: Order ID {order3_result.get('orderId')} @ ${dca_entry_price:,.8f} (${15.0} size)")
+                    logger.info(f"✅ ORDER 3 created successfully: Order ID {order3_result.get('orderId')} @ ${dca_entry_price:,.8f} (${entry3_size} size)")
                     
                     # Track Order 3
                     order_key = f"{symbol}_{dca_entry_price}_{side}_ORDER3"

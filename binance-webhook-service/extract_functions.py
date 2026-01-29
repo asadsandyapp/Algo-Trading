@@ -130,3 +130,4 @@ print(f"Extracted {len(order_code_parts)} order functions")
 # Write to files (we'll create the module files separately with proper imports)
 print("\nFunction extraction complete. Module files will be created separately.")
 
+
