@@ -5,6 +5,9 @@ Handles order creation, TP orders, position management
 import time
 import math
 import threading
+import json
+import os
+from datetime import datetime
 from typing import Dict, Any, Optional
 
 # Import dependencies
@@ -55,6 +58,168 @@ except ImportError:
     )
     from ...notifications.slack import send_slack_alert, send_signal_notification, send_exit_notification, send_signal_rejection_notification
 from binance.exceptions import BinanceAPIException, BinanceOrderException
+
+# Signal logging file path
+SIGNAL_LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs', 'entry_signals.jsonl')
+
+def log_entry_signal(signal_data: Dict[str, Any], status: str, reason: str = '', confidence_score: float = None, quality_score: float = None):
+    """
+    Log all entry signals to a JSONL file with accept/reject status.
+    
+    Args:
+        signal_data: Complete webhook JSON object
+        status: 'ACCEPTED' or 'REJECTED'
+        reason: Reason for acceptance/rejection
+        confidence_score: AI confidence score (if available)
+        quality_score: Quality score from signal (if available)
+    """
+    try:
+        # Ensure logs directory exists
+        log_dir = os.path.dirname(SIGNAL_LOG_FILE)
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Normalize reason to single line - extract main reason
+        normalized_reason = reason
+        if normalized_reason:
+            # Split by newlines and take first line (main reason)
+            normalized_reason = normalized_reason.split('\n')[0].strip()
+            # Replace multiple spaces/tabs with single space
+            normalized_reason = ' '.join(normalized_reason.split())
+            # Extract main point if reason contains colons (e.g., "REJECTED: reason" -> "reason")
+            if ':' in normalized_reason and len(normalized_reason.split(':')) > 1:
+                # Take the part after the last colon (main reason)
+                parts = normalized_reason.split(':')
+                # If it's a simple "Label: reason" format, take the reason part
+                if len(parts) == 2:
+                    normalized_reason = parts[1].strip()
+                else:
+                    # Multiple colons - take the last meaningful part
+                    normalized_reason = parts[-1].strip()
+            # Limit length to 200 characters
+            if len(normalized_reason) > 200:
+                normalized_reason = normalized_reason[:197] + '...'
+        else:
+            normalized_reason = f"{status} - No reason provided"
+        
+        # Create log entry
+        log_entry = {
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'status': status,
+            'reason': normalized_reason,
+            'confidence_score': confidence_score,
+            'quality_score': quality_score,
+            'signal_data': signal_data
+        }
+        
+        # Write to file (append mode)
+        # Ensure file has write permissions
+        file_mode = 'a' if os.path.exists(SIGNAL_LOG_FILE) else 'w'
+        with open(SIGNAL_LOG_FILE, file_mode, encoding='utf-8') as f:
+            # Set file permissions to allow read/write for owner and group
+            os.chmod(SIGNAL_LOG_FILE, 0o664)
+            f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+            f.flush()
+        
+        logger.debug(f"📝 Logged entry signal to {SIGNAL_LOG_FILE}: {status} - {signal_data.get('symbol', 'UNKNOWN')}")
+    except Exception as e:
+        # Don't fail signal processing if logging fails
+        logger.error(f"❌ Failed to log entry signal to file: {e}", exc_info=True)
+
+def validate_post_exit_opportunity(symbol: str, signal_side: str, confidence_score: float, timeframe: str = '1H'):
+    """
+    Apply strict validation to post-exit AI opportunities (similar to quality_score < 8 check).
+    For post-exit trades, treat confidence < 95% as equivalent to quality_score < 8.
+    
+    Args:
+        symbol: Trading symbol
+        signal_side: 'LONG' or 'SHORT'
+        confidence_score: AI confidence score
+        timeframe: Timeframe for analysis
+    
+    Returns:
+        tuple: (is_valid: bool, reason: str)
+    """
+    # Only apply strict validation if confidence < 95% (equivalent to quality_score < 8)
+    if confidence_score >= 95:
+        return True, "High confidence (>=95%)"
+    
+    logger.warning(f"⚠️ [POST-EXIT VALIDATION] AI confidence {confidence_score:.1f}% < 95% - Applying STRICT validation checks")
+    
+    try:
+        # Fetch market data to check indicators
+        timeframe_map = {
+            '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+            '1h': '1h', '2h': '2h', '4h': '4h', '6h': '6h', '8h': '8h', '12h': '12h',
+            '1d': '1d', '3d': '3d', '1w': '1w', '1M': '1M'
+        }
+        interval = timeframe_map.get(timeframe.lower(), '1h')
+        
+        # Get klines for trend and volume analysis
+        klines = client.futures_klines(symbol=symbol, interval=interval, limit=200)
+        if not klines or len(klines) < 50:
+            logger.warning(f"   ⚠️ Insufficient data for strict validation - proceeding with caution")
+            return True, "Insufficient data"
+        
+        closes = [float(k[4]) for k in klines]
+        volumes = [float(k[5]) for k in klines]
+        current_price = closes[-1]
+        
+        # Calculate EMA200
+        if len(closes) >= 200:
+            ema200 = sum(closes[-200:]) / 200
+        elif len(closes) >= 50:
+            # Approximate EMA200 with available data
+            ema200 = sum(closes[-50:]) / 50
+        else:
+            ema200 = current_price
+        
+        price_below_ema200 = current_price < ema200
+        price_above_ema200 = current_price > ema200
+        
+        # Calculate volume metrics
+        avg_volume = sum(volumes[-20:]) / 20 if len(volumes) >= 20 else sum(volumes) / len(volumes) if volumes else 0
+        recent_volume = volumes[-1] if volumes else 0
+        volume_ratio = recent_volume / avg_volume if avg_volume > 0 else 1.0
+        
+        # Calculate volume percentile (simplified)
+        recent_volumes = volumes[-50:] if len(volumes) >= 50 else volumes
+        sorted_volumes = sorted(recent_volumes)
+        volume_percentile = (sorted_volumes.index(recent_volume) / len(sorted_volumes) * 100) if recent_volume in sorted_volumes else 50
+        
+        volume_high = volume_ratio > 1.5 and volume_percentile > 75
+        
+        # Count contradicting factors
+        contradicting_count = 0
+        
+        # Trend check
+        if signal_side == 'LONG':
+            if price_below_ema200:
+                contradicting_count += 1
+                logger.warning(f"   ❌ Counter-trend: Price below EMA200 for LONG signal")
+        else:  # SHORT
+            if price_above_ema200:
+                contradicting_count += 1
+                logger.warning(f"   ❌ Counter-trend: Price above EMA200 for SHORT signal")
+        
+        # Volume check
+        if not volume_high:
+            contradicting_count += 1
+            logger.warning(f"   ❌ Weak volume: Ratio={volume_ratio:.2f}x, Percentile={volume_percentile:.1f}% (need >1.5x and >75%)")
+        
+        # Apply strict validation
+        if contradicting_count >= 2:
+            logger.error(f"   🚫 POST-EXIT OPPORTUNITY with {contradicting_count} red flags - REJECTING")
+            return False, f"Strict validation failed: {contradicting_count} red flags (trend/volume)"
+        elif contradicting_count >= 1:
+            logger.warning(f"   ⚠️ POST-EXIT OPPORTUNITY with {contradicting_count} red flag - Lowering confidence")
+            return True, f"Warning: {contradicting_count} red flag detected"
+        
+        return True, "Validation passed"
+        
+    except Exception as e:
+        logger.error(f"❌ Error validating post-exit opportunity: {e}", exc_info=True)
+        # On error, allow the trade (don't reject due to validation error)
+        return True, f"Validation error: {str(e)}"
 
 def find_resistance_levels(symbol, signal_side, current_price, timeframes=['2h', '4h']):
     """
@@ -1911,6 +2076,9 @@ def create_limit_order(signal_data):
                 validation_result['special_case'] = 'ENTRY2_ONLY'
                 validation_result['special_case_reason'] = f'Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade (Confidence: {entry2_confidence:.1f}%, Price: ${entry2_price_to_use:,.8f}). Recent volatility: {price_change_pct:.2f}%'
                 validation_result['entry2_standalone_reasoning'] = entry2_standalone_result.get('reasoning', '')
+                
+                # Log Entry 2 only accepted signal
+                log_entry_signal(signal_data, 'ACCEPTED', f'Entry 2 only trade approved (Entry 1 rejected, Entry 2 confidence: {entry2_confidence:.1f}%)', entry2_confidence, quality_score)
             
             # APPROVAL LOGIC (More lenient - matches AI prompt instructions):
             # 1. If AI explicitly approves (is_valid=True) and confidence >= 50%: APPROVE
@@ -1965,24 +2133,34 @@ def create_limit_order(signal_data):
                 # AI explicitly approved and confidence is 50%+: APPROVE
                 should_approve = True
                 logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI explicitly approved with is_valid=True)")
+                # Log accepted signal
+                log_entry_signal(signal_data, 'ACCEPTED', f'AI approved with confidence {confidence_score:.1f}%', confidence_score, quality_score)
             elif confidence_score >= confidence_threshold:
                 # Confidence meets threshold: APPROVE
                 should_approve = True
                 logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (meets threshold {confidence_threshold}%)")
+                # Log accepted signal
+                log_entry_signal(signal_data, 'ACCEPTED', f'Confidence {confidence_score:.1f}% meets threshold {confidence_threshold}%', confidence_score, quality_score)
             elif is_valid and confidence_score >= 45.0:
                 # AI approved with 45-49% confidence: APPROVE (AI prompt allows this if R/R >= 1.0)
                 should_approve = True
                 logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI approved, within acceptable range 45-49%)")
+                # Log accepted signal
+                log_entry_signal(signal_data, 'ACCEPTED', f'AI approved with confidence {confidence_score:.1f}% (45-49% range)', confidence_score, quality_score)
             elif is_at_support_resistance and confidence_score >= 30.0 and is_valid:
                 # SPECIAL CASE: Trade at support/resistance (reversal trade) - approve even with lower confidence
                 # Counter-trend trades at support/resistance can be very profitable (bounce/reversal)
                 should_approve = True
                 logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL TRADE at support/resistance - high probability bounce)")
+                # Log accepted signal
+                log_entry_signal(signal_data, 'ACCEPTED', f'Reversal trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
             elif is_at_support_resistance and confidence_score >= 25.0:
                 # Even more lenient for support/resistance trades - approve if at least 25% confidence
                 # These are reversal trades which can be very profitable
                 should_approve = True
                 logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL TRADE at support/resistance - accepting lower confidence for bounce trade)")
+                # Log accepted signal
+                log_entry_signal(signal_data, 'ACCEPTED', f'Reversal trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
             
             # Only reject if Entry 1 failed AND Entry 2 also failed (both options rejected)
             if not should_approve and not signal_data.get('_special_entry2_only', False):
@@ -2005,6 +2183,9 @@ def create_limit_order(signal_data):
                     logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
                 logger.info(f"   Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
                 logger.info(f"   Risk Level: {validation_result.get('risk_level', 'UNKNOWN')}")
+                
+                # Log rejected signal
+                log_entry_signal(signal_data, 'REJECTED', rejection_reason, confidence_score, quality_score)
                 
                 # Send rejection notification to Slack exception channel
                 full_reason = f"{rejection_reason}\n\n{validation_result.get('reasoning', 'No detailed reasoning provided')}"
@@ -2586,6 +2767,30 @@ def create_limit_order(signal_data):
                     logger.info(f"   Confidence: {opp_confidence:.1f}%")
                     logger.info(f"   Reasoning: {opp_reasoning[:200]}...")
                     
+                    # CRITICAL: Apply strict validation for post-exit opportunities (similar to quality_score < 8 check)
+                    is_valid_opp, validation_reason = validate_post_exit_opportunity(
+                        symbol, opp_side, opp_confidence, timeframe
+                    )
+                    
+                    if not is_valid_opp:
+                        logger.error(f"🚫 [POST-EXIT AI ANALYSIS] REJECTING opportunity: {validation_reason}")
+                        # Log rejected post-exit opportunity
+                        post_exit_signal_data = {
+                            'token': signal_data.get('token'),
+                            'event': 'ENTRY',
+                            'signal_side': opp_side,
+                            'symbol': symbol,
+                            'timeframe': timeframe,
+                            'entry_price': opp_entry,
+                            'stop_loss': opp_sl,
+                            'take_profit': opp_tp,
+                            '_post_exit_ai_trade': True,
+                            '_ai_confidence': opp_confidence,
+                            '_ai_reasoning': opp_reasoning
+                        }
+                        log_entry_signal(post_exit_signal_data, 'REJECTED', f'Post-exit AI opportunity rejected: {validation_reason}', opp_confidence, None)
+                        return {'success': True, 'message': f'EXIT event processed (AI opportunity rejected - {validation_reason})'}
+                    
                     # Create new signal data for the opportunity
                     if opp_entry and opp_sl and opp_tp:
                         new_signal_data = {
@@ -2613,6 +2818,8 @@ def create_limit_order(signal_data):
                             
                             if trade_result.get('success'):
                                 logger.info(f"✅ [POST-EXIT AI TRADE] Successfully created {opp_side} trade for {symbol}")
+                                # Log accepted post-exit trade
+                                log_entry_signal(new_signal_data, 'ACCEPTED', f'Post-exit AI trade created with confidence {opp_confidence:.1f}%', opp_confidence, None)
                                 send_slack_alert(
                                     error_type="Post-Exit AI Trade Created",
                                     message=f"Created {opp_side} trade for {symbol} after exit (AI confidence: {opp_confidence:.1f}%)",
@@ -2630,6 +2837,8 @@ def create_limit_order(signal_data):
                                 )
                             else:
                                 logger.warning(f"⚠️ [POST-EXIT AI TRADE] Failed to create trade: {trade_result.get('error', 'Unknown error')}")
+                                # Log rejected post-exit trade (failed to create)
+                                log_entry_signal(new_signal_data, 'REJECTED', f'Post-exit AI trade failed to create: {trade_result.get("error", "Unknown error")}', opp_confidence, None)
                         except Exception as e:
                             logger.error(f"❌ [POST-EXIT AI TRADE] Error creating trade for {symbol}: {e}", exc_info=True)
                     else:

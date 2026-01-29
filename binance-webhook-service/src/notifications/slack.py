@@ -399,17 +399,17 @@ def send_exit_notification(symbol, signal_side, timeframe, exit_price, entry_pri
             # Check if we have at least one entry price
             if entry_prices.get('entry1') or entry_prices.get('entry2') or entry_prices.get('optimized_entry1') or entry_prices.get('average_entry'):
                 has_entry_info = True
-                slack_message += "\n\n*Entry Prices:*"
-                if entry_prices.get('entry1'):
-                    entry1_str = f'${entry_prices["entry1"]:,.8f}'
-                    slack_message += f"\n  • Order 1: {entry1_str} - $10.00 (Original Entry 1)"
-                
-                if entry_prices.get('optimized_entry1'):
-                    opt_entry1_str = f'${entry_prices["optimized_entry1"]:,.8f}'
+            slack_message += "\n\n*Entry Prices:*"
+            if entry_prices.get('entry1'):
+                entry1_str = f'${entry_prices["entry1"]:,.8f}'
+                slack_message += f"\n  • Order 1: {entry1_str} - $10.00 (Original Entry 1)"
+            
+            if entry_prices.get('optimized_entry1'):
+                opt_entry1_str = f'${entry_prices["optimized_entry1"]:,.8f}'
                     slack_message += f"\n  • Order 2: {opt_entry1_str} - $10.00 (AI Optimized Entry 1)"
-                
-                if entry_prices.get('entry2'):
-                    entry2_str = f'${entry_prices["entry2"]:,.8f}'
+            
+            if entry_prices.get('entry2'):
+                entry2_str = f'${entry_prices["entry2"]:,.8f}'
                     slack_message += f"\n  • Order 3: {entry2_str} - $10.00 (Entry 2 / DCA)"
                 
                 # Show average entry price if available (useful when multiple entries filled)
