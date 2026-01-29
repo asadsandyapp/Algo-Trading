@@ -1705,6 +1705,98 @@ def create_limit_order(signal_data):
             entry1_is_bad, entry2_is_good_from_parsing = parse_entry_analysis_from_reasoning(reasoning)
             has_high_volatility, price_change_pct = check_recent_price_volatility(symbol, days=7)
             
+            # CRITICAL: If quality_score < 8, apply STRICT VALIDATION - check ALL factors
+            quality_score = safe_float(signal_data.get('quality_score'), default=None)
+            if quality_score is not None and quality_score < 8:
+                logger.warning(f"⚠️ [QUALITY SCORE CHECK] Quality score {quality_score} < 8 - Applying STRICT validation checks")
+                indicators = signal_data.get('indicators', {})
+                
+                # Check all critical factors
+                price_below_ema200 = indicators.get('price_below_ema200', False)
+                price_above_ema200 = indicators.get('price_above_ema200', False)
+                smart_money_buying = indicators.get('smart_money_buying', False)
+                smart_money_selling = indicators.get('smart_money_selling', False)
+                signal_side = signal_data.get('signal_side', '').upper()
+                
+                # Check MACD
+                macd_line = safe_float(indicators.get('macd_line'), default=0)
+                macd_signal = safe_float(indicators.get('macd_signal'), default=0)
+                macd_histogram = safe_float(indicators.get('macd_histogram'), default=0)
+                macd_bullish = macd_line > macd_signal and macd_histogram > 0
+                macd_bearish = macd_line < macd_signal and macd_histogram < 0
+                
+                # Check volume
+                volume_ratio = safe_float(indicators.get('volume_ratio'), default=0)
+                relative_volume_percentile = safe_float(indicators.get('relative_volume_percentile'), default=0)
+                volume_high = volume_ratio > 1.5 and relative_volume_percentile > 75
+                
+                # Count supporting indicators
+                supporting_count = 0
+                contradicting_count = 0
+                
+                # Trend check
+                if signal_side == 'LONG':
+                    if price_below_ema200:
+                        contradicting_count += 1
+                        logger.warning(f"   ❌ Counter-trend: Price below EMA200 for LONG signal")
+                    else:
+                        supporting_count += 1
+                else:  # SHORT
+                    if price_above_ema200:
+                        contradicting_count += 1
+                        logger.warning(f"   ❌ Counter-trend: Price above EMA200 for SHORT signal")
+                    else:
+                        supporting_count += 1
+                
+                # Smart Money check
+                if signal_side == 'LONG':
+                    if not smart_money_buying:
+                        contradicting_count += 1
+                        logger.warning(f"   ❌ No Smart Money support: smart_money_buying = False for LONG")
+                    else:
+                        supporting_count += 1
+                else:  # SHORT
+                    if not smart_money_selling:
+                        contradicting_count += 1
+                        logger.warning(f"   ❌ No Smart Money support: smart_money_selling = False for SHORT")
+                    else:
+                        supporting_count += 1
+                
+                # MACD check
+                if signal_side == 'LONG':
+                    if not macd_bullish:
+                        contradicting_count += 1
+                        logger.warning(f"   ❌ MACD contradicts: MACD bearish (Line={macd_line:.6f}, Signal={macd_signal:.6f}, Hist={macd_histogram:.6f}) for LONG")
+                    else:
+                        supporting_count += 1
+                else:  # SHORT
+                    if not macd_bearish:
+                        contradicting_count += 1
+                        logger.warning(f"   ❌ MACD contradicts: MACD bullish (Line={macd_line:.6f}, Signal={macd_signal:.6f}, Hist={macd_histogram:.6f}) for SHORT")
+                    else:
+                        supporting_count += 1
+                
+                # Volume check
+                if not volume_high:
+                    contradicting_count += 1
+                    logger.warning(f"   ❌ Weak volume: Ratio={volume_ratio:.2f}x, Percentile={relative_volume_percentile:.1f}% (need >1.5x and >75%)")
+                else:
+                    supporting_count += 1
+                
+                # Apply strict validation: If multiple red flags, lower confidence significantly or reject
+                if contradicting_count >= 3:
+                    logger.error(f"   🚫 QUALITY SCORE < 8 with {contradicting_count} red flags - REJECTING signal")
+                    is_valid = False
+                    confidence_score = max(confidence_score - 25, 20)  # Lower confidence significantly
+                elif contradicting_count >= 2:
+                    logger.warning(f"   ⚠️ QUALITY SCORE < 8 with {contradicting_count} red flags - Lowering confidence by 20%")
+                    confidence_score = max(confidence_score - 20, 30)
+                elif contradicting_count >= 1:
+                    logger.warning(f"   ⚠️ QUALITY SCORE < 8 with {contradicting_count} red flag - Lowering confidence by 15%")
+                    confidence_score = max(confidence_score - 15, 35)
+                
+                logger.info(f"   📊 Quality Score < 8 Validation: {supporting_count} supporting, {contradicting_count} contradicting factors")
+            
             # Check if Entry 1 failed validation
             # Entry 1 fails ONLY if: is_valid=False (explicitly rejected by AI)
             # NOTE: If is_valid=True, Entry 1 is approved and will proceed (even if confidence is 45-49%, approval logic handles it)
@@ -2836,12 +2928,12 @@ def create_limit_order(signal_data):
         custom_entry_size = safe_float(signal_data.get('_entry_size_usd'), default=None)
         
         # Calculate quantities for 3 orders:
-        # Order 1: Custom size or $15 with original Entry 1
+        # Order 1: Custom size or $10 with original Entry 1
         # Order 2: Custom size/2 or $10 with optimized Entry 1 (if exists)
-        # Order 3: Custom size or $15 with Entry 2 (original or optimized)
-        entry1_size = custom_entry_size if custom_entry_size else 15.0
+        # Order 3: Custom size or $10 with Entry 2 (original or optimized)
+        entry1_size = custom_entry_size if custom_entry_size else 10.0
         entry2_size = (custom_entry_size / 2.0) if custom_entry_size else 10.0
-        entry3_size = custom_entry_size if custom_entry_size else 15.0
+        entry3_size = custom_entry_size if custom_entry_size else 10.0
         
         order1_quantity = calculate_quantity(original_entry1_price, symbol_info, entry_size_usd=entry1_size)
         order2_quantity = calculate_quantity(optimized_entry1_price, symbol_info, entry_size_usd=entry2_size) if optimized_entry1_price else None
@@ -3153,9 +3245,9 @@ def create_limit_order(signal_data):
             }
         
         # If this is a primary entry, create 3 entry orders:
-        # Order 1: $15 with original Entry 1 price
+        # Order 1: $10 with original Entry 1 price
         # Order 2: $10 with optimized Entry 1 price (if AI optimized, otherwise skip)
-        # Order 3: $15 with Entry 2 price (original or optimized)
+        # Order 3: $10 with Entry 2 price (original or optimized)
         if is_primary_entry:
             # ORDER 1: $15 with original Entry 1 price
             # Re-format price and quantity to ensure correct precision before creating order
@@ -3180,7 +3272,7 @@ def create_limit_order(signal_data):
             if is_hedge_mode:
                 order1_params['positionSide'] = position_side
             
-            logger.info(f"Creating ORDER 1 (Original Entry 1, $15): {order1_params}")
+            logger.info(f"Creating ORDER 1 (Original Entry 1, $10): {order1_params}")
             try:
                 order1_result = client.futures_create_order(**order1_params)
                 order_results.append(order1_result)
@@ -3320,7 +3412,7 @@ def create_limit_order(signal_data):
                 if is_hedge_mode:
                     order3_params['positionSide'] = position_side
                 
-                logger.info(f"Creating ORDER 3 (Entry 2, $15): {order3_params}")
+                logger.info(f"Creating ORDER 3 (Entry 2, $10): {order3_params}")
                 try:
                     order3_result = client.futures_create_order(**order3_params)
                     order_results.append(order3_result)
@@ -3369,9 +3461,9 @@ def create_limit_order(signal_data):
             entry_price_for_tp1 = original_entry1_price  # Always original Entry 1 for TP1
             
             # Calculate weighted average entry price for TP2 (accounting for all 3 orders)
-            # Order 1: $15 at original Entry 1
+            # Order 1: $10 at original Entry 1
             # Order 2: $10 at optimized Entry 1 (if exists)
-            # Order 3: $15 at Entry 2 (if exists)
+            # Order 3: $10 at Entry 2 (if exists)
             total_usd = 15.0  # Order 1
             weighted_sum = original_entry1_price * 15.0
             
