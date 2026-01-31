@@ -2248,8 +2248,8 @@ def create_limit_order(signal_data):
                         else:  # SHORT
                             optimized_entry2 = opt_prices['entry_price'] * (1 + original_spacing_pct / 100)
                         
-                        # Validate minimum distance: Entry 2 must be at least 2% away from Entry 1
-                        min_distance_pct = 2.0
+                        # Validate minimum distance: Entry 2 must be at least 2.5% away from Entry 1 (optimal for DCA)
+                        min_distance_pct = 2.5
                         if signal_side == 'LONG':
                             distance_pct = ((opt_prices['entry_price'] - optimized_entry2) / opt_prices['entry_price']) * 100
                         else:  # SHORT
@@ -2981,9 +2981,9 @@ def create_limit_order(signal_data):
             if signal_side == 'LONG':
                 # For LONG: Optimized price must be LOWER (better entry closer to support)
                 if opt_entry1 < original_entry1_price:
-                    # Validate minimum distance: Entry 2 must be at least 2% away from Entry 1
+                    # Validate minimum distance: Entry 2 must be at least 2.5% away from Entry 1 (optimal for DCA)
                     distance_pct = ((original_entry1_price - opt_entry1) / original_entry1_price) * 100
-                    min_distance_pct = 2.0  # Minimum 2% distance
+                    min_distance_pct = 2.5  # Minimum 2.5% distance
                     
                     if distance_pct >= min_distance_pct:
                         optimized_entry1_price = opt_entry1
@@ -2995,9 +2995,9 @@ def create_limit_order(signal_data):
             else:  # SHORT
                 # For SHORT: Optimized price must be HIGHER (better entry closer to resistance)
                 if opt_entry1 > original_entry1_price:
-                    # Validate minimum distance: Entry 2 must be at least 2% away from Entry 1
+                    # Validate minimum distance: Entry 2 must be at least 2.5% away from Entry 1 (optimal for DCA)
                     distance_pct = ((opt_entry1 - original_entry1_price) / original_entry1_price) * 100
-                    min_distance_pct = 2.0  # Minimum 2% distance
+                    min_distance_pct = 2.5  # Minimum 2.5% distance
                     
                     if distance_pct >= min_distance_pct:
                         optimized_entry1_price = opt_entry1
@@ -3031,13 +3031,13 @@ def create_limit_order(signal_data):
             if signal_side == 'LONG':
                 # For LONG: Entry 3 should be below Entry 1
                 distance_pct = ((original_entry1_price - dca_entry_price) / original_entry1_price) * 100
-                min_distance_pct = 3.0  # Minimum 3% distance
-                preferred_distance_pct = 4.0  # Preferred 4% distance
+                min_distance_pct = 4.0  # Minimum 4% distance (optimal for DCA profitability)
+                preferred_distance_pct = 5.0  # Preferred 5% distance (maximizes DCA benefit)
             else:  # SHORT
                 # For SHORT: Entry 3 should be above Entry 1
                 distance_pct = ((dca_entry_price - original_entry1_price) / original_entry1_price) * 100
-                min_distance_pct = 3.0  # Minimum 3% distance
-                preferred_distance_pct = 4.0  # Preferred 4% distance
+                min_distance_pct = 4.0  # Minimum 4% distance (optimal for DCA profitability)
+                preferred_distance_pct = 5.0  # Preferred 5% distance (maximizes DCA benefit)
             
             if distance_pct < min_distance_pct:
                 # Entry 3 is too close - try to find resistance/support level on 2H/4H
@@ -3086,6 +3086,75 @@ def create_limit_order(signal_data):
                 logger.info(f"ℹ️  Entry 3 distance: {distance_pct:.2f}% (minimum: {min_distance_pct}%, preferred: {preferred_distance_pct}%)")
             else:
                 logger.info(f"✅ Entry 3 distance: {distance_pct:.2f}% (meets preferred distance of {preferred_distance_pct}%)")
+        
+        # CRITICAL: Validate gaps between ALL entries (Entry 1, Entry 2, Entry 3)
+        # Ensure proper spacing to avoid overlapping orders
+        if optimized_entry1_price and dca_entry_price and original_entry1_price:
+            # Validate Entry 2 vs Entry 3 gap
+            if signal_side == 'LONG':
+                # For LONG: Entry 1 > Entry 2 > Entry 3 (all descending)
+                # Entry 2 should be between Entry 1 and Entry 3
+                if optimized_entry1_price >= original_entry1_price:
+                    logger.warning(f"⚠️  [GAP VALIDATION] Entry 2 ${optimized_entry1_price:,.8f} is NOT below Entry 1 ${original_entry1_price:,.8f} for LONG. Skipping Order 2.")
+                    optimized_entry1_price = None
+                elif dca_entry_price >= optimized_entry1_price:
+                    logger.warning(f"⚠️  [GAP VALIDATION] Entry 3 ${dca_entry_price:,.8f} is NOT below Entry 2 ${optimized_entry1_price:,.8f} for LONG. Adjusting Entry 3.")
+                    # Adjust Entry 3 to be below Entry 2 with minimum 1.5% gap (optimal for DCA)
+                    min_gap_pct = 1.5  # Minimum 1.5% gap between Entry 2 and Entry 3
+                    dca_entry_price = optimized_entry1_price * (1 - min_gap_pct / 100)
+                    logger.info(f"🔄 [GAP VALIDATION] Adjusted Entry 3 to ${dca_entry_price:,.8f} ({min_gap_pct}% below Entry 2)")
+                else:
+                    # Check gap between Entry 2 and Entry 3
+                    gap_pct = ((optimized_entry1_price - dca_entry_price) / optimized_entry1_price) * 100
+                    min_gap_pct = 1.5  # Minimum 1.5% gap between Entry 2 and Entry 3 (optimal for DCA)
+                    if gap_pct < min_gap_pct:
+                        logger.warning(f"⚠️  [GAP VALIDATION] Entry 3 ${dca_entry_price:,.8f} is too close to Entry 2 ${optimized_entry1_price:,.8f} - only {gap_pct:.2f}% gap. Adjusting to meet minimum {min_gap_pct}% gap.")
+                        dca_entry_price = optimized_entry1_price * (1 - min_gap_pct / 100)
+                        logger.info(f"🔄 [GAP VALIDATION] Adjusted Entry 3 to ${dca_entry_price:,.8f} ({min_gap_pct}% below Entry 2)")
+                    else:
+                        logger.info(f"✅ [GAP VALIDATION] Entry 2-3 gap: {gap_pct:.2f}% (Entry 1: ${original_entry1_price:,.8f}, Entry 2: ${optimized_entry1_price:,.8f}, Entry 3: ${dca_entry_price:,.8f})")
+            else:  # SHORT
+                # For SHORT: Entry 1 < Entry 2 < Entry 3 (all ascending)
+                # Entry 2 should be between Entry 1 and Entry 3
+                if optimized_entry1_price <= original_entry1_price:
+                    logger.warning(f"⚠️  [GAP VALIDATION] Entry 2 ${optimized_entry1_price:,.8f} is NOT above Entry 1 ${original_entry1_price:,.8f} for SHORT. Skipping Order 2.")
+                    optimized_entry1_price = None
+                elif dca_entry_price <= optimized_entry1_price:
+                    logger.warning(f"⚠️  [GAP VALIDATION] Entry 3 ${dca_entry_price:,.8f} is NOT above Entry 2 ${optimized_entry1_price:,.8f} for SHORT. Adjusting Entry 3.")
+                    # Adjust Entry 3 to be above Entry 2 with minimum 1.5% gap (optimal for DCA)
+                    min_gap_pct = 1.5  # Minimum 1.5% gap between Entry 2 and Entry 3
+                    dca_entry_price = optimized_entry1_price * (1 + min_gap_pct / 100)
+                    logger.info(f"🔄 [GAP VALIDATION] Adjusted Entry 3 to ${dca_entry_price:,.8f} ({min_gap_pct}% above Entry 2)")
+                else:
+                    # Check gap between Entry 2 and Entry 3
+                    gap_pct = ((dca_entry_price - optimized_entry1_price) / optimized_entry1_price) * 100
+                    min_gap_pct = 1.5  # Minimum 1.5% gap between Entry 2 and Entry 3 (optimal for DCA)
+                    if gap_pct < min_gap_pct:
+                        logger.warning(f"⚠️  [GAP VALIDATION] Entry 3 ${dca_entry_price:,.8f} is too close to Entry 2 ${optimized_entry1_price:,.8f} - only {gap_pct:.2f}% gap. Adjusting to meet minimum {min_gap_pct}% gap.")
+                        dca_entry_price = optimized_entry1_price * (1 + min_gap_pct / 100)
+                        logger.info(f"🔄 [GAP VALIDATION] Adjusted Entry 3 to ${dca_entry_price:,.8f} ({min_gap_pct}% above Entry 2)")
+                    else:
+                        logger.info(f"✅ [GAP VALIDATION] Entry 2-3 gap: {gap_pct:.2f}% (Entry 1: ${original_entry1_price:,.8f}, Entry 2: ${optimized_entry1_price:,.8f}, Entry 3: ${dca_entry_price:,.8f})")
+        
+        # Log final entry gap summary
+        if optimized_entry1_price and dca_entry_price:
+            if signal_side == 'LONG':
+                entry1_to_entry2_pct = ((original_entry1_price - optimized_entry1_price) / original_entry1_price) * 100
+                entry2_to_entry3_pct = ((optimized_entry1_price - dca_entry_price) / optimized_entry1_price) * 100
+                entry1_to_entry3_pct = ((original_entry1_price - dca_entry_price) / original_entry1_price) * 100
+                logger.info(f"📊 [ENTRY GAP SUMMARY] LONG: Entry 1→2: {entry1_to_entry2_pct:.2f}%, Entry 2→3: {entry2_to_entry3_pct:.2f}%, Entry 1→3: {entry1_to_entry3_pct:.2f}%")
+            else:  # SHORT
+                entry1_to_entry2_pct = ((optimized_entry1_price - original_entry1_price) / original_entry1_price) * 100
+                entry2_to_entry3_pct = ((dca_entry_price - optimized_entry1_price) / optimized_entry1_price) * 100
+                entry1_to_entry3_pct = ((dca_entry_price - original_entry1_price) / original_entry1_price) * 100
+                logger.info(f"📊 [ENTRY GAP SUMMARY] SHORT: Entry 1→2: {entry1_to_entry2_pct:.2f}%, Entry 2→3: {entry2_to_entry3_pct:.2f}%, Entry 1→3: {entry1_to_entry3_pct:.2f}%")
+        elif dca_entry_price:
+            # Only Entry 1 and Entry 3 (no Entry 2)
+            if signal_side == 'LONG':
+                entry1_to_entry3_pct = ((original_entry1_price - dca_entry_price) / original_entry1_price) * 100
+            else:  # SHORT
+                entry1_to_entry3_pct = ((dca_entry_price - original_entry1_price) / original_entry1_price) * 100
+            logger.info(f"📊 [ENTRY GAP SUMMARY] Entry 1→3: {entry1_to_entry3_pct:.2f}% (Entry 2 not used)")
         
         # If this is a primary entry, we need both prices to create both orders
         if is_primary_entry and not dca_entry_price:

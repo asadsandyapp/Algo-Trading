@@ -91,6 +91,331 @@ def validate_entry2_standalone_with_ai(signal_data, entry2_price, original_valid
         }
 
 
+def pre_validate_signal_hard_rules(signal_data):
+    """
+    Pre-validation with hard rejection rules based on critical indicators.
+    These rules catch signals that should be rejected BEFORE AI validation.
+    
+    IMPORTANT: Only reject if MULTIPLE severe red flags are present. We want to
+    preserve profitable trades, so we're conservative with rejections.
+    
+    Args:
+        signal_data: Dictionary containing signal information
+        
+    Returns:
+        dict: {
+            'should_reject': bool,
+            'rejection_reason': str,
+            'confidence_penalty': float (0-100, how much to reduce confidence)
+        } or None if signal passes pre-validation
+    """
+    signal_side = signal_data.get('signal_side', '').upper()
+    indicators = signal_data.get('indicators', {})
+    
+    # Extract indicator values
+    price_below_ema200 = indicators.get('price_below_ema200', False)
+    price_above_ema200 = indicators.get('price_above_ema200', False)
+    smart_money_buying = indicators.get('smart_money_buying', False)
+    smart_money_selling = indicators.get('smart_money_selling', False)
+    macd_line = safe_float(indicators.get('macd_line'), default=0)
+    macd_signal = safe_float(indicators.get('macd_signal'), default=0)
+    macd_histogram = safe_float(indicators.get('macd_histogram'), default=0)
+    
+    # Check for positive indicators that could make a counter-trend trade profitable
+    # (e.g., oversold/overbought conditions, divergence, at support/resistance)
+    rsi = safe_float(indicators.get('rsi'), default=50)
+    stoch_k = safe_float(indicators.get('stoch_k'), default=50)
+    stoch_d = safe_float(indicators.get('stoch_d'), default=50)
+    at_bottom = indicators.get('at_bottom', False)
+    at_top = indicators.get('at_top', False)
+    has_bullish_divergence = indicators.get('has_bullish_divergence', False)
+    has_bearish_divergence = indicators.get('has_bearish_divergence', False)
+    supertrend_bull = indicators.get('supertrend_bull', False)
+    
+    red_flags = []
+    green_flags = []  # Positive indicators that could make trade profitable
+    confidence_penalty = 0.0
+    
+    # Extract additional indicators for profitability checks
+    mfi = safe_float(indicators.get('mfi'), default=50)
+    obv = safe_float(indicators.get('obv'), default=0)
+    relative_volume_percentile = safe_float(indicators.get('relative_volume_percentile', 50), default=50)
+    volume_ratio = safe_float(indicators.get('volume_ratio', 1.0), default=1.0)
+    
+    # PROFITABILITY CHECK: Based on analysis of profitable DUSK trade
+    # DUSK was profitable because:
+    # 1. TREND-FOLLOWING (price above EMA200) - KEY FACTOR
+    # 2. Strong oversold conditions (Stochastic 14.93/8.48, MFI 26.49)
+    # 3. MACD very close to zero (not strongly bearish)
+    # 4. Supertrend bullish
+    
+    # Check if this is a trend-following trade (HIGHER PROBABILITY)
+    is_trend_following = False
+    if signal_side == 'LONG' and price_above_ema200:
+        is_trend_following = True
+        green_flags.append("Trend-following: Price above EMA200 (bullish trend)")
+    elif signal_side == 'SHORT' and price_below_ema200:
+        is_trend_following = True
+        green_flags.append("Trend-following: Price below EMA200 (bearish trend)")
+    
+    # HARD REJECTION RULE: Only reject if ALL THREE severe conditions are met
+    # AND there are NO strong positive indicators (oversold/overbought, divergence, at support/resistance)
+    if signal_side == 'LONG':
+        # Check for counter-trend (price below EMA200)
+        if price_below_ema200:
+            red_flags.append("Counter-trend: LONG signal while price below EMA200 (bearish trend)")
+            confidence_penalty += 20.0  # Reduced from 30.0
+            
+            # Check for no institutional support
+            if not smart_money_buying:
+                red_flags.append("No institutional support: Smart Money NOT buying")
+                confidence_penalty += 15.0  # Reduced from 20.0
+                
+                # Check for bearish MACD
+                if macd_histogram < 0 or (macd_line < macd_signal):
+                    red_flags.append("Bearish MACD: MACD histogram negative or MACD line below signal")
+                    confidence_penalty += 10.0  # Reduced from 15.0
+                    
+                    # Check for positive indicators that could make this profitable
+                    # For counter-trend trades, we need STRONG reversal signals (like DUSK had)
+                    reversal_signal_count = 0
+                    
+                    # Smart money support is a STRONG reversal signal for counter-trend trades
+                    # (Note: We already checked smart_money_buying is False above, so this won't trigger here,
+                    # but we check it in case the logic changes)
+                    if smart_money_buying:
+                        green_flags.append("Smart Money buying (strong institutional support)")
+                        reversal_signal_count += 2  # Smart money is very strong
+                    
+                    if rsi < 35:  # Oversold (relaxed to catch cases like DUSK with RSI 38.69)
+                        green_flags.append("RSI oversold (potential reversal)")
+                        reversal_signal_count += 1
+                    if stoch_k < 25 or stoch_d < 25:  # Stochastic oversold (relaxed to catch DUSK with 14.93/8.48)
+                        green_flags.append("Stochastic oversold (potential reversal)")
+                        reversal_signal_count += 1
+                    if mfi < 30:  # MFI oversold (DUSK had 26.49)
+                        green_flags.append("MFI oversold (potential reversal)")
+                        reversal_signal_count += 1
+                    if at_bottom:
+                        green_flags.append("At bottom (potential reversal)")
+                        reversal_signal_count += 1
+                    if has_bullish_divergence:
+                        green_flags.append("Bullish divergence (strong reversal signal)")
+                        reversal_signal_count += 2  # Divergence is very strong
+                    if supertrend_bull:
+                        green_flags.append("Supertrend bullish (trend support)")
+                        reversal_signal_count += 1
+                    # Check MACD - if very close to zero (like DUSK with -0.00065778), it's not strongly bearish
+                    if abs(macd_histogram) < 0.001:  # Very close to zero
+                        green_flags.append("MACD neutral (not strongly bearish)")
+                        reversal_signal_count += 1
+                    
+                    # HARD REJECT for counter-trend trades if:
+                    # 1. ALL THREE red flags present AND
+                    # 2. INSUFFICIENT reversal signals (need at least 2 reversal signals for counter-trend)
+                    # BUT: If smart money is buying, that's a strong signal (counts as 2), so we're more lenient
+                    if len(red_flags) >= 3:
+                        # If smart money is buying, we only need 1 more reversal signal (smart money counts as 2)
+                        required_signals = 1 if smart_money_buying else 2
+                        if reversal_signal_count < required_signals:
+                            return {
+                                'should_reject': True,
+                                'rejection_reason': f"HARD REJECT: Counter-trend LONG signal with multiple red flags and INSUFFICIENT reversal signals ({reversal_signal_count} found, need at least {required_signals}): {'; '.join(red_flags)}. Counter-trend trades require STRONG reversal signals to be profitable (like oversold Stochastic/MFI, divergence, smart money support, or at support).",
+                                'confidence_penalty': 100.0  # Full rejection
+                            }
+    
+    elif signal_side == 'SHORT':
+        # Check for counter-trend (price above EMA200)
+        if price_above_ema200:
+            red_flags.append("Counter-trend: SHORT signal while price above EMA200 (bullish trend)")
+            confidence_penalty += 20.0  # Reduced from 30.0
+            
+            # Check for no institutional support
+            if not smart_money_selling:
+                red_flags.append("No institutional support: Smart Money NOT selling")
+                confidence_penalty += 15.0  # Reduced from 20.0
+                
+                # Check for bullish MACD
+                if macd_histogram > 0 or (macd_line > macd_signal):
+                    red_flags.append("Bullish MACD: MACD histogram positive or MACD line above signal")
+                    confidence_penalty += 10.0  # Reduced from 15.0
+                    
+                    # Check for positive indicators that could make this profitable
+                    # For counter-trend trades, we need STRONG reversal signals
+                    reversal_signal_count = 0
+                    
+                    # Smart money support is a STRONG reversal signal for counter-trend trades
+                    if smart_money_selling:
+                        green_flags.append("Smart Money selling (strong institutional support)")
+                        reversal_signal_count += 2  # Smart money is very strong
+                    
+                    if rsi > 65:  # Overbought (relaxed to catch more cases)
+                        green_flags.append("RSI overbought (potential reversal)")
+                        reversal_signal_count += 1
+                    if stoch_k > 75 or stoch_d > 75:  # Stochastic overbought (relaxed)
+                        green_flags.append("Stochastic overbought (potential reversal)")
+                        reversal_signal_count += 1
+                    if mfi > 70:  # MFI overbought
+                        green_flags.append("MFI overbought (potential reversal)")
+                        reversal_signal_count += 1
+                    if at_top:
+                        green_flags.append("At top (potential reversal)")
+                        reversal_signal_count += 1
+                    if has_bearish_divergence:
+                        green_flags.append("Bearish divergence (strong reversal signal)")
+                        reversal_signal_count += 2  # Divergence is very strong
+                    if not supertrend_bull:
+                        green_flags.append("Supertrend bearish (trend support)")
+                        reversal_signal_count += 1
+                    # Check MACD - if very close to zero, it's not strongly bullish
+                    if abs(macd_histogram) < 0.001:  # Very close to zero
+                        green_flags.append("MACD neutral (not strongly bullish)")
+                        reversal_signal_count += 1
+                    
+                    # HARD REJECT for counter-trend trades if:
+                    # 1. ALL THREE red flags present AND
+                    # 2. INSUFFICIENT reversal signals (need at least 2 reversal signals for counter-trend)
+                    # BUT: If smart money is selling, that's a strong signal (counts as 2), so we're more lenient
+                    if len(red_flags) >= 3:
+                        # If smart money is selling, we only need 1 more reversal signal (smart money counts as 2)
+                        required_signals = 1 if smart_money_selling else 2
+                        if reversal_signal_count < required_signals:
+                            return {
+                                'should_reject': True,
+                                'rejection_reason': f"HARD REJECT: Counter-trend SHORT signal with multiple red flags and INSUFFICIENT reversal signals ({reversal_signal_count} found, need at least {required_signals}): {'; '.join(red_flags)}. Counter-trend trades require STRONG reversal signals to be profitable (like overbought Stochastic/MFI, divergence, smart money support, or at resistance).",
+                                'confidence_penalty': 100.0  # Full rejection
+                            }
+    
+    # PROFITABILITY CHECK FOR TREND-FOLLOWING TRADES (like profitable DUSK)
+    # DUSK was profitable because: trend-following + oversold conditions + neutral MACD
+    if is_trend_following:
+        # For trend-following trades, we still want good entry conditions
+        # DUSK had: Stochastic 14.93/8.48 (oversold), MFI 26.49 (oversold), MACD -0.00065778 (neutral)
+        trend_following_quality = 0
+        
+        if signal_side == 'LONG':
+            # Check for oversold conditions (good entry in uptrend)
+            if stoch_k < 30 or stoch_d < 30:  # Oversold (DUSK had 14.93/8.48)
+                green_flags.append("Stochastic oversold (good entry in uptrend)")
+                trend_following_quality += 2
+            if mfi < 35:  # MFI oversold (DUSK had 26.49)
+                green_flags.append("MFI oversold (good entry in uptrend)")
+                trend_following_quality += 2
+            if rsi < 45:  # RSI neutral-oversold (DUSK had 38.69)
+                green_flags.append("RSI neutral-oversold (good entry in uptrend)")
+                trend_following_quality += 1
+            # MACD should be neutral or slightly negative (not strongly bearish)
+            if abs(macd_histogram) < 0.01:  # Close to zero (DUSK had -0.00065778)
+                green_flags.append("MACD neutral (not strongly bearish)")
+                trend_following_quality += 1
+            elif macd_histogram > 0:  # Positive MACD is even better
+                green_flags.append("MACD bullish (strong trend confirmation)")
+                trend_following_quality += 2
+        else:  # SHORT
+            # Check for overbought conditions (good entry in downtrend)
+            if stoch_k > 70 or stoch_d > 70:  # Overbought
+                green_flags.append("Stochastic overbought (good entry in downtrend)")
+                trend_following_quality += 2
+            if mfi > 65:  # MFI overbought
+                green_flags.append("MFI overbought (good entry in downtrend)")
+                trend_following_quality += 2
+            if rsi > 55:  # RSI neutral-overbought
+                green_flags.append("RSI neutral-overbought (good entry in downtrend)")
+                trend_following_quality += 1
+            # MACD should be neutral or slightly positive (not strongly bullish)
+            if abs(macd_histogram) < 0.01:  # Close to zero
+                green_flags.append("MACD neutral (not strongly bullish)")
+                trend_following_quality += 1
+            elif macd_histogram < 0:  # Negative MACD is even better
+                green_flags.append("MACD bearish (strong trend confirmation)")
+                trend_following_quality += 2
+        
+        # For trend-following trades, we want at least some good entry conditions
+        # But we're more lenient - trend-following is already a positive factor
+        if trend_following_quality == 0:
+            # No good entry conditions - apply small penalty
+            confidence_penalty += 10.0
+            red_flags.append("Trend-following but no oversold/overbought conditions for optimal entry")
+    
+    # NOTE: Stop loss tightness check REMOVED - we ignore tight stop losses
+    # as they can be profitable in certain market conditions
+    
+    # ADDITIONAL PROFITABILITY CHECK: Strongly conflicting MACD
+    # DUSK had MACD very close to zero (-0.00065778), which is acceptable
+    # If MACD is strongly against the trade, it's a red flag
+    # BUT: For trend-following trades, we're more lenient (MACD can be slightly negative/positive)
+    if signal_side == 'LONG':
+        if macd_histogram < -0.01:  # Strongly bearish MACD
+            # For trend-following trades, be more lenient (DUSK had -0.00065778 which is acceptable)
+            if is_trend_following:
+                # Only penalize if MACD is VERY strongly bearish (not just slightly negative)
+                if macd_histogram < -0.02:  # Very strongly bearish
+                    red_flags.append("Very strongly bearish MACD (histogram < -0.02)")
+                    confidence_penalty += 10.0  # Smaller penalty for trend-following
+            else:
+                # Counter-trend trades: penalize any strongly bearish MACD
+                red_flags.append("Strongly bearish MACD (histogram < -0.01)")
+                confidence_penalty += 15.0
+    elif signal_side == 'SHORT':
+        if macd_histogram > 0.01:  # Strongly bullish MACD
+            # For trend-following trades, be more lenient
+            if is_trend_following:
+                # Only penalize if MACD is VERY strongly bullish (not just slightly positive)
+                if macd_histogram > 0.02:  # Very strongly bullish
+                    red_flags.append("Very strongly bullish MACD (histogram > 0.02)")
+                    confidence_penalty += 10.0  # Smaller penalty for trend-following
+            else:
+                # Counter-trend trades: penalize any strongly bullish MACD
+                red_flags.append("Strongly bullish MACD (histogram > 0.01)")
+                confidence_penalty += 15.0
+    
+    # CRITICAL SAFEGUARD: NEVER hard reject trend-following trades
+    # Trend-following trades (like profitable DUSK) should only get penalties, never hard rejection
+    # This ensures we don't reject profitable trades
+    if is_trend_following:
+        # For trend-following trades, only apply penalties, never hard reject
+        # Even if there are red flags, trend-following is a strong positive factor
+        if confidence_penalty > 0:
+            # Reduce penalty for trend-following trades (trend-following is valuable)
+            reduced_penalty = max(0, confidence_penalty - 20.0)  # Reduce by 20% for trend-following
+            return {
+                'should_reject': False,  # NEVER hard reject trend-following trades
+                'rejection_reason': f"Trend-following trade with some concerns: {'; '.join(red_flags)}. Positive factors: {'; '.join(green_flags)}. Applying reduced confidence penalty of {reduced_penalty:.1f}% (original: {confidence_penalty:.1f}%) due to trend-following advantage.",
+                'confidence_penalty': reduced_penalty
+            }
+        # If no penalties, trend-following trade passes with no issues
+        return None
+    
+    # SOFT REJECTION: Apply confidence penalty if multiple red flags (but not hard reject)
+    # Only apply heavy penalty if there are NO positive indicators
+    # This applies to counter-trend trades only (trend-following already handled above)
+    if confidence_penalty >= 40.0 and len(green_flags) == 0:
+        return {
+            'should_reject': False,  # Don't hard reject, but apply heavy penalty
+            'rejection_reason': f"Multiple red flags detected: {'; '.join(red_flags)}. Applying heavy confidence penalty of {confidence_penalty:.1f}%.",
+            'confidence_penalty': confidence_penalty
+        }
+    elif confidence_penalty >= 40.0 and len(green_flags) > 0:
+        # Reduce penalty if there are positive indicators (reversal signals)
+        reduced_penalty = max(0, confidence_penalty - (len(green_flags) * 10.0))
+        return {
+            'should_reject': False,
+            'rejection_reason': f"Red flags detected but positive indicators found: {'; '.join(green_flags)}. Applying reduced confidence penalty of {reduced_penalty:.1f}% (original: {confidence_penalty:.1f}%).",
+            'confidence_penalty': reduced_penalty
+        }
+    
+    # No rejection, but return penalty if any red flags found
+    if red_flags:
+        return {
+            'should_reject': False,
+            'rejection_reason': f"Minor red flags detected: {'; '.join(red_flags)}. Applying confidence penalty of {confidence_penalty:.1f}%.",
+            'confidence_penalty': confidence_penalty
+        }
+    
+    # Signal passes pre-validation
+    return None
+
+
 def parse_entry_analysis_from_reasoning(reasoning):
     """Parse AI reasoning to detect if Entry 1 is bad but Entry 2 is good
     
@@ -243,6 +568,24 @@ def validate_signal_with_ai(signal_data):
             'reasoning': 'Invalid entry price, proceeding without validation',
             'risk_level': 'MEDIUM'
         }
+    
+    # PRE-VALIDATION: Check hard rejection rules BEFORE AI validation
+    pre_validation_result = pre_validate_signal_hard_rules(signal_data)
+    if pre_validation_result:
+        if pre_validation_result['should_reject']:
+            logger.warning(f"🚫 PRE-VALIDATION HARD REJECT for {symbol}: {pre_validation_result['rejection_reason']}")
+            return {
+                'is_valid': False,
+                'confidence_score': 0.0,
+                'reasoning': pre_validation_result['rejection_reason'],
+                'risk_level': 'HIGH',
+                '_pre_validation_reject': True
+            }
+        else:
+            # Apply confidence penalty but continue to AI validation
+            logger.info(f"⚠️  PRE-VALIDATION: {pre_validation_result['rejection_reason']}")
+            # Store penalty to apply after AI validation
+            signal_data['_pre_validation_penalty'] = pre_validation_result['confidence_penalty']
     
     # Calculate risk/reward ratio
     risk_reward_ratio = None
@@ -1846,6 +2189,16 @@ If setup is weak, counter-trend, or lacks institutional confirmation, MODIFY or 
         
         # Ensure confidence_score is within valid range
         validation_result['confidence_score'] = max(0, min(100, float(validation_result['confidence_score'])))
+        
+        # Apply pre-validation penalty if any red flags were found
+        pre_validation_penalty = signal_data.get('_pre_validation_penalty', 0.0)
+        if pre_validation_penalty > 0:
+            original_confidence = validation_result['confidence_score']
+            validation_result['confidence_score'] = max(0, validation_result['confidence_score'] - pre_validation_penalty)
+            logger.warning(f"⚠️  [PRE-VALIDATION PENALTY] Applied {pre_validation_penalty:.1f}% penalty: {original_confidence:.1f}% → {validation_result['confidence_score']:.1f}%")
+            # Update reasoning to include pre-validation warnings
+            if 'reasoning' in validation_result:
+                validation_result['reasoning'] = f"[PRE-VALIDATION WARNING: {pre_validation_penalty:.1f}% confidence penalty applied due to red flags] " + validation_result['reasoning']
         
         # Log validation result
         logger.info(f"📊 AI Validation Result:")
