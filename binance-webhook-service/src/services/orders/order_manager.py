@@ -2163,48 +2163,52 @@ def create_limit_order(signal_data):
                 log_entry_signal(signal_data, 'ACCEPTED', f'Reversal trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
             
             # Only reject if Entry 1 failed AND Entry 2 also failed (both options rejected)
+            # BUT: Instead of completely rejecting, create a $20 alternative order at offset price
             if not should_approve and not signal_data.get('_special_entry2_only', False):
                 # Check if Entry 2 validation was attempted but failed
                 if entry1_failed and (entry2_price_original is not None or entry2_price_optimized is not None):
                     if not entry2_standalone_valid:
-                        # Both Entry 1 and Entry 2 failed - complete rejection
-                        rejection_reason = f"Signal REJECTED: Entry 1 failed (is_valid={is_valid}, confidence={confidence_score:.1f}%) AND Entry 2 standalone validation also failed (both original and optimized prices rejected)"
-                        logger.warning(f"🚫 COMPLETE REJECTION for {symbol}: {rejection_reason}")
+                        # Both Entry 1 and Entry 2 failed - create alternative order instead of rejecting
+                        rejection_reason = f"AI REJECTED: Entry 1 failed (is_valid={is_valid}, confidence={confidence_score:.1f}%) AND Entry 2 standalone validation also failed. Creating alternative $20 order at offset price."
+                        logger.warning(f"🚫 AI REJECTION for {symbol}: {rejection_reason}")
                         logger.info(f"   Entry 1 Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
                         logger.info(f"   Entry 2 was tested but also rejected by AI")
-                        logger.info(f"   This is a FALSE SIGNAL - both Entry 1 and Entry 2 failed validation")
+                        logger.info(f"   Creating alternative $20 order at offset price instead of complete rejection")
+                        
+                        # Set flag to create alternative order on AI rejection
+                        signal_data['_ai_rejection_alternative_order'] = True
+                        signal_data['_ai_rejection_reason'] = rejection_reason
+                        signal_data['_ai_rejection_confidence'] = confidence_score
+                        
+                        # Log as rejected but with alternative order note
+                        log_entry_signal(signal_data, 'REJECTED', f"{rejection_reason} (Creating alternative order)", confidence_score, quality_score)
                     else:
                         # Entry 2 passed but conditions not met (shouldn't happen, but safety check)
                         rejection_reason = f"Entry 1 failed but Entry 2 validation conditions not fully met"
                         logger.warning(f"⚠️  Edge case: Entry 2 passed but conditions not met")
+                        # Still create alternative order
+                        signal_data['_ai_rejection_alternative_order'] = True
+                        signal_data['_ai_rejection_reason'] = rejection_reason
+                        signal_data['_ai_rejection_confidence'] = confidence_score
                 else:
-                    # Entry 1 failed and no Entry 2 available
-                    rejection_reason = f"Confidence score {confidence_score:.1f}% is below acceptable threshold (AI: is_valid={is_valid}, threshold: {confidence_threshold}%)"
+                    # Entry 1 failed and no Entry 2 available - create alternative order
+                    rejection_reason = f"AI REJECTED: Confidence score {confidence_score:.1f}% is below acceptable threshold (AI: is_valid={is_valid}, threshold: {confidence_threshold}%). Creating alternative $20 order at offset price."
                     logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
-                logger.info(f"   Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
-                logger.info(f"   Risk Level: {validation_result.get('risk_level', 'UNKNOWN')}")
+                    logger.info(f"   Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
+                    logger.info(f"   Risk Level: {validation_result.get('risk_level', 'UNKNOWN')}")
+                    logger.info(f"   Creating alternative $20 order at offset price instead of complete rejection")
+                    
+                    # Set flag to create alternative order on AI rejection
+                    signal_data['_ai_rejection_alternative_order'] = True
+                    signal_data['_ai_rejection_reason'] = rejection_reason
+                    signal_data['_ai_rejection_confidence'] = confidence_score
+                    
+                    # Log as rejected but with alternative order note
+                    log_entry_signal(signal_data, 'REJECTED', f"{rejection_reason} (Creating alternative order)", confidence_score, quality_score)
                 
-                # Log rejected signal
-                log_entry_signal(signal_data, 'REJECTED', rejection_reason, confidence_score, quality_score)
-                
-                # Send rejection notification to Slack exception channel
-                full_reason = f"{rejection_reason}\n\n{validation_result.get('reasoning', 'No detailed reasoning provided')}"
-                send_signal_rejection_notification(
-                    symbol=symbol,
-                    signal_side=signal_side,
-                    timeframe=timeframe,
-                    entry_price=entry_price,
-                    rejection_reason=full_reason,
-                    confidence_score=confidence_score,
-                    risk_level=validation_result.get('risk_level'),
-                    validation_result=validation_result
-                )
-                
-                return {
-                    'success': False,
-                    'error': f'Signal rejected: Entry 1 failed and Entry 2 also failed validation',
-                    'validation_result': validation_result
-                }
+                # Don't return error - continue to order creation with alternative order flag
+                # The alternative order will be created in the order creation section
+                logger.info(f"⚠️  AI validation failed, but proceeding with alternative $20 order creation")
             
             # Log successful validation
             logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}%, "
@@ -3521,6 +3525,181 @@ def create_limit_order(signal_data):
                 'custom_tp': custom_tp,
                 'special_case': 'ENTRY2_ONLY'
             }
+        
+        # Check if AI rejection alternative order should be created
+        ai_rejection_alternative = signal_data.get('_ai_rejection_alternative_order', False)
+        
+        # Extract smart money flags from indicators
+        smart_money_buying = indicators.get('smart_money_buying', False) if indicators else False
+        smart_money_selling = indicators.get('smart_money_selling', False) if indicators else False
+        
+        # Determine if we should use alternative order logic based on smart money flags OR AI rejection
+        use_alternative_order_logic = False
+        alternative_order_price = None
+        alternative_order_size = 20.0  # $20 order
+        alternative_order_reason = None
+        
+        # Priority 1: AI Rejection Alternative Order (if AI validation failed)
+        if ai_rejection_alternative:
+            use_alternative_order_logic = True
+            if signal_side == 'LONG':
+                # For LONG: Create order 5% lower from entry1
+                alternative_order_price = original_entry1_price * (1 - 0.05)
+                alternative_order_reason = f"AI Rejection Alternative: AI validation failed (confidence: {signal_data.get('_ai_rejection_confidence', 0):.1f}%)"
+                logger.info(f"🔄 [AI REJECTION ALTERNATIVE] LONG trade: AI validation failed, creating alternative $20 order")
+                logger.info(f"   Using alternative order: $20 order at ${alternative_order_price:,.8f} (5% lower from Entry 1: ${original_entry1_price:,.8f})")
+            else:  # SHORT
+                # For SHORT: Create order 5% higher from entry1
+                alternative_order_price = original_entry1_price * (1 + 0.05)
+                alternative_order_reason = f"AI Rejection Alternative: AI validation failed (confidence: {signal_data.get('_ai_rejection_confidence', 0):.1f}%)"
+                logger.info(f"🔄 [AI REJECTION ALTERNATIVE] SHORT trade: AI validation failed, creating alternative $20 order")
+                logger.info(f"   Using alternative order: $20 order at ${alternative_order_price:,.8f} (5% higher from Entry 1: ${original_entry1_price:,.8f})")
+        
+        # Priority 2: Smart Money Alternative Order (if AI passed but smart money contradicts)
+        if not use_alternative_order_logic:
+            if signal_side == 'LONG':
+                # For LONG trades:
+                # - If smart_money_buying is true: use original entry1 and entry2
+                # - If smart_money_buying is false AND smart_money_selling is true: create one $20 order 5% lower from entry1
+                # - If both are false: use original entries
+                if not smart_money_buying and smart_money_selling:
+                    use_alternative_order_logic = True
+                    # Create order 5% lower from entry1
+                    alternative_order_price = original_entry1_price * (1 - 0.05)
+                    alternative_order_reason = "Smart Money Logic: smart_money_buying=False, smart_money_selling=True"
+                    logger.info(f"🔄 [SMART MONEY LOGIC] LONG trade: smart_money_buying=False, smart_money_selling=True")
+                    logger.info(f"   Using alternative order: $20 order at ${alternative_order_price:,.8f} (5% lower from Entry 1: ${original_entry1_price:,.8f})")
+                else:
+                    logger.info(f"ℹ️  [SMART MONEY LOGIC] LONG trade: Using original entries (smart_money_buying={smart_money_buying}, smart_money_selling={smart_money_selling})")
+            else:  # SHORT
+                # For SHORT trades:
+                # - If smart_money_selling is true: use original entry1 and entry2
+                # - If smart_money_selling is false AND smart_money_buying is true: create one $20 order 5% higher from entry1
+                # - If both are false: use original entries
+                if not smart_money_selling and smart_money_buying:
+                    use_alternative_order_logic = True
+                    # Create order 5% higher from entry1
+                    alternative_order_price = original_entry1_price * (1 + 0.05)
+                    alternative_order_reason = "Smart Money Logic: smart_money_selling=False, smart_money_buying=True"
+                    logger.info(f"🔄 [SMART MONEY LOGIC] SHORT trade: smart_money_selling=False, smart_money_buying=True")
+                    logger.info(f"   Using alternative order: $20 order at ${alternative_order_price:,.8f} (5% higher from Entry 1: ${original_entry1_price:,.8f})")
+                else:
+                    logger.info(f"ℹ️  [SMART MONEY LOGIC] SHORT trade: Using original entries (smart_money_buying={smart_money_buying}, smart_money_selling={smart_money_selling})")
+        
+        # If using alternative order logic, create single $20 order and skip normal order creation
+        if use_alternative_order_logic and is_primary_entry:
+            # Format alternative order price
+            price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+            tick_size = float(price_filter['tickSize']) if price_filter else 0.01
+            alternative_order_price = format_price_precision(alternative_order_price, tick_size)
+            
+            # Calculate quantity for $20 order
+            alternative_quantity = calculate_quantity(alternative_order_price, symbol_info, entry_size_usd=alternative_order_size)
+            
+            # Format quantity precision
+            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+            if lot_size_filter:
+                step_size = float(lot_size_filter['stepSize'])
+                alternative_quantity = format_quantity_precision(alternative_quantity, step_size)
+            
+            # Create single $20 order
+            alternative_order_params = {
+                'symbol': symbol,
+                'side': side,
+                'type': 'LIMIT',
+                'timeInForce': 'GTC',
+                'quantity': alternative_quantity,
+                'price': alternative_order_price,
+            }
+            if is_hedge_mode:
+                alternative_order_params['positionSide'] = position_side
+            
+            order_reason = alternative_order_reason or "Alternative Order Logic"
+            logger.info(f"Creating ALTERNATIVE ORDER ({order_reason}, ${alternative_order_size}): {alternative_order_params}")
+            try:
+                alternative_order_result = client.futures_create_order(**alternative_order_params)
+                order_results.append(alternative_order_result)
+                active_trades[symbol]['primary_order_id'] = alternative_order_result.get('orderId')
+                active_trades[symbol]['primary_filled'] = False
+                active_trades[symbol]['dca_filled'] = False
+                active_trades[symbol]['optimized_entry1_filled'] = False
+                active_trades[symbol]['position_open'] = True
+                active_trades[symbol]['dca_order_id'] = None
+                active_trades[symbol]['optimized_entry1_order_id'] = None
+                active_trades[symbol]['original_entry1'] = alternative_order_price
+                active_trades[symbol]['original_entry2'] = None
+                active_trades[symbol]['_alternative_order'] = True
+                active_trades[symbol]['_alternative_order_reason'] = order_reason
+                # Store AI rejection info if applicable
+                if ai_rejection_alternative:
+                    active_trades[symbol]['_ai_rejection_alternative'] = True
+                    active_trades[symbol]['_ai_rejection_confidence'] = signal_data.get('_ai_rejection_confidence', 0)
+                else:
+                    active_trades[symbol]['_alternative_smart_money_order'] = True
+                # Ensure TP/SL are stored (they should already be stored above, but ensure they're set)
+                if stop_loss:
+                    active_trades[symbol]['original_stop_loss'] = stop_loss
+                if take_profit:
+                    active_trades[symbol]['take_profit'] = take_profit
+                    active_trades[symbol]['use_single_tp'] = True
+                    active_trades[symbol]['tp2_price'] = format_price_precision(take_profit, tick_size)
+                    active_trades[symbol]['tp2_quantity'] = alternative_quantity
+                    active_trades[symbol]['tp_side'] = 'SELL' if signal_side == 'LONG' else 'BUY'
+                    active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
+                logger.info(f"✅ ALTERNATIVE ORDER created successfully: Order ID {alternative_order_result.get('orderId')} @ ${alternative_order_price:,.8f} (${alternative_order_size} size)")
+                
+                # Track order
+                order_key = f"{symbol}_{alternative_order_price}_{side}_ALTERNATIVE"
+                recent_orders[order_key] = current_time
+                
+                # Send notification
+                # Use AI rejection confidence if it's an AI rejection alternative order
+                notification_confidence = signal_data.get('_ai_rejection_confidence', confidence_score) if ai_rejection_alternative else confidence_score
+                notification_risk_level = 'HIGH' if ai_rejection_alternative else validation_result.get('risk_level', 'MEDIUM')
+                
+                send_signal_notification(
+                    symbol=symbol,
+                    signal_side=signal_side,
+                    timeframe=timeframe,
+                    confidence_score=notification_confidence,
+                    risk_level=notification_risk_level,
+                    entry1_price=alternative_order_price,
+                    entry2_price=None,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    tp1_price=take_profit,
+                    use_single_tp=True,
+                    optimized_entry1_price=None
+                )
+                
+                return {
+                    'success': True,
+                    'message': f'Alternative order created ({order_reason}): {signal_side} {symbol} @ ${alternative_order_price:,.8f}',
+                    'order_id': alternative_order_result.get('orderId'),
+                    'orders': order_results,
+                    'alternative_order': True,
+                    'alternative_order_reason': order_reason
+                }
+            except BinanceAPIException as e:
+                logger.error(f"❌ Failed to create ALTERNATIVE ORDER: {e.message} (Code: {e.code})")
+                send_slack_alert(
+                    error_type="Alternative Smart Money Order Creation Failed",
+                    message=f"{e.message} (Code: {e.code})",
+                    details={'Error_Code': e.code, 'Entry_Price': alternative_order_price, 'Quantity': alternative_quantity, 'Side': side},
+                    symbol=symbol,
+                    severity='ERROR'
+                )
+                return {'success': False, 'error': f'Failed to create alternative smart money order: {e.message}'}
+            except Exception as e:
+                logger.error(f"❌ Unexpected error creating ALTERNATIVE ORDER: {e}")
+                send_slack_alert(
+                    error_type="Alternative Smart Money Order Creation Error",
+                    message=str(e),
+                    details={'Entry_Price': alternative_order_price, 'Quantity': alternative_quantity, 'Side': side},
+                    symbol=symbol,
+                    severity='ERROR'
+                )
+                return {'success': False, 'error': f'Unexpected error: {str(e)}'}
         
         # If this is a primary entry, create 3 entry orders:
         # Order 1: $15 with original Entry 1 price
