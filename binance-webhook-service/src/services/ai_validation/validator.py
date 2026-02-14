@@ -142,6 +142,17 @@ def pre_validate_signal_hard_rules(signal_data):
     relative_volume_percentile = safe_float(indicators.get('relative_volume_percentile', 50), default=50)
     volume_ratio = safe_float(indicators.get('volume_ratio', 1.0), default=1.0)
     
+    # Track OBV trend (we need previous OBV to determine if it's rising/falling)
+    # For now, we'll use OBV value - negative OBV suggests selling pressure, positive suggests buying
+    # This is a simplified check - ideally we'd track OBV trend over time
+    obv_contradicts = False
+    if signal_side == 'LONG' and obv < 0:
+        # LONG signal but OBV is negative (selling pressure) = contradiction
+        obv_contradicts = True
+    elif signal_side == 'SHORT' and obv > 0:
+        # SHORT signal but OBV is positive (buying pressure) = contradiction
+        obv_contradicts = True
+    
     # PROFITABILITY CHECK: Based on analysis of profitable DUSK trade
     # DUSK was profitable because:
     # 1. TREND-FOLLOWING (price above EMA200) - KEY FACTOR
@@ -212,15 +223,22 @@ def pre_validate_signal_hard_rules(signal_data):
                     
                     # HARD REJECT for counter-trend trades if:
                     # 1. ALL THREE red flags present AND
-                    # 2. INSUFFICIENT reversal signals (need at least 2 reversal signals for counter-trend)
-                    # BUT: If smart money is buying, that's a strong signal (counts as 2), so we're more lenient
+                    # 2. INSUFFICIENT reversal signals
+                    # STRENGTHENED: Require MORE reversal signals for counter-trend trades, especially if MACD is strongly bearish
                     if len(red_flags) >= 3:
-                        # If smart money is buying, we only need 1 more reversal signal (smart money counts as 2)
-                        required_signals = 1 if smart_money_buying else 2
+                        # Determine required signals based on MACD strength
+                        # If MACD is strongly bearish (< -0.01), require MORE reversal signals (at least 3)
+                        # If MACD is moderately bearish, require at least 2 reversal signals
+                        macd_strength = abs(macd_histogram) if macd_histogram < 0 else 0
+                        if macd_strength > 0.01:  # Strongly bearish MACD
+                            required_signals = 3 if not smart_money_buying else 2  # Need 3 total (smart money counts as 2)
+                        else:  # Moderately bearish or neutral MACD
+                            required_signals = 2 if not smart_money_buying else 1  # Need 2 total (smart money counts as 2)
+                        
                         if reversal_signal_count < required_signals:
                             return {
                                 'should_reject': True,
-                                'rejection_reason': f"HARD REJECT: Counter-trend LONG signal with multiple red flags and INSUFFICIENT reversal signals ({reversal_signal_count} found, need at least {required_signals}): {'; '.join(red_flags)}. Counter-trend trades require STRONG reversal signals to be profitable (like oversold Stochastic/MFI, divergence, smart money support, or at support).",
+                                'rejection_reason': f"HARD REJECT: Counter-trend LONG signal with multiple red flags and INSUFFICIENT reversal signals ({reversal_signal_count} found, need at least {required_signals}): {'; '.join(red_flags)}. Counter-trend trades require STRONG reversal signals to be profitable (like oversold Stochastic/MFI, divergence, smart money support, or at support). MACD strength: {macd_strength:.6f}.",
                                 'confidence_penalty': 100.0  # Full rejection
                             }
     
@@ -274,15 +292,22 @@ def pre_validate_signal_hard_rules(signal_data):
                     
                     # HARD REJECT for counter-trend trades if:
                     # 1. ALL THREE red flags present AND
-                    # 2. INSUFFICIENT reversal signals (need at least 2 reversal signals for counter-trend)
-                    # BUT: If smart money is selling, that's a strong signal (counts as 2), so we're more lenient
+                    # 2. INSUFFICIENT reversal signals
+                    # STRENGTHENED: Require MORE reversal signals for counter-trend trades, especially if MACD is strongly bullish
                     if len(red_flags) >= 3:
-                        # If smart money is selling, we only need 1 more reversal signal (smart money counts as 2)
-                        required_signals = 1 if smart_money_selling else 2
+                        # Determine required signals based on MACD strength
+                        # If MACD is strongly bullish (> 0.01), require MORE reversal signals (at least 3)
+                        # If MACD is moderately bullish, require at least 2 reversal signals
+                        macd_strength = macd_histogram if macd_histogram > 0 else 0
+                        if macd_strength > 0.01:  # Strongly bullish MACD
+                            required_signals = 3 if not smart_money_selling else 2  # Need 3 total (smart money counts as 2)
+                        else:  # Moderately bullish or neutral MACD
+                            required_signals = 2 if not smart_money_selling else 1  # Need 2 total (smart money counts as 2)
+                        
                         if reversal_signal_count < required_signals:
                             return {
                                 'should_reject': True,
-                                'rejection_reason': f"HARD REJECT: Counter-trend SHORT signal with multiple red flags and INSUFFICIENT reversal signals ({reversal_signal_count} found, need at least {required_signals}): {'; '.join(red_flags)}. Counter-trend trades require STRONG reversal signals to be profitable (like overbought Stochastic/MFI, divergence, smart money support, or at resistance).",
+                                'rejection_reason': f"HARD REJECT: Counter-trend SHORT signal with multiple red flags and INSUFFICIENT reversal signals ({reversal_signal_count} found, need at least {required_signals}): {'; '.join(red_flags)}. Counter-trend trades require STRONG reversal signals to be profitable (like overbought Stochastic/MFI, divergence, smart money support, or at resistance). MACD strength: {macd_strength:.6f}.",
                                 'confidence_penalty': 100.0  # Full rejection
                             }
     
@@ -368,6 +393,171 @@ def pre_validate_signal_hard_rules(signal_data):
                 # Counter-trend trades: penalize any strongly bullish MACD
                 red_flags.append("Strongly bullish MACD (histogram > 0.01)")
                 confidence_penalty += 15.0
+    
+    # CRITICAL: HARD REJECTION FOR DIVERGENCE CONTRADICTIONS
+    # Divergence is a STRONG reversal signal - if it contradicts the signal direction, it's a major red flag
+    # Example: SHORT signal with bullish divergence = price wants to go UP, but signal is SHORT = CONTRADICTION
+    if signal_side == 'LONG' and has_bearish_divergence:
+        # LONG signal with bearish divergence = price wants to go DOWN = STRONG CONTRADICTION
+        return {
+            'should_reject': True,
+            'rejection_reason': f"HARD REJECT: LONG signal has BEARISH DIVERGENCE - this is a STRONG contradiction. Bearish divergence indicates price wants to move DOWN, but signal is LONG. This is a critical red flag that indicates the signal is likely false.",
+            'confidence_penalty': 100.0  # Full rejection
+        }
+    elif signal_side == 'SHORT' and has_bullish_divergence:
+        # SHORT signal with bullish divergence = price wants to go UP = STRONG CONTRADICTION
+        return {
+            'should_reject': True,
+            'rejection_reason': f"HARD REJECT: SHORT signal has BULLISH DIVERGENCE - this is a STRONG contradiction. Bullish divergence indicates price wants to move UP, but signal is SHORT. This is a critical red flag that indicates the signal is likely false.",
+            'confidence_penalty': 100.0  # Full rejection
+        }
+    
+    # CRITICAL: SUPERTREND CONTRADICTION CHECK
+    # Supertrend is a strong trend filter - if it contradicts the signal, it's a significant red flag
+    if signal_side == 'LONG' and not supertrend_bull:
+        # LONG signal but Supertrend is bearish = strong contradiction
+        if not is_trend_following:
+            red_flags.append("Supertrend bearish contradicts LONG signal")
+            confidence_penalty += 15.0  # Significant penalty for counter-trend
+        else:
+            red_flags.append("Supertrend bearish contradicts LONG signal (trend-following)")
+            confidence_penalty += 8.0  # Smaller penalty for trend-following
+    elif signal_side == 'SHORT' and supertrend_bull:
+        # SHORT signal but Supertrend is bullish = strong contradiction
+        if not is_trend_following:
+            red_flags.append("Supertrend bullish contradicts SHORT signal")
+            confidence_penalty += 15.0  # Significant penalty for counter-trend
+        else:
+            red_flags.append("Supertrend bullish contradicts SHORT signal (trend-following)")
+            confidence_penalty += 8.0  # Smaller penalty for trend-following
+    
+    # CRITICAL: OBV/VOLUME CONTRADICTION CHECK
+    # If OBV contradicts the signal direction, it indicates volume flow is against the trade
+    if obv_contradicts:
+        red_flags.append(f"OBV contradicts signal direction (OBV: {obv:.2f})")
+        confidence_penalty += 10.0  # Volume contradiction is significant
+    
+    # CRITICAL: MULTIPLE MODERATE CONTRADICTIONS CHECK
+    # If there are many moderate contradictions (not strong enough individually), together they indicate weakness
+    # BUT: Don't penalize too heavily if there are strong positive signals (divergence, at support/resistance)
+    contradiction_count = 0
+    if signal_side == 'LONG':
+        if rsi > 60:  # RSI not oversold
+            contradiction_count += 1
+        if stoch_k > 50 or stoch_d > 50:  # Stochastic not oversold
+            contradiction_count += 1
+        if mfi > 55:  # MFI not oversold
+            contradiction_count += 1
+        if macd_histogram < 0:  # MACD bearish
+            contradiction_count += 1
+        if not supertrend_bull:  # Supertrend bearish
+            contradiction_count += 1
+        if obv_contradicts:  # OBV contradicts
+            contradiction_count += 1
+        if not smart_money_buying:  # Smart money not buying
+            contradiction_count += 1
+    else:  # SHORT
+        if rsi < 40:  # RSI not overbought
+            contradiction_count += 1
+        if stoch_k < 50 or stoch_d < 50:  # Stochastic not overbought
+            contradiction_count += 1
+        if mfi < 45:  # MFI not overbought
+            contradiction_count += 1
+        if macd_histogram > 0:  # MACD bullish
+            contradiction_count += 1
+        if supertrend_bull:  # Supertrend bullish
+            contradiction_count += 1
+        if obv_contradicts:  # OBV contradicts
+            contradiction_count += 1
+        if not smart_money_selling:  # Smart money not selling
+            contradiction_count += 1
+    
+    # Count strong positive signals that might offset contradictions
+    strong_positive_signals = 0
+    if (signal_side == 'LONG' and has_bullish_divergence) or (signal_side == 'SHORT' and has_bearish_divergence):
+        strong_positive_signals += 2  # Divergence is very strong
+    if (signal_side == 'LONG' and at_bottom) or (signal_side == 'SHORT' and at_top):
+        strong_positive_signals += 1
+    if (signal_side == 'LONG' and smart_money_buying) or (signal_side == 'SHORT' and smart_money_selling):
+        strong_positive_signals += 2  # Smart money is very strong
+    
+    # If 5+ indicators contradict (even moderately), it's a weak signal
+    # BUT: Reduce penalty if there are strong positive signals
+    if contradiction_count >= 5 and not is_trend_following:
+        # Reduce penalty if there are strong positive signals
+        penalty_reduction = min(10.0, strong_positive_signals * 3.0)  # Each strong signal reduces penalty by 3%
+        adjusted_penalty = max(10.0, 20.0 - penalty_reduction)  # Minimum 10% penalty
+        red_flags.append(f"Multiple indicator contradictions ({contradiction_count} indicators contradict signal, but {strong_positive_signals} strong positive signals)")
+        confidence_penalty += adjusted_penalty
+    elif contradiction_count >= 5 and is_trend_following:
+        # Trend-following trades get lighter penalty
+        penalty_reduction = min(5.0, strong_positive_signals * 2.0)
+        adjusted_penalty = max(5.0, 10.0 - penalty_reduction)
+        red_flags.append(f"Multiple indicator contradictions ({contradiction_count} indicators contradict signal, but trend-following and {strong_positive_signals} strong positive signals)")
+        confidence_penalty += adjusted_penalty
+    
+    # CRITICAL: STRONG MACD CONTRADICTION CHECK
+    # If MACD is STRONGLY contradicting the signal (histogram > 0.05 for SHORT or < -0.05 for LONG),
+    # this is a major red flag that should significantly reduce confidence or reject
+    # BUT: Allow exceptions if there are VERY STRONG reversal signals (divergence + at support/resistance)
+    if signal_side == 'LONG':
+        if macd_histogram < -0.05:  # Very strongly bearish MACD (much stronger than -0.01 threshold)
+            # This is a CRITICAL contradiction - MACD is very bearish but signal is LONG
+            # Check for very strong reversal signals that might override this
+            strong_reversal_signals = 0
+            if has_bullish_divergence:
+                strong_reversal_signals += 2  # Divergence is very strong
+            if at_bottom:
+                strong_reversal_signals += 1
+            if smart_money_buying:
+                strong_reversal_signals += 2  # Smart money is very strong
+            if (stoch_k < 20 and stoch_d < 20) or (mfi < 25 and rsi < 30):
+                strong_reversal_signals += 1  # Very oversold
+            
+            if not is_trend_following and strong_reversal_signals < 3:
+                # Counter-trend trades need at least 3 strong reversal signals to override MACD contradiction
+                return {
+                    'should_reject': True,
+                    'rejection_reason': f"HARD REJECT: LONG signal with VERY STRONGLY BEARISH MACD (histogram {macd_histogram:.6f} < -0.05). This is a critical contradiction - MACD indicates strong bearish momentum but signal is LONG. Counter-trend trades with such strong MACD contradictions need at least 3 strong reversal signals (found: {strong_reversal_signals}).",
+                    'confidence_penalty': 100.0  # Full rejection
+                }
+            elif not is_trend_following:
+                # Has strong reversal signals - apply heavy penalty but don't hard reject
+                red_flags.append(f"Very strongly bearish MACD (histogram {macd_histogram:.6f} < -0.05) but strong reversal signals present ({strong_reversal_signals})")
+                confidence_penalty += 25.0  # Heavy penalty but allow if reversal signals are strong
+            else:
+                # Even trend-following trades should be heavily penalized
+                red_flags.append(f"Very strongly bearish MACD (histogram {macd_histogram:.6f} < -0.05) - critical contradiction")
+                confidence_penalty += 30.0  # Heavy penalty even for trend-following
+    elif signal_side == 'SHORT':
+        if macd_histogram > 0.05:  # Very strongly bullish MACD (much stronger than 0.01 threshold)
+            # This is a CRITICAL contradiction - MACD is very bullish but signal is SHORT
+            # Check for very strong reversal signals that might override this
+            strong_reversal_signals = 0
+            if has_bearish_divergence:
+                strong_reversal_signals += 2  # Divergence is very strong
+            if at_top:
+                strong_reversal_signals += 1
+            if smart_money_selling:
+                strong_reversal_signals += 2  # Smart money is very strong
+            if (stoch_k > 80 and stoch_d > 80) or (mfi > 75 and rsi > 70):
+                strong_reversal_signals += 1  # Very overbought
+            
+            if not is_trend_following and strong_reversal_signals < 3:
+                # Counter-trend trades need at least 3 strong reversal signals to override MACD contradiction
+                return {
+                    'should_reject': True,
+                    'rejection_reason': f"HARD REJECT: SHORT signal with VERY STRONGLY BULLISH MACD (histogram {macd_histogram:.6f} > 0.05). This is a critical contradiction - MACD indicates strong bullish momentum but signal is SHORT. Counter-trend trades with such strong MACD contradictions need at least 3 strong reversal signals (found: {strong_reversal_signals}).",
+                    'confidence_penalty': 100.0  # Full rejection
+                }
+            elif not is_trend_following:
+                # Has strong reversal signals - apply heavy penalty but don't hard reject
+                red_flags.append(f"Very strongly bullish MACD (histogram {macd_histogram:.6f} > 0.05) but strong reversal signals present ({strong_reversal_signals})")
+                confidence_penalty += 25.0  # Heavy penalty but allow if reversal signals are strong
+            else:
+                # Even trend-following trades should be heavily penalized
+                red_flags.append(f"Very strongly bullish MACD (histogram {macd_histogram:.6f} > 0.05) - critical contradiction")
+                confidence_penalty += 30.0  # Heavy penalty even for trend-following
     
     # CRITICAL SAFEGUARD: NEVER hard reject trend-following trades
     # Trend-following trades (like profitable DUSK) should only get penalties, never hard rejection
