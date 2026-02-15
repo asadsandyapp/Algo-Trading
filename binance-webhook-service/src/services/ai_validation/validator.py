@@ -394,23 +394,61 @@ def pre_validate_signal_hard_rules(signal_data):
                 red_flags.append("Strongly bullish MACD (histogram > 0.01)")
                 confidence_penalty += 15.0
     
-    # CRITICAL: HARD REJECTION FOR DIVERGENCE CONTRADICTIONS
+    # CRITICAL: DIVERGENCE CONTRADICTION CHECK (CONDITIONAL - NOT ALWAYS HARD REJECT)
     # Divergence is a STRONG reversal signal - if it contradicts the signal direction, it's a major red flag
+    # BUT: Allow exceptions for trend-following trades with STRONG confirmation (overbought/oversold + Supertrend + volume)
     # Example: SHORT signal with bullish divergence = price wants to go UP, but signal is SHORT = CONTRADICTION
+    # BUT: If trend-following + overbought + Supertrend bearish + high volume = divergence might be false signal
+    
     if signal_side == 'LONG' and has_bearish_divergence:
         # LONG signal with bearish divergence = price wants to go DOWN = STRONG CONTRADICTION
-        return {
-            'should_reject': True,
-            'rejection_reason': f"HARD REJECT: LONG signal has BEARISH DIVERGENCE - this is a STRONG contradiction. Bearish divergence indicates price wants to move DOWN, but signal is LONG. This is a critical red flag that indicates the signal is likely false.",
-            'confidence_penalty': 100.0  # Full rejection
-        }
+        # Check if this is a trend-following trade with strong oversold conditions
+        strong_confirmation = 0
+        if is_trend_following:
+            strong_confirmation += 2  # Trend-following is strong
+        if supertrend_bull:
+            strong_confirmation += 1  # Supertrend confirms
+        if (rsi < 30) or (stoch_k < 25 and stoch_d < 25) or (mfi < 30):
+            strong_confirmation += 1  # Very oversold
+        if relative_volume_percentile > 70 or volume_ratio > 1.5:
+            strong_confirmation += 1  # High volume
+        
+        # Only hard reject if there's NO strong confirmation (divergence is likely real)
+        if strong_confirmation < 3:
+            return {
+                'should_reject': True,
+                'rejection_reason': f"HARD REJECT: LONG signal has BEARISH DIVERGENCE - this is a STRONG contradiction. Bearish divergence indicates price wants to move DOWN, but signal is LONG. Insufficient confirmation to override (confirmation score: {strong_confirmation}/5).",
+                'confidence_penalty': 100.0  # Full rejection
+            }
+        else:
+            # Has strong confirmation - apply heavy penalty but don't hard reject
+            red_flags.append(f"Bearish divergence contradicts LONG signal, but strong confirmation present (score: {strong_confirmation}/5)")
+            confidence_penalty += 25.0  # Heavy penalty but allow if confirmation is strong
+    
     elif signal_side == 'SHORT' and has_bullish_divergence:
         # SHORT signal with bullish divergence = price wants to go UP = STRONG CONTRADICTION
-        return {
-            'should_reject': True,
-            'rejection_reason': f"HARD REJECT: SHORT signal has BULLISH DIVERGENCE - this is a STRONG contradiction. Bullish divergence indicates price wants to move UP, but signal is SHORT. This is a critical red flag that indicates the signal is likely false.",
-            'confidence_penalty': 100.0  # Full rejection
-        }
+        # Check if this is a trend-following trade with strong overbought conditions
+        strong_confirmation = 0
+        if is_trend_following:
+            strong_confirmation += 2  # Trend-following is strong
+        if not supertrend_bull:
+            strong_confirmation += 1  # Supertrend confirms (bearish for SHORT)
+        if (rsi > 70) or (stoch_k > 75 and stoch_d > 75) or (mfi > 70):
+            strong_confirmation += 1  # Very overbought
+        if relative_volume_percentile > 70 or volume_ratio > 1.5:
+            strong_confirmation += 1  # High volume
+        
+        # Only hard reject if there's NO strong confirmation (divergence is likely real)
+        if strong_confirmation < 3:
+            return {
+                'should_reject': True,
+                'rejection_reason': f"HARD REJECT: SHORT signal has BULLISH DIVERGENCE - this is a STRONG contradiction. Bullish divergence indicates price wants to move UP, but signal is SHORT. Insufficient confirmation to override (confirmation score: {strong_confirmation}/5).",
+                'confidence_penalty': 100.0  # Full rejection
+            }
+        else:
+            # Has strong confirmation - apply heavy penalty but don't hard reject
+            red_flags.append(f"Bullish divergence contradicts SHORT signal, but strong confirmation present (score: {strong_confirmation}/5)")
+            confidence_penalty += 25.0  # Heavy penalty but allow if confirmation is strong
     
     # CRITICAL: SUPERTREND CONTRADICTION CHECK
     # Supertrend is a strong trend filter - if it contradicts the signal, it's a significant red flag
@@ -526,9 +564,31 @@ def pre_validate_signal_hard_rules(signal_data):
                 red_flags.append(f"Very strongly bearish MACD (histogram {macd_histogram:.6f} < -0.05) but strong reversal signals present ({strong_reversal_signals})")
                 confidence_penalty += 25.0  # Heavy penalty but allow if reversal signals are strong
             else:
-                # Even trend-following trades should be heavily penalized
-                red_flags.append(f"Very strongly bearish MACD (histogram {macd_histogram:.6f} < -0.05) - critical contradiction")
-                confidence_penalty += 30.0  # Heavy penalty even for trend-following
+                # Trend-following trades: Check for strong confirmation (overbought/oversold + Supertrend + volume)
+                # If strong confirmation exists, reduce penalty significantly
+                strong_confirmation = 0
+                if signal_side == 'LONG':
+                    if supertrend_bull:
+                        strong_confirmation += 1
+                    if (rsi < 35) or (stoch_k < 30 and stoch_d < 30) or (mfi < 35):
+                        strong_confirmation += 1
+                    if relative_volume_percentile > 70 or volume_ratio > 1.5:
+                        strong_confirmation += 1
+                else:  # SHORT
+                    if not supertrend_bull:
+                        strong_confirmation += 1
+                    if (rsi > 65) or (stoch_k > 70 and stoch_d > 70) or (mfi > 65):
+                        strong_confirmation += 1
+                    if relative_volume_percentile > 70 or volume_ratio > 1.5:
+                        strong_confirmation += 1
+                
+                if strong_confirmation >= 2:
+                    # Strong confirmation - apply moderate penalty
+                    red_flags.append(f"Very strongly bearish MACD (histogram {macd_histogram:.6f} < -0.05) but trend-following with strong confirmation ({strong_confirmation}/3)")
+                    confidence_penalty += 15.0  # Moderate penalty for trend-following with confirmation
+                else:
+                    red_flags.append(f"Very strongly bearish MACD (histogram {macd_histogram:.6f} < -0.05) - critical contradiction")
+                    confidence_penalty += 25.0  # Heavier penalty if no strong confirmation
     elif signal_side == 'SHORT':
         if macd_histogram > 0.05:  # Very strongly bullish MACD (much stronger than 0.01 threshold)
             # This is a CRITICAL contradiction - MACD is very bullish but signal is SHORT
@@ -555,9 +615,23 @@ def pre_validate_signal_hard_rules(signal_data):
                 red_flags.append(f"Very strongly bullish MACD (histogram {macd_histogram:.6f} > 0.05) but strong reversal signals present ({strong_reversal_signals})")
                 confidence_penalty += 25.0  # Heavy penalty but allow if reversal signals are strong
             else:
-                # Even trend-following trades should be heavily penalized
-                red_flags.append(f"Very strongly bullish MACD (histogram {macd_histogram:.6f} > 0.05) - critical contradiction")
-                confidence_penalty += 30.0  # Heavy penalty even for trend-following
+                # Trend-following trades: Check for strong confirmation (overbought/oversold + Supertrend + volume)
+                # If strong confirmation exists, reduce penalty significantly
+                strong_confirmation = 0
+                if not supertrend_bull:
+                    strong_confirmation += 1  # Supertrend bearish confirms SHORT
+                if (rsi > 65) or (stoch_k > 70 and stoch_d > 70) or (mfi > 65):
+                    strong_confirmation += 1  # Overbought conditions
+                if relative_volume_percentile > 70 or volume_ratio > 1.5:
+                    strong_confirmation += 1  # High volume
+                
+                if strong_confirmation >= 2:
+                    # Strong confirmation - apply moderate penalty
+                    red_flags.append(f"Very strongly bullish MACD (histogram {macd_histogram:.6f} > 0.05) but trend-following with strong confirmation ({strong_confirmation}/3)")
+                    confidence_penalty += 15.0  # Moderate penalty for trend-following with confirmation
+                else:
+                    red_flags.append(f"Very strongly bullish MACD (histogram {macd_histogram:.6f} > 0.05) - critical contradiction")
+                    confidence_penalty += 25.0  # Heavier penalty if no strong confirmation
     
     # CRITICAL SAFEGUARD: NEVER hard reject trend-following trades
     # Trend-following trades (like profitable DUSK) should only get penalties, never hard rejection
