@@ -1870,17 +1870,26 @@ def create_limit_order(signal_data):
             entry1_is_bad, entry2_is_good_from_parsing = parse_entry_analysis_from_reasoning(reasoning)
             has_high_volatility, price_change_pct = check_recent_price_volatility(symbol, days=7)
             
-            # CRITICAL: If quality_score < 8, apply STRICT VALIDATION - check ALL factors
+            # CRITICAL: If quality_score < 8, apply STRICT VALIDATION - check ALL factors (skipped for Big Wick Only)
             quality_score = safe_float(signal_data.get('quality_score'), default=None)
-            if quality_score is not None and quality_score < 8:
+            if quality_score is not None and quality_score < 8 and signal_data.get('signal_source') != 'big_wick_only':
                 logger.warning(f"⚠️ [QUALITY SCORE CHECK] Quality score {quality_score} < 8 - Applying STRICT validation checks")
                 indicators = signal_data.get('indicators', {})
+                is_big_wick = signal_data.get('signal_source') == 'big_wick_only'
                 
                 # Check all critical factors
                 price_below_ema200 = indicators.get('price_below_ema200', False)
                 price_above_ema200 = indicators.get('price_above_ema200', False)
-                smart_money_buying = indicators.get('smart_money_buying', False)
-                smart_money_selling = indicators.get('smart_money_selling', False)
+                # Extract SMV direction from JSON (new field from Pine script)
+                smv_direction = indicators.get('smv_direction', 'Neutral')
+                # Convert to boolean for backward compatibility
+                smart_money_buying = smv_direction == 'Buy'
+                smart_money_selling = smv_direction == 'Sell'
+                # Fallback to old boolean fields if smv_direction not present
+                if smv_direction == 'Neutral' and 'smart_money_buying' in indicators:
+                    smart_money_buying = indicators.get('smart_money_buying', False)
+                    smart_money_selling = indicators.get('smart_money_selling', False)
+                
                 signal_side = signal_data.get('signal_side', '').upper()
                 
                 # Check MACD
@@ -1913,19 +1922,22 @@ def create_limit_order(signal_data):
                     else:
                         supporting_count += 1
                 
-                # Smart Money check
-                if signal_side == 'LONG':
-                    if not smart_money_buying:
-                        contradicting_count += 1
-                        logger.warning(f"   ❌ No Smart Money support: smart_money_buying = False for LONG")
-                    else:
-                        supporting_count += 1
-                else:  # SHORT
-                    if not smart_money_selling:
-                        contradicting_count += 1
-                        logger.warning(f"   ❌ No Smart Money support: smart_money_selling = False for SHORT")
-                    else:
-                        supporting_count += 1
+                # Smart Money check (skipped for big wick signals - open without SMV requirement)
+                if not is_big_wick:
+                    if signal_side == 'LONG':
+                        if not smart_money_buying:
+                            contradicting_count += 1
+                            logger.warning(f"   ❌ No Smart Money support: smart_money_buying = False for LONG")
+                        else:
+                            supporting_count += 1
+                    else:  # SHORT
+                        if not smart_money_selling:
+                            contradicting_count += 1
+                            logger.warning(f"   ❌ No Smart Money support: smart_money_selling = False for SHORT")
+                        else:
+                            supporting_count += 1
+                else:
+                    logger.info(f"   ⏭️ Big Wick signal: skipping SMV check for quality_score < 8")
                 
                 # MACD check
                 if signal_side == 'LONG':
@@ -2090,123 +2102,120 @@ def create_limit_order(signal_data):
             
             should_approve = False
             
-            # Check if this is a counter-trend trade (requires higher confidence)
-            is_counter_trend = False
-            indicators = signal_data.get('indicators', {})
-            price_below_ema200 = indicators.get('price_below_ema200', False)
-            price_above_ema200 = indicators.get('price_above_ema200', False)
-            if signal_side == 'LONG' and price_below_ema200:
-                is_counter_trend = True
-            elif signal_side == 'SHORT' and price_above_ema200:
-                is_counter_trend = True
+            # Big Wick: ignore quality score and confidence penalties - always approve (open trade even on score 1 or 2)
+            if signal_data.get('signal_source') == 'big_wick_only':
+                should_approve = True
+                logger.info(f"✅ Big Wick signal APPROVED for {symbol}: Ignoring quality/confidence penalties (opening trade regardless of score)")
+                log_entry_signal(signal_data, 'ACCEPTED', 'Big Wick trade approved (score/confidence penalties ignored)', confidence_score, quality_score)
             
-            # STRENGTHENED: Counter-trend trades require HIGHER confidence threshold
-            # Based on analysis of losing trades, counter-trend trades need at least 65% confidence
-            # (instead of the standard 55% threshold) to be approved
-            counter_trend_threshold = 65.0  # Higher threshold for counter-trend trades
-            
-            # Check if trade is at strong support/resistance (reversal trade opportunity)
-            is_at_support_resistance = False
-            try:
-                # Get market data to check if entry is at support/resistance
-                if client:
-                    ticker = client.futures_symbol_ticker(symbol=symbol)
-                    current_price = float(ticker.get('price', 0))
-                    if current_price > 0 and entry_price:
-                        # Get recent candles to find support/resistance
-                        timeframe_map = {
-                            '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
-                            '1h': '1h', '2h': '2h', '4h': '4h', '6h': '6h', '8h': '8h', '12h': '12h',
-                            '1d': '1d', '3d': '3d', '1w': '1w', '1M': '1M'
-                        }
-                        interval = timeframe_map.get(timeframe.lower(), '1h')
-                        klines = client.futures_klines(symbol=symbol, interval=interval, limit=50)
-                        if klines:
-                            highs = [float(k[2]) for k in klines]
-                            lows = [float(k[3]) for k in klines]
-                            support_level = min(lows[-30:]) if len(lows) >= 30 else min(lows) if lows else None
-                            resistance_level = max(highs[-30:]) if len(highs) >= 30 else max(highs) if highs else None
-                            
-                            if support_level and resistance_level:
-                                # Check if entry is near support (for LONG) or resistance (for SHORT)
-                                price_range = resistance_level - support_level
-                                if price_range > 0:
-                                    entry_distance_from_support = abs(entry_price - support_level) / price_range
-                                    entry_distance_from_resistance = abs(entry_price - resistance_level) / price_range
-                                    
-                                    # Consider "at support/resistance" if within 5% of range
-                                    if signal_side == 'LONG' and entry_distance_from_support <= 0.05:
-                                        is_at_support_resistance = True
-                                        logger.info(f"📍 Entry is at STRONG SUPPORT: Entry ${entry_price:,.8f} is {entry_distance_from_support*100:.1f}% from support ${support_level:,.8f}")
-                                    elif signal_side == 'SHORT' and entry_distance_from_resistance <= 0.05:
-                                        is_at_support_resistance = True
-                                        logger.info(f"📍 Entry is at STRONG RESISTANCE: Entry ${entry_price:,.8f} is {entry_distance_from_resistance*100:.1f}% from resistance ${resistance_level:,.8f}")
-            except Exception as e:
-                logger.debug(f"Could not check support/resistance for {symbol}: {e}")
-            
-            # STRENGTHENED APPROVAL LOGIC: Counter-trend trades require higher confidence
-            # BUT: Allow exceptions for counter-trend trades at support/resistance with strong reversal signals
-            if is_counter_trend:
-                # Counter-trend trades need higher confidence (65%+) to be approved
-                # EXCEPTION: If at support/resistance with strong reversal signals, allow lower confidence (55%+)
-                if is_at_support_resistance and confidence_score >= 55.0 and is_valid:
-                    # Counter-trend at support/resistance with AI approval: Allow with 55%+ confidence
+            if not should_approve:
+                # Check if this is a counter-trend trade (requires higher confidence)
+                is_counter_trend = False
+                indicators = signal_data.get('indicators', {})
+                price_below_ema200 = indicators.get('price_below_ema200', False)
+                price_above_ema200 = indicators.get('price_above_ema200', False)
+                if signal_side == 'LONG' and price_below_ema200:
+                    is_counter_trend = True
+                elif signal_side == 'SHORT' and price_above_ema200:
+                    is_counter_trend = True
+                
+                # STRENGTHENED: Counter-trend trades require HIGHER confidence threshold
+                # Based on analysis of losing trades, counter-trend trades need at least 65% confidence
+                # (instead of the standard 55% threshold) to be approved
+                counter_trend_threshold = 65.0  # Higher threshold for counter-trend trades
+                
+                # Check if trade is at strong support/resistance (reversal trade opportunity)
+                is_at_support_resistance = False
+                try:
+                    # Get market data to check if entry is at support/resistance
+                    if client:
+                        ticker = client.futures_symbol_ticker(symbol=symbol)
+                        current_price = float(ticker.get('price', 0))
+                        if current_price > 0 and entry_price:
+                            # Get recent candles to find support/resistance
+                            timeframe_map = {
+                                '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+                                '1h': '1h', '2h': '2h', '4h': '4h', '6h': '6h', '8h': '8h', '12h': '12h',
+                                '1d': '1d', '3d': '3d', '1w': '1w', '1M': '1M'
+                            }
+                            interval = timeframe_map.get(timeframe.lower(), '1h')
+                            klines = client.futures_klines(symbol=symbol, interval=interval, limit=50)
+                            if klines:
+                                highs = [float(k[2]) for k in klines]
+                                lows = [float(k[3]) for k in klines]
+                                support_level = min(lows[-30:]) if len(lows) >= 30 else min(lows) if lows else None
+                                resistance_level = max(highs[-30:]) if len(highs) >= 30 else max(highs) if highs else None
+                                
+                                if support_level and resistance_level:
+                                    # Check if entry is near support (for LONG) or resistance (for SHORT)
+                                    price_range = resistance_level - support_level
+                                    if price_range > 0:
+                                        entry_distance_from_support = abs(entry_price - support_level) / price_range
+                                        entry_distance_from_resistance = abs(entry_price - resistance_level) / price_range
+                                        
+                                        # Consider "at support/resistance" if within 5% of range
+                                        if signal_side == 'LONG' and entry_distance_from_support <= 0.05:
+                                            is_at_support_resistance = True
+                                            logger.info(f"📍 Entry is at STRONG SUPPORT: Entry ${entry_price:,.8f} is {entry_distance_from_support*100:.1f}% from support ${support_level:,.8f}")
+                                        elif signal_side == 'SHORT' and entry_distance_from_resistance <= 0.05:
+                                            is_at_support_resistance = True
+                                            logger.info(f"📍 Entry is at STRONG RESISTANCE: Entry ${entry_price:,.8f} is {entry_distance_from_resistance*100:.1f}% from resistance ${resistance_level:,.8f}")
+                except Exception as e:
+                    logger.debug(f"Could not check support/resistance for {symbol}: {e}")
+                
+                # STRENGTHENED APPROVAL LOGIC: Counter-trend trades require higher confidence
+                # BUT: Allow exceptions for counter-trend trades at support/resistance with strong reversal signals
+                if is_counter_trend:
+                    # Counter-trend trades need higher confidence (65%+) to be approved
+                    # EXCEPTION: If at support/resistance with strong reversal signals, allow lower confidence (55%+)
+                    if is_at_support_resistance and confidence_score >= 55.0 and is_valid:
+                        # Counter-trend at support/resistance with AI approval: Allow with 55%+ confidence
+                        should_approve = True
+                        logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL TRADE at support/resistance - exception to 65% threshold)")
+                        log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend reversal trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
+                    elif is_valid and confidence_score >= counter_trend_threshold:
+                        # AI explicitly approved and confidence meets counter-trend threshold: APPROVE
+                        should_approve = True
+                        logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (meets counter-trend threshold {counter_trend_threshold}%)")
+                        log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend trade approved with confidence {confidence_score:.1f}% (threshold: {counter_trend_threshold}%)', confidence_score, quality_score)
+                    elif confidence_score >= counter_trend_threshold:
+                        # Confidence meets counter-trend threshold: APPROVE
+                        should_approve = True
+                        logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (meets counter-trend threshold {counter_trend_threshold}%)")
+                        log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend trade approved with confidence {confidence_score:.1f}% (threshold: {counter_trend_threshold}%)', confidence_score, quality_score)
+                    elif is_at_support_resistance and confidence_score >= 55.0:
+                        # Counter-trend at support/resistance: Allow with 55%+ confidence (exception to 65% rule)
+                        should_approve = True
+                        logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL TRADE at support/resistance - exception to 65% threshold)")
+                        log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend reversal trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
+                    else:
+                        # Counter-trend trade with confidence below threshold: REJECT
+                        logger.warning(f"🚫 COUNTER-TREND trade REJECTED for {symbol}: Confidence {confidence_score:.1f}% is below counter-trend threshold {counter_trend_threshold}% (and not at support/resistance with 55%+)")
+                elif is_valid and confidence_score >= 50.0:
+                    # AI explicitly approved and confidence is 50%+: APPROVE (for trend-following trades)
                     should_approve = True
-                    logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL TRADE at support/resistance - exception to 65% threshold)")
-                    log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend reversal trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
-                elif is_valid and confidence_score >= counter_trend_threshold:
-                    # AI explicitly approved and confidence meets counter-trend threshold: APPROVE
+                    logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI explicitly approved with is_valid=True)")
+                    log_entry_signal(signal_data, 'ACCEPTED', f'AI approved with confidence {confidence_score:.1f}%', confidence_score, quality_score)
+                elif confidence_score >= confidence_threshold:
+                    # Confidence meets threshold: APPROVE (for trend-following trades)
                     should_approve = True
-                    logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (meets counter-trend threshold {counter_trend_threshold}%)")
-                    log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend trade approved with confidence {confidence_score:.1f}% (threshold: {counter_trend_threshold}%)', confidence_score, quality_score)
-                elif confidence_score >= counter_trend_threshold:
-                    # Confidence meets counter-trend threshold: APPROVE
+                    logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (meets threshold {confidence_threshold}%)")
+                    log_entry_signal(signal_data, 'ACCEPTED', f'Confidence {confidence_score:.1f}% meets threshold {confidence_threshold}%', confidence_score, quality_score)
+                elif is_valid and confidence_score >= 45.0:
+                    # AI approved with 45-49% confidence: APPROVE (AI prompt allows this if R/R >= 1.0)
                     should_approve = True
-                    logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (meets counter-trend threshold {counter_trend_threshold}%)")
-                    log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend trade approved with confidence {confidence_score:.1f}% (threshold: {counter_trend_threshold}%)', confidence_score, quality_score)
-                elif is_at_support_resistance and confidence_score >= 55.0:
-                    # Counter-trend at support/resistance: Allow with 55%+ confidence (exception to 65% rule)
+                    logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI approved, within acceptable range 45-49%)")
+                    log_entry_signal(signal_data, 'ACCEPTED', f'AI approved with confidence {confidence_score:.1f}% (45-49% range)', confidence_score, quality_score)
+                elif is_at_support_resistance and confidence_score >= 40.0 and is_valid:
+                    # SPECIAL CASE: Trade at support/resistance (reversal trade) - approve with moderate confidence
                     should_approve = True
-                    logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL TRADE at support/resistance - exception to 65% threshold)")
-                    log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend reversal trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
-                else:
-                    # Counter-trend trade with confidence below threshold: REJECT
-                    logger.warning(f"🚫 COUNTER-TREND trade REJECTED for {symbol}: Confidence {confidence_score:.1f}% is below counter-trend threshold {counter_trend_threshold}% (and not at support/resistance with 55%+)")
-            elif is_valid and confidence_score >= 50.0:
-                # AI explicitly approved and confidence is 50%+: APPROVE (for trend-following trades)
-                should_approve = True
-                logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI explicitly approved with is_valid=True)")
-                # Log accepted signal
-                log_entry_signal(signal_data, 'ACCEPTED', f'AI approved with confidence {confidence_score:.1f}%', confidence_score, quality_score)
-            elif confidence_score >= confidence_threshold:
-                # Confidence meets threshold: APPROVE (for trend-following trades)
-                should_approve = True
-                logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (meets threshold {confidence_threshold}%)")
-                # Log accepted signal
-                log_entry_signal(signal_data, 'ACCEPTED', f'Confidence {confidence_score:.1f}% meets threshold {confidence_threshold}%', confidence_score, quality_score)
-            elif is_valid and confidence_score >= 45.0:
-                # AI approved with 45-49% confidence: APPROVE (AI prompt allows this if R/R >= 1.0)
-                # NOTE: This only applies to trend-following trades (counter-trend already handled above)
-                should_approve = True
-                logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI approved, within acceptable range 45-49%)")
-                # Log accepted signal
-                log_entry_signal(signal_data, 'ACCEPTED', f'AI approved with confidence {confidence_score:.1f}% (45-49% range)', confidence_score, quality_score)
-            elif is_at_support_resistance and confidence_score >= 40.0 and is_valid:
-                # SPECIAL CASE: Trade at support/resistance (reversal trade) - approve with moderate confidence
-                # STRENGTHENED: Counter-trend trades at support/resistance need at least 40% confidence (was 30%)
-                # Counter-trend trades at support/resistance can be very profitable (bounce/reversal)
-                # BUT: Still need reasonable confidence to avoid false signals
-                should_approve = True
-                logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL TRADE at support/resistance - high probability bounce)")
-                # Log accepted signal
-                log_entry_signal(signal_data, 'ACCEPTED', f'Reversal trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
-            elif is_at_support_resistance and confidence_score >= 35.0 and not is_counter_trend:
-                # STRENGTHENED: Only allow 35% confidence for trend-following trades at support/resistance
-                # Counter-trend trades at support/resistance need higher confidence (handled above or rejected)
-                should_approve = True
-                logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (TREND-FOLLOWING trade at support/resistance)")
-                # Log accepted signal
-                log_entry_signal(signal_data, 'ACCEPTED', f'Trend-following trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
+                    logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL TRADE at support/resistance - high probability bounce)")
+                    log_entry_signal(signal_data, 'ACCEPTED', f'Reversal trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
+                elif is_at_support_resistance and confidence_score >= 35.0 and not is_counter_trend:
+                    # STRENGTHENED: Only allow 35% confidence for trend-following trades at support/resistance
+                    should_approve = True
+                    logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (TREND-FOLLOWING trade at support/resistance)")
+                    log_entry_signal(signal_data, 'ACCEPTED', f'Trend-following trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
             
             # Only reject if Entry 1 failed AND Entry 2 also failed (both options rejected)
             # BUT: Instead of completely rejecting, create a $20 alternative order at offset price
@@ -3574,10 +3583,17 @@ def create_limit_order(signal_data):
         
         # Check if AI rejection alternative order should be created
         ai_rejection_alternative = signal_data.get('_ai_rejection_alternative_order', False)
+        is_big_wick = signal_data.get('signal_source') == 'big_wick_only'
         
-        # Extract smart money flags from indicators
-        smart_money_buying = indicators.get('smart_money_buying', False) if indicators else False
-        smart_money_selling = indicators.get('smart_money_selling', False) if indicators else False
+        # Extract SMV direction from JSON (new field from Pine script)
+        smv_direction = indicators.get('smv_direction', 'Neutral') if indicators else 'Neutral'
+        # Convert to boolean for backward compatibility
+        smart_money_buying = smv_direction == 'Buy'
+        smart_money_selling = smv_direction == 'Sell'
+        # Fallback to old boolean fields if smv_direction not present
+        if smv_direction == 'Neutral' and indicators and 'smart_money_buying' in indicators:
+            smart_money_buying = indicators.get('smart_money_buying', False)
+            smart_money_selling = indicators.get('smart_money_selling', False)
         
         # Determine if we should use alternative order logic based on smart money flags OR AI rejection
         use_alternative_order_logic = False
@@ -3601,8 +3617,8 @@ def create_limit_order(signal_data):
                 logger.info(f"🔄 [AI REJECTION ALTERNATIVE] SHORT trade: AI validation failed, creating alternative $20 order")
                 logger.info(f"   Using alternative order: $20 order at ${alternative_order_price:,.8f} (5% higher from Entry 1: ${original_entry1_price:,.8f})")
         
-        # Priority 2: Smart Money Alternative Order (if AI passed but smart money contradicts)
-        if not use_alternative_order_logic:
+        # Priority 2: Smart Money Alternative Order (if AI passed but smart money contradicts). Skipped for big wick signals.
+        if not use_alternative_order_logic and not is_big_wick:
             if signal_side == 'LONG':
                 # For LONG trades:
                 # - If smart_money_buying is true: use original entry1 and entry2
@@ -3631,6 +3647,8 @@ def create_limit_order(signal_data):
                     logger.info(f"   Using alternative order: $20 order at ${alternative_order_price:,.8f} (5% higher from Entry 1: ${original_entry1_price:,.8f})")
                 else:
                     logger.info(f"ℹ️  [SMART MONEY LOGIC] SHORT trade: Using original entries (smart_money_buying={smart_money_buying}, smart_money_selling={smart_money_selling})")
+        elif not use_alternative_order_logic and is_big_wick:
+            logger.info(f"ℹ️  [BIG WICK] Skipping Smart Money alternative order logic - using original entries")
         
         # If using alternative order logic, create single $20 order and skip normal order creation
         if use_alternative_order_logic and is_primary_entry:
