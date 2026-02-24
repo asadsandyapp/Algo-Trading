@@ -1865,7 +1865,7 @@ def create_limit_order(signal_data):
             # Extract validation results
             is_valid = validation_result.get('is_valid', True)
             confidence_score = validation_result.get('confidence_score', 100.0)
-            confidence_threshold = AI_VALIDATION_MIN_CONFIDENCE  # Default: 55%
+            confidence_threshold = AI_VALIDATION_MIN_CONFIDENCE  # Default: 40% - only reject clear false signals
             reasoning = validation_result.get('reasoning', '')
             entry1_is_bad, entry2_is_good_from_parsing = parse_entry_analysis_from_reasoning(reasoning)
             has_high_volatility, price_change_pct = check_recent_price_volatility(symbol, days=7)
@@ -2119,10 +2119,8 @@ def create_limit_order(signal_data):
                 elif signal_side == 'SHORT' and price_above_ema200:
                     is_counter_trend = True
                 
-                # STRENGTHENED: Counter-trend trades require HIGHER confidence threshold
-                # Based on analysis of losing trades, counter-trend trades need at least 65% confidence
-                # (instead of the standard 55% threshold) to be approved
-                counter_trend_threshold = 65.0  # Higher threshold for counter-trend trades
+                # Counter-trend: use a modestly higher bar than trend-following, but don't reject most (false signals ~10-15%)
+                counter_trend_threshold = max(50.0, confidence_threshold + 10.0)  # e.g. 50% or threshold+10%
                 
                 # Check if trade is at strong support/resistance (reversal trade opportunity)
                 is_at_support_resistance = False
@@ -2166,13 +2164,17 @@ def create_limit_order(signal_data):
                 # STRENGTHENED APPROVAL LOGIC: Counter-trend trades require higher confidence
                 # BUT: Allow exceptions for counter-trend trades at support/resistance with strong reversal signals
                 if is_counter_trend:
-                    # Counter-trend trades need higher confidence (65%+) to be approved
-                    # EXCEPTION: If at support/resistance with strong reversal signals, allow lower confidence (55%+)
-                    if is_at_support_resistance and confidence_score >= 55.0 and is_valid:
-                        # Counter-trend at support/resistance with AI approval: Allow with 55%+ confidence
+                    # Counter-trend: approve when AI approved (is_valid) and confidence is reasonable; only reject clear false signals
+                    if is_valid and confidence_score >= 35.0:
+                        # AI approved with 35%+ confidence: APPROVE (only reject real false signals)
                         should_approve = True
-                        logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL TRADE at support/resistance - exception to 65% threshold)")
-                        log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend reversal trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
+                        logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (AI approved)")
+                        log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend approved (AI approved, confidence {confidence_score:.1f}%)', confidence_score, quality_score)
+                    elif is_at_support_resistance and confidence_score >= 45.0 and is_valid:
+                        # Counter-trend at support/resistance with AI approval
+                        should_approve = True
+                        logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL at support/resistance)")
+                        log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend reversal at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
                     elif is_valid and confidence_score >= counter_trend_threshold:
                         # AI explicitly approved and confidence meets counter-trend threshold: APPROVE
                         should_approve = True
@@ -2183,39 +2185,53 @@ def create_limit_order(signal_data):
                         should_approve = True
                         logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (meets counter-trend threshold {counter_trend_threshold}%)")
                         log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend trade approved with confidence {confidence_score:.1f}% (threshold: {counter_trend_threshold}%)', confidence_score, quality_score)
-                    elif is_at_support_resistance and confidence_score >= 55.0:
-                        # Counter-trend at support/resistance: Allow with 55%+ confidence (exception to 65% rule)
+                    elif is_at_support_resistance and confidence_score >= 40.0:
+                        # Counter-trend at support/resistance: allow 40%+
                         should_approve = True
-                        logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL TRADE at support/resistance - exception to 65% threshold)")
-                        log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend reversal trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
+                        logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}% (at support/resistance)")
+                        log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
+                    elif confidence_score >= 30.0 and quality_score is not None and quality_score >= 8:
+                        # Quality score 8+: script already filtered; accept unless confidence very low
+                        should_approve = True
+                        logger.info(f"✅ AI Validation APPROVED COUNTER-TREND signal for {symbol}: Confidence={confidence_score:.1f}%, quality_score={quality_score} (script-filtered)")
+                        log_entry_signal(signal_data, 'ACCEPTED', f'Counter-trend approved (quality {quality_score}, confidence {confidence_score:.1f}%)', confidence_score, quality_score)
                     else:
-                        # Counter-trend trade with confidence below threshold: REJECT
-                        logger.warning(f"🚫 COUNTER-TREND trade REJECTED for {symbol}: Confidence {confidence_score:.1f}% is below counter-trend threshold {counter_trend_threshold}% (and not at support/resistance with 55%+)")
-                elif is_valid and confidence_score >= 50.0:
-                    # AI explicitly approved and confidence is 50%+: APPROVE (for trend-following trades)
+                        # Only reject when confidence very low and no strong quality/support
+                        logger.warning(f"🚫 COUNTER-TREND trade REJECTED for {symbol}: Confidence {confidence_score:.1f}% too low (threshold {counter_trend_threshold}%)")
+                elif is_valid and confidence_score >= 35.0:
+                    # AI approved (is_valid=True): APPROVE unless confidence very low — only reject real false signals
                     should_approve = True
-                    logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI explicitly approved with is_valid=True)")
+                    logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI approved)")
                     log_entry_signal(signal_data, 'ACCEPTED', f'AI approved with confidence {confidence_score:.1f}%', confidence_score, quality_score)
                 elif confidence_score >= confidence_threshold:
                     # Confidence meets threshold: APPROVE (for trend-following trades)
                     should_approve = True
                     logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (meets threshold {confidence_threshold}%)")
                     log_entry_signal(signal_data, 'ACCEPTED', f'Confidence {confidence_score:.1f}% meets threshold {confidence_threshold}%', confidence_score, quality_score)
-                elif is_valid and confidence_score >= 45.0:
-                    # AI approved with 45-49% confidence: APPROVE (AI prompt allows this if R/R >= 1.0)
+                elif is_valid and confidence_score >= 25.0:
+                    # AI approved with 25%+ confidence: APPROVE (only reject when AI says invalid or very low confidence)
                     should_approve = True
-                    logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI approved, within acceptable range 45-49%)")
-                    log_entry_signal(signal_data, 'ACCEPTED', f'AI approved with confidence {confidence_score:.1f}% (45-49% range)', confidence_score, quality_score)
+                    logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI approved, low-confidence accept)")
+                    log_entry_signal(signal_data, 'ACCEPTED', f'AI approved with confidence {confidence_score:.1f}%', confidence_score, quality_score)
+                elif quality_score is not None and quality_score >= 9 and confidence_score >= 25.0:
+                    # High quality (9+) from script: accept unless confidence very low
+                    should_approve = True
+                    logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}%, quality={quality_score} (high-quality script signal)")
+                    log_entry_signal(signal_data, 'ACCEPTED', f'High-quality signal (quality {quality_score}, confidence {confidence_score:.1f}%)', confidence_score, quality_score)
                 elif is_at_support_resistance and confidence_score >= 40.0 and is_valid:
                     # SPECIAL CASE: Trade at support/resistance (reversal trade) - approve with moderate confidence
                     should_approve = True
                     logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (REVERSAL TRADE at support/resistance - high probability bounce)")
                     log_entry_signal(signal_data, 'ACCEPTED', f'Reversal trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
                 elif is_at_support_resistance and confidence_score >= 35.0 and not is_counter_trend:
-                    # STRENGTHENED: Only allow 35% confidence for trend-following trades at support/resistance
                     should_approve = True
                     logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (TREND-FOLLOWING trade at support/resistance)")
                     log_entry_signal(signal_data, 'ACCEPTED', f'Trend-following trade at support/resistance with confidence {confidence_score:.1f}%', confidence_score, quality_score)
+                elif is_valid and confidence_score >= 15.0:
+                    # Only reject real false signals: if AI said valid, accept unless confidence is very low
+                    should_approve = True
+                    logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI approved, accept-most policy)")
+                    log_entry_signal(signal_data, 'ACCEPTED', f'AI approved with confidence {confidence_score:.1f}%', confidence_score, quality_score)
             
             # Only reject if Entry 1 failed AND Entry 2 also failed (both options rejected)
             # BUT: Instead of completely rejecting, create a $20 alternative order at offset price

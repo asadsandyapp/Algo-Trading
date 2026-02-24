@@ -31,7 +31,7 @@ SLACK_SIGNAL_WEBHOOK_URL = os.getenv('SLACK_SIGNAL_WEBHOOK_URL', '')
 # AI Validation Configuration
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 ENABLE_AI_VALIDATION = os.getenv('ENABLE_AI_VALIDATION', 'true').lower() == 'true'
-AI_VALIDATION_MIN_CONFIDENCE = float(os.getenv('AI_VALIDATION_MIN_CONFIDENCE', '55'))
+AI_VALIDATION_MIN_CONFIDENCE = float(os.getenv('AI_VALIDATION_MIN_CONFIDENCE', '40'))  # Lower default: only reject real false signals (~10-15%)
 ENABLE_AI_PRICE_SUGGESTIONS = os.getenv('ENABLE_AI_PRICE_SUGGESTIONS', 'true').lower() == 'true'
 
 # Trading Configuration
