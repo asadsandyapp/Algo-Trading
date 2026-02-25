@@ -2296,7 +2296,8 @@ def create_limit_order(signal_data):
                 if opt_prices.get('stop_loss') and opt_prices['stop_loss'] != stop_loss:
                     stop_loss = opt_prices['stop_loss']
                     logger.info(f"🔄 [PRICE UPDATE] Using AI-optimized stop loss: ${stop_loss:,.8f}")
-                if opt_prices.get('take_profit') and opt_prices['take_profit'] != take_profit:
+                # Big Wick: always use signal's original TP; Legend: use AI-optimized TP when provided
+                if signal_data.get('signal_source') != 'big_wick_only' and opt_prices.get('take_profit') and opt_prices['take_profit'] != take_profit:
                     take_profit = opt_prices['take_profit']
                     logger.info(f"🔄 [PRICE UPDATE] Using AI-optimized take profit: ${take_profit:,.8f}")
                 
@@ -3470,18 +3471,23 @@ def create_limit_order(signal_data):
             # Calculate quantity for $25 order
             entry2_quantity = calculate_quantity(entry2_only_price, symbol_info, entry_size_usd=25.0)
             
-            # Calculate custom TP: 4-5% from entry (use 4.5% as default)
-            tp_percentage = 4.5  # 4.5% default, can be adjusted
-            if signal_side == 'LONG':
-                custom_tp = entry2_only_price * (1 + tp_percentage / 100)
-            else:  # SHORT
-                custom_tp = entry2_only_price * (1 - tp_percentage / 100)
-            custom_tp = format_price_precision(custom_tp, tick_size)
+            # TP: Big Wick uses signal's original TP; Legend Entry 2 only uses 4.5% from entry
+            if signal_data.get('signal_source') == 'big_wick_only' and take_profit and take_profit > 0:
+                custom_tp = format_price_precision(take_profit, tick_size)
+                tp_percentage = None  # from signal
+                logger.info(f"   Using signal take profit for Big Wick: ${custom_tp:,.8f}")
+            else:
+                tp_percentage = 4.5  # 4.5% default for Legend Entry 2 only
+                if signal_side == 'LONG':
+                    custom_tp = entry2_only_price * (1 + tp_percentage / 100)
+                else:  # SHORT
+                    custom_tp = entry2_only_price * (1 - tp_percentage / 100)
+                custom_tp = format_price_precision(custom_tp, tick_size)
             
             logger.info(f"🎯 SPECIAL CASE: Creating Entry 2 only order for {symbol}")
             logger.info(f"   Entry 2 Price: ${entry2_only_price:,.8f}")
             logger.info(f"   Order Size: $25")
-            logger.info(f"   Custom TP: ${custom_tp:,.8f} ({tp_percentage}% from entry)")
+            logger.info(f"   Custom TP: ${custom_tp:,.8f}" + (f" ({tp_percentage}% from entry)" if tp_percentage is not None else " (from signal)"))
             
             # Create Entry 2 only order
             entry2_order_params = {
@@ -3561,7 +3567,7 @@ def create_limit_order(signal_data):
 
 *Risk Management:*
   • Stop Loss: {f'${stop_loss:,.8f}' if stop_loss else 'N/A'}
-  • Take Profit: ${custom_tp:,.8f} ({tp_percentage}% from entry - Custom TP)
+  • Take Profit: ${custom_tp:,.8f} ({f'{tp_percentage}% from entry' if tp_percentage is not None else 'from signal'} - Custom TP)
 
 *Reason:*
 {validation_result.get('special_case_reason', 'Entry 1 rejected but Entry 2 is optimal')}
@@ -3991,6 +3997,10 @@ def create_limit_order(signal_data):
             
             confidence_score = validation_result.get('confidence_score', 100.0) if validation_result else 100.0
             use_single_tp = confidence_score >= TP_HIGH_CONFIDENCE_THRESHOLD
+            # Big Wick: always use signal's original TP as single TP when provided (never use 3-5% Python defaults)
+            if is_big_wick and take_profit and take_profit > 0:
+                use_single_tp = True
+                logger.info(f"📊 [BIG WICK] Using signal take profit: ${take_profit:,.8f} (single TP)")
             
             # Calculate entry price for TP calculation
             # TP1: Always use original Entry 1 price only (4% from Entry 1)
