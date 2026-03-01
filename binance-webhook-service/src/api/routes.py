@@ -35,10 +35,16 @@ def webhook():
             logger.warning("No JSON data received")
             return jsonify({'success': False, 'error': 'No data received'}), 400
         
-        logger.info(f"Received webhook: {json.dumps(data, indent=2)}")
+        # Log only a brief summary so we don't block the response (TradingView times out ~5–10s).
+        # Full payload is logged in the background thread to avoid "request took too long" failures.
+        symbol = data.get('symbol', '?')
+        event = data.get('event', '?')
+        side = data.get('signal_side', '?')
+        logger.info(f"Received webhook: symbol={symbol}, event={event}, side={side}")
         
         # Process order in background thread to avoid blocking
         def process_order():
+            logger.debug(f"Webhook payload: {json.dumps(data, ensure_ascii=False)}")
             result = create_limit_order(data)
             logger.info(f"Order result: {result}")
         
@@ -46,7 +52,7 @@ def webhook():
         thread.daemon = True
         thread.start()
         
-        # Return immediate response
+        # Return immediate response so TradingView does not timeout
         return jsonify({'success': True, 'message': 'Webhook received, processing order'}), 200
         
     except Exception as e:
@@ -60,17 +66,39 @@ def webhook():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def _ping_binance_with_timeout(timeout_seconds=3):
+    """Run client.ping() in a thread; return (True, None) on success, (False, error_msg) on failure or timeout."""
+    if not client:
+        return False, 'disconnected'
+    result = [None]
+    exc = [None]
+
+    def run():
+        try:
+            result[0] = client.ping()
+        except Exception as e:
+            exc[0] = str(e)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(timeout=timeout_seconds)
+    if exc[0]:
+        return False, exc[0]
+    if not t.is_alive():
+        return True, None
+    return False, 'timeout'
+
+
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint"""
+    """Health check endpoint. Returns quickly even if Binance is slow (uses timeout)."""
     try:
-        # Check Binance connection
         if client:
-            client.ping()
-            binance_status = 'connected'
+            ok, err = _ping_binance_with_timeout(timeout_seconds=3)
+            binance_status = 'connected' if ok else ('timeout' if err == 'timeout' else f'error: {err}')
         else:
             binance_status = 'disconnected'
-        
+
         return jsonify({
             'status': 'healthy',
             'binance': binance_status,
