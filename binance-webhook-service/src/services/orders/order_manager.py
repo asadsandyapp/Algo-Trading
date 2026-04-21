@@ -3282,12 +3282,12 @@ def create_limit_order(signal_data):
         custom_entry_size = safe_float(signal_data.get('_entry_size_usd'), default=None)
         
         # Calculate quantities for 3 orders:
-        # Order 1: Custom size or $15 with original Entry 1
+        # Order 1: Custom size or $10 with original Entry 1
         # Order 2: Custom size/2 or $10 with optimized Entry 1 (if exists)
-        # Order 3: Custom size or $15 with Entry 2 (original or optimized)
-        entry1_size = custom_entry_size if custom_entry_size else 15.0
+        # Order 3: Custom size or $10 with Entry 2 (original or optimized)
+        entry1_size = custom_entry_size if custom_entry_size else 10.0
         entry2_size = (custom_entry_size / 2.0) if custom_entry_size else 10.0
-        entry3_size = custom_entry_size if custom_entry_size else 15.0
+        entry3_size = custom_entry_size if custom_entry_size else 10.0
         
         order1_quantity = calculate_quantity(original_entry1_price, symbol_info, entry_size_usd=entry1_size)
         order2_quantity = calculate_quantity(optimized_entry1_price, symbol_info, entry_size_usd=entry2_size) if optimized_entry1_price else None
@@ -3788,11 +3788,11 @@ def create_limit_order(signal_data):
                 return {'success': False, 'error': f'Unexpected error: {str(e)}'}
         
         # If this is a primary entry, create 3 entry orders:
-        # Order 1: $15 with original Entry 1 price
+        # Order 1: $10 with original Entry 1 price
         # Order 2: $10 with optimized Entry 1 price (if AI optimized, otherwise skip)
-        # Order 3: $15 with Entry 2 price (original or optimized)
+        # Order 3: $10 with Entry 2 price (original or optimized)
         if is_primary_entry:
-            # ORDER 1: $15 with original Entry 1 price
+            # ORDER 1: $10 with original Entry 1 price
             # Re-format price and quantity to ensure correct precision before creating order
             price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
             tick_size = float(price_filter['tickSize']) if price_filter else 0.01
@@ -3930,7 +3930,7 @@ def create_limit_order(signal_data):
                 else:
                     logger.info(f"ℹ️  ORDER 2 skipped: Entry 1 was not optimized by AI (using original Entry 1 only)")
             
-            # ORDER 3: $15 with Entry 2 price (original or optimized)
+            # ORDER 3: $10 with Entry 2 price (original or optimized)
             if dca_entry_price and order3_quantity:
                 # Re-format price and quantity to ensure correct precision before creating order
                 # This is important because dca_entry_price might have been recalculated
@@ -4011,18 +4011,18 @@ def create_limit_order(signal_data):
             # Order 1: $10 at original Entry 1
             # Order 2: $10 at optimized Entry 1 (if exists)
             # Order 3: $10 at Entry 2 (if exists)
-            total_usd = 15.0  # Order 1
-            weighted_sum = original_entry1_price * 15.0
+            total_usd = entry1_size  # Order 1
+            weighted_sum = original_entry1_price * entry1_size
             
             if optimized_entry1_price and order2_quantity:
-                total_usd += 10.0
-                weighted_sum += optimized_entry1_price * 10.0
+                total_usd += entry2_size
+                weighted_sum += optimized_entry1_price * entry2_size
             
             if dca_entry_price and order3_quantity:
-                total_usd += 15.0
-                weighted_sum += dca_entry_price * 15.0
+                total_usd += entry3_size
+                weighted_sum += dca_entry_price * entry3_size
             
-            if total_usd > 15.0:
+            if total_usd > entry1_size:
                 entry_price_for_tp2 = weighted_sum / total_usd
                 logger.info(f"📊 Weighted average entry for TP2: ${entry_price_for_tp2:,.8f} (based on ${total_usd} total USD across orders)")
             else:
