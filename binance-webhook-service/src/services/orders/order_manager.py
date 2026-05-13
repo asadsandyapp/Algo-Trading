@@ -29,7 +29,6 @@ try:
     )
     from services.risk.risk_manager import validate_risk_per_trade, check_recent_price_volatility
     from services.ai_validation.validator import (
-        validate_signal_with_ai, validate_entry2_standalone_with_ai,
         parse_entry_analysis_from_reasoning, analyze_symbol_for_opportunities,
         analyze_trade_recovery_potential
     )
@@ -52,7 +51,6 @@ except ImportError:
     )
     from ...services.risk.risk_manager import validate_risk_per_trade, check_recent_price_volatility
     from ...services.ai_validation.validator import (
-        validate_signal_with_ai, validate_entry2_standalone_with_ai,
         parse_entry_analysis_from_reasoning, analyze_symbol_for_opportunities,
         analyze_trade_recovery_potential
     )
@@ -1840,6 +1838,9 @@ def create_limit_order(signal_data):
         stop_loss = safe_float(signal_data.get('stop_loss'), default=None)
         take_profit = safe_float(signal_data.get('take_profit'), default=None)
         second_entry_price = safe_float(signal_data.get('second_entry_price'), default=None)
+        # Preserve TradingView webhook entry legs before any AI/local price mutation
+        raw_webhook_entry1 = entry_price
+        raw_webhook_entry2 = second_entry_price if second_entry_price and second_entry_price > 0 else None
         
         # Extract indicators if available (for ATR-based Entry 2 calculation)
         indicators = signal_data.get('indicators', {})
@@ -1858,9 +1859,15 @@ def create_limit_order(signal_data):
                 logger.warning(f"Invalid or missing entry_price in webhook payload. Discarding request. entry_price={signal_data.get('entry_price')}")
                 return {'success': False, 'error': 'Invalid or missing entry_price (NA/null)'}
             
-            # AI Signal Validation (ONLY for NEW ENTRY signals - NOT for order tracking or TP creation)
-            logger.info(f"🔍 [AI VALIDATION] Processing NEW ENTRY signal for {symbol} - AI validation will run")
-            validation_result = validate_signal_with_ai(signal_data)
+            # validate_signal_with_ai(signal_data) — disabled; stub keeps downstream code working
+            logger.info(f"🔍 [ENTRY] Processing NEW ENTRY signal for {symbol} — validate_signal_with_ai skipped")
+            # validation_result = validate_signal_with_ai(signal_data)
+            validation_result = {
+                'is_valid': True,
+                'confidence_score': 100.0,
+                'risk_level': 'MEDIUM',
+                'reasoning': 'validate_signal_with_ai disabled',
+            }
             
             # Extract validation results
             is_valid = validation_result.get('is_valid', True)
@@ -1990,115 +1997,7 @@ def create_limit_order(signal_data):
                 logger.info(f"   Entry 1 APPROVED (is_valid={is_valid}, confidence={confidence_score:.1f}%) - ignoring parsing result (Entry 1 is good)")
                 entry1_is_bad = False  # Override parsing result since Entry 1 is actually approved
             
-            # Check if we have Entry 2 price (original)
-            entry2_price_original = second_entry_price if second_entry_price and second_entry_price > 0 else None
-            
-            # Get optimized Entry 2 price if available (from AI optimization)
-            entry2_price_optimized = None
-            if 'optimized_prices' in validation_result:
-                opt_prices = validation_result['optimized_prices']
-                entry2_price_optimized = safe_float(opt_prices.get('second_entry_price'), default=None)
-            
-            # ENTRY 2 VALIDATION LOGIC (CRITICAL - CHECK BEFORE REJECTION):
-            # If Entry 1 failed, ALWAYS check Entry 2 as standalone trade (both original and optimized)
-            # Only reject completely if BOTH Entry 2 options fail
-            entry2_standalone_valid = False
-            entry2_standalone_result = None
-            entry2_price_to_use = None
-            
-            if entry1_failed and (entry2_price_original is not None or entry2_price_optimized is not None):
-                logger.info(f"🔍 Entry 1 failed validation (is_valid={is_valid}, confidence={confidence_score:.1f}%, parsed_bad={entry1_is_bad})")
-                logger.info(f"   Checking Entry 2 as standalone trade to avoid missing profitable trades")
-                
-                # Try Entry 2 with ORIGINAL price first
-                if entry2_price_original is not None:
-                    logger.info(f"   📍 Testing Entry 2 with ORIGINAL price: ${entry2_price_original:,.8f}")
-                    entry2_result_original = validate_entry2_standalone_with_ai(
-                        signal_data=signal_data,
-                        entry2_price=entry2_price_original,
-                        original_validation_result=validation_result
-                    )
-                    
-                    entry2_valid_original = entry2_result_original.get('is_valid', False)
-                    entry2_confidence_original = entry2_result_original.get('confidence_score', 0.0)
-                    
-                    if entry2_valid_original and entry2_confidence_original >= 50.0:
-                        logger.info(f"✅ AI APPROVED Entry 2 with ORIGINAL price: Confidence={entry2_confidence_original:.1f}%")
-                        entry2_standalone_valid = True
-                        entry2_standalone_result = entry2_result_original
-                        entry2_price_to_use = entry2_price_original
-                    else:
-                        logger.warning(f"🚫 AI REJECTED Entry 2 with ORIGINAL price: Confidence={entry2_confidence_original:.1f}%")
-                
-                # If original Entry 2 failed, try OPTIMIZED Entry 2 price
-                if not entry2_standalone_valid and entry2_price_optimized is not None:
-                    logger.info(f"   📍 Testing Entry 2 with OPTIMIZED price: ${entry2_price_optimized:,.8f}")
-                    entry2_result_optimized = validate_entry2_standalone_with_ai(
-                        signal_data=signal_data,
-                        entry2_price=entry2_price_optimized,
-                        original_validation_result=validation_result
-                    )
-                    
-                    entry2_valid_optimized = entry2_result_optimized.get('is_valid', False)
-                    entry2_confidence_optimized = entry2_result_optimized.get('confidence_score', 0.0)
-                    
-                    if entry2_valid_optimized and entry2_confidence_optimized >= 50.0:
-                        logger.info(f"✅ AI APPROVED Entry 2 with OPTIMIZED price: Confidence={entry2_confidence_optimized:.1f}%")
-                        entry2_standalone_valid = True
-                        entry2_standalone_result = entry2_result_optimized
-                        entry2_price_to_use = entry2_price_optimized
-                    else:
-                        logger.warning(f"🚫 AI REJECTED Entry 2 with OPTIMIZED price: Confidence={entry2_confidence_optimized:.1f}%")
-                
-                # If both Entry 2 options failed, log it but continue to check if we should still reject
-                if not entry2_standalone_valid:
-                    logger.warning(f"🚫 Both Entry 2 options (original and optimized) were REJECTED by AI")
-            
-            # Special case: Use Entry 2 only if Entry 1 failed AND Entry 2 passed validation
-            # NOTE: Volatility check is removed - if AI approves Entry 2, we trust it (don't want to miss profitable trades)
-            should_use_entry2_only = (
-                entry1_failed and
-                entry2_standalone_valid and
-                entry2_standalone_result is not None and
-                entry2_price_to_use is not None and
-                entry2_standalone_result.get('confidence_score', 0.0) >= 50.0
-                # Volatility check removed: (has_high_volatility or price_change_pct > 5.0)
-                # If AI approves Entry 2 with >=50% confidence, we trust it regardless of volatility
-            )
-            
-            if should_use_entry2_only:
-                entry2_confidence = entry2_standalone_result.get('confidence_score', 60.0)
-                logger.info(f"🎯 SPECIAL CASE DETECTED: Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade for {symbol}")
-                logger.info(f"   Entry 1 Analysis: Rejected (is_valid={is_valid}, confidence={confidence_score:.1f}%)")
-                logger.info(f"   Entry 2 Standalone Validation: ✅ APPROVED by AI")
-                logger.info(f"   Entry 2 Price: ${entry2_price_to_use:,.8f} ({'OPTIMIZED' if entry2_price_to_use == entry2_price_optimized else 'ORIGINAL'})")
-                logger.info(f"   Entry 2 Confidence: {entry2_confidence:.1f}%")
-                logger.info(f"   Recent Volatility: {price_change_pct:.2f}% over 7 days (High: {has_high_volatility})")
-                logger.info(f"   Decision: Skipping Entry 1, creating Entry 2 only order with $25 and custom TP (4-5%)")
-                
-                # Set flags for Entry 2 only trade
-                signal_data['_special_entry2_only'] = True
-                signal_data['_entry2_only_price'] = entry2_price_to_use
-                signal_data['_entry2_standalone_result'] = entry2_standalone_result
-                
-                # Override validation to allow this special case (use Entry 2's validation result)
-                validation_result['is_valid'] = True
-                validation_result['confidence_score'] = entry2_confidence
-                validation_result['risk_level'] = entry2_standalone_result.get('risk_level', 'MEDIUM')
-                validation_result['special_case'] = 'ENTRY2_ONLY'
-                validation_result['special_case_reason'] = f'Entry 1 rejected but Entry 2 APPROVED by AI as standalone trade (Confidence: {entry2_confidence:.1f}%, Price: ${entry2_price_to_use:,.8f}). Recent volatility: {price_change_pct:.2f}%'
-                validation_result['entry2_standalone_reasoning'] = entry2_standalone_result.get('reasoning', '')
-                
-                # Log Entry 2 only accepted signal
-                log_entry_signal(signal_data, 'ACCEPTED', f'Entry 2 only trade approved (Entry 1 rejected, Entry 2 confidence: {entry2_confidence:.1f}%)', entry2_confidence, quality_score)
-            
-            # APPROVAL LOGIC (More lenient - matches AI prompt instructions):
-            # 1. If AI explicitly approves (is_valid=True) and confidence >= 50%: APPROVE
-            # 2. If confidence >= 55% (threshold): APPROVE
-            # 3. If confidence 50-54% and AI says is_valid=True: APPROVE (AI prompt says "APPROVE with caution")
-            # 4. If confidence 45-49% and is_valid=True and R/R >= 1.0: APPROVE (AI prompt allows this)
-            # 5. Only reject if confidence < 45% OR (confidence < 50% AND is_valid=False)
-            # BUT: If Entry 2 passed validation, we already handled it above, so don't reject here
+            # APPROVAL LOGIC: AI scores are used for logging / TP preferences only — ENTRY orders are never blocked here.
             
             should_approve = False
             
@@ -2233,58 +2132,18 @@ def create_limit_order(signal_data):
                     logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}% (AI approved, accept-most policy)")
                     log_entry_signal(signal_data, 'ACCEPTED', f'AI approved with confidence {confidence_score:.1f}%', confidence_score, quality_score)
             
-            # Only reject if Entry 1 failed AND Entry 2 also failed (both options rejected)
-            # BUT: Instead of completely rejecting, create a $20 alternative order at offset price
-            if not should_approve and not signal_data.get('_special_entry2_only', False):
-                # Check if Entry 2 validation was attempted but failed
-                if entry1_failed and (entry2_price_original is not None or entry2_price_optimized is not None):
-                    if not entry2_standalone_valid:
-                        # Both Entry 1 and Entry 2 failed - create alternative order instead of rejecting
-                        rejection_reason = f"AI REJECTED: Entry 1 failed (is_valid={is_valid}, confidence={confidence_score:.1f}%) AND Entry 2 standalone validation also failed. Creating alternative $20 order at offset price."
-                        logger.warning(f"🚫 AI REJECTION for {symbol}: {rejection_reason}")
-                        logger.info(f"   Entry 1 Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
-                        logger.info(f"   Entry 2 was tested but also rejected by AI")
-                        logger.info(f"   Creating alternative $20 order at offset price instead of complete rejection")
-                        
-                        # Set flag to create alternative order on AI rejection
-                        signal_data['_ai_rejection_alternative_order'] = True
-                        signal_data['_ai_rejection_reason'] = rejection_reason
-                        signal_data['_ai_rejection_confidence'] = confidence_score
-                        
-                        # Log as rejected but with alternative order note
-                        log_entry_signal(signal_data, 'REJECTED', f"{rejection_reason} (Creating alternative order)", confidence_score, quality_score)
-                    else:
-                        # Entry 2 passed but conditions not met (shouldn't happen, but safety check)
-                        rejection_reason = f"Entry 1 failed but Entry 2 validation conditions not fully met"
-                        logger.warning(f"⚠️  Edge case: Entry 2 passed but conditions not met")
-                        # Still create alternative order
-                        signal_data['_ai_rejection_alternative_order'] = True
-                        signal_data['_ai_rejection_reason'] = rejection_reason
-                        signal_data['_ai_rejection_confidence'] = confidence_score
-                else:
-                    # Entry 1 failed and no Entry 2 available - create alternative order
-                    rejection_reason = f"AI REJECTED: Confidence score {confidence_score:.1f}% is below acceptable threshold (AI: is_valid={is_valid}, threshold: {confidence_threshold}%). Creating alternative $20 order at offset price."
-                    logger.warning(f"🚫 AI Validation REJECTED signal for {symbol}: {rejection_reason}")
-                    logger.info(f"   Reasoning: {validation_result.get('reasoning', 'No reasoning provided')}")
-                    logger.info(f"   Risk Level: {validation_result.get('risk_level', 'UNKNOWN')}")
-                    logger.info(f"   Creating alternative $20 order at offset price instead of complete rejection")
-                    
-                    # Set flag to create alternative order on AI rejection
-                    signal_data['_ai_rejection_alternative_order'] = True
-                    signal_data['_ai_rejection_reason'] = rejection_reason
-                    signal_data['_ai_rejection_confidence'] = confidence_score
-                    
-                    # Log as rejected but with alternative order note
-                    log_entry_signal(signal_data, 'REJECTED', f"{rejection_reason} (Creating alternative order)", confidence_score, quality_score)
-                
-                # Don't return error - continue to order creation with alternative order flag
-                # The alternative order will be created in the order creation section
-                logger.info(f"⚠️  AI validation failed, but proceeding with alternative $20 order creation")
+            # AI validation is advisory only — never block ENTRY order placement (always use webhook Entry1 + Entry2).
+            if not should_approve:
+                logger.info(
+                    f"📌 {symbol}: AI gates would skip this signal (is_valid={is_valid}, confidence={confidence_score:.1f}%) — "
+                    f"overriding: always placing Entry1+Entry2 limits per policy"
+                )
+            should_approve = True
             
-            # Log successful validation
-            logger.info(f"✅ AI Validation APPROVED signal for {symbol}: Confidence={confidence_score:.1f}%, "
-                       f"Risk={validation_result.get('risk_level', 'UNKNOWN')}, "
-                       f"Reasoning={validation_result.get('reasoning', 'No reasoning')}")
+            logger.info(
+                f"✅ Proceeding with orders for {symbol} (AI advisory: confidence={confidence_score:.1f}%, "
+                f"risk={validation_result.get('risk_level', 'UNKNOWN')})"
+            )
             
             # Apply optimized prices if available
             if 'optimized_prices' in validation_result:
@@ -3232,6 +3091,24 @@ def create_limit_order(signal_data):
                 entry1_to_entry3_pct = ((dca_entry_price - original_entry1_price) / original_entry1_price) * 100
             logger.info(f"📊 [ENTRY GAP SUMMARY] Entry 1→3: {entry1_to_entry3_pct:.2f}% (Entry 2 not used)")
         
+        # Use exact TradingView webhook legs for limit orders (no AI middle leg, no offset single-order).
+        if is_primary_entry and not signal_data.get('_post_exit_ai_trade', False):
+            original_entry1_price = raw_webhook_entry1
+            optimized_entry1_price = None
+            if raw_webhook_entry2 and raw_webhook_entry2 > 0:
+                dca_entry_price = raw_webhook_entry2
+            elif not dca_entry_price or dca_entry_price <= 0:
+                dca_entry_price = raw_webhook_entry1
+                logger.warning(
+                    "Primary entry: second_entry_price missing in webhook; "
+                    "placing second limit at same price as entry_price."
+                )
+            primary_entry_price = original_entry1_price
+            logger.info(
+                f"📌 Webhook dual-entry: LIMIT @ Entry1 ${original_entry1_price:,.8f}, "
+                f"LIMIT @ Entry2 ${dca_entry_price:,.8f} ($20 each)"
+            )
+        
         # If this is a primary entry, we need both prices to create both orders
         if is_primary_entry and not dca_entry_price:
             logger.warning(f"Primary entry signal received but no second_entry_price provided. Using entry_price for both.")
@@ -3281,13 +3158,11 @@ def create_limit_order(signal_data):
         # Get custom entry size from signal_data if present (for post-exit AI trades)
         custom_entry_size = safe_float(signal_data.get('_entry_size_usd'), default=None)
         
-        # Calculate quantities for 3 orders:
-        # Order 1: Custom size or $10 with original Entry 1
-        # Order 2: Custom size/2 or $10 with optimized Entry 1 (if exists)
-        # Order 3: Custom size or $10 with Entry 2 (original or optimized)
-        entry1_size = custom_entry_size if custom_entry_size else 10.0
-        entry2_size = (custom_entry_size / 2.0) if custom_entry_size else 10.0
-        entry3_size = custom_entry_size if custom_entry_size else 10.0
+        # Calculate quantities for 2 webhook legs (Entry 1 + second_entry); optional custom size for special flows
+        PRIMARY_LEG_USD = 20.0
+        entry1_size = custom_entry_size if custom_entry_size else PRIMARY_LEG_USD
+        entry2_size = (custom_entry_size / 2.0) if custom_entry_size else (PRIMARY_LEG_USD / 2.0)
+        entry3_size = custom_entry_size if custom_entry_size else PRIMARY_LEG_USD
         
         order1_quantity = calculate_quantity(original_entry1_price, symbol_info, entry_size_usd=entry1_size)
         order2_quantity = calculate_quantity(optimized_entry1_price, symbol_info, entry_size_usd=entry2_size) if optimized_entry1_price else None
@@ -3458,341 +3333,11 @@ def create_limit_order(signal_data):
                 logger.error(f"❌ Unexpected error creating POST-EXIT AI order: {e}", exc_info=True)
                 return {'success': False, 'error': f'Unexpected error: {str(e)}'}
         
-        # SPECIAL CASE: Entry 2 only (Entry 1 is bad but Entry 2 is good)
-        if signal_data.get('_special_entry2_only', False):
-            entry2_only_price = signal_data.get('_entry2_only_price')
-            if not entry2_only_price or entry2_only_price <= 0:
-                logger.error(f"❌ Special Entry 2 only case but no valid Entry 2 price provided")
-                return {'success': False, 'error': 'Special Entry 2 only case but no valid Entry 2 price'}
-            
-            # Format Entry 2 price
-            entry2_only_price = format_price_precision(entry2_only_price, tick_size)
-            
-            # Calculate quantity for $25 order
-            entry2_quantity = calculate_quantity(entry2_only_price, symbol_info, entry_size_usd=25.0)
-            
-            # TP: Big Wick uses signal's original TP; Legend Entry 2 only uses 4.5% from entry
-            if signal_data.get('signal_source') == 'big_wick_only' and take_profit and take_profit > 0:
-                custom_tp = format_price_precision(take_profit, tick_size)
-                tp_percentage = None  # from signal
-                logger.info(f"   Using signal take profit for Big Wick: ${custom_tp:,.8f}")
-            else:
-                tp_percentage = 4.5  # 4.5% default for Legend Entry 2 only
-                if signal_side == 'LONG':
-                    custom_tp = entry2_only_price * (1 + tp_percentage / 100)
-                else:  # SHORT
-                    custom_tp = entry2_only_price * (1 - tp_percentage / 100)
-                custom_tp = format_price_precision(custom_tp, tick_size)
-            
-            logger.info(f"🎯 SPECIAL CASE: Creating Entry 2 only order for {symbol}")
-            logger.info(f"   Entry 2 Price: ${entry2_only_price:,.8f}")
-            logger.info(f"   Order Size: $25")
-            logger.info(f"   Custom TP: ${custom_tp:,.8f}" + (f" ({tp_percentage}% from entry)" if tp_percentage is not None else " (from signal)"))
-            
-            # Create Entry 2 only order
-            entry2_order_params = {
-                'symbol': symbol,
-                'side': side,
-                'type': 'LIMIT',
-                'timeInForce': 'GTC',
-                'quantity': entry2_quantity,
-                'price': entry2_only_price,
-            }
-            if is_hedge_mode:
-                entry2_order_params['positionSide'] = position_side
-            
-            logger.info(f"Creating SPECIAL Entry 2 only order: {entry2_order_params}")
-            try:
-                entry2_order_result = client.futures_create_order(**entry2_order_params)
-                order_results.append(entry2_order_result)
-                active_trades[symbol]['dca_order_id'] = entry2_order_result.get('orderId')
-                active_trades[symbol]['dca_filled'] = False
-                active_trades[symbol]['position_open'] = True
-                active_trades[symbol]['primary_order_id'] = None  # No Order 1
-                active_trades[symbol]['optimized_entry1_order_id'] = None  # No Order 2
-                active_trades[symbol]['original_entry1'] = None  # No Entry 1
-                active_trades[symbol]['original_entry2'] = entry2_only_price
-                active_trades[symbol]['_special_entry2_only'] = True
-                active_trades[symbol]['_custom_tp'] = custom_tp
-                active_trades[symbol]['_custom_tp_percentage'] = tp_percentage
-                # Store TP price for TP creation (use single TP mode for Entry 2 only)
-                active_trades[symbol]['use_single_tp'] = True
-                active_trades[symbol]['tp2_price'] = custom_tp
-                active_trades[symbol]['tp_side'] = 'SELL' if signal_side == 'LONG' else 'BUY'
-                active_trades[symbol]['tp_quantity'] = entry2_quantity  # Store quantity for TP
-                active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'  # Use mark price for trigger
-                logger.info(f"✅ SPECIAL Entry 2 only order created successfully: Order ID {entry2_order_result.get('orderId')} @ ${entry2_only_price:,.8f} (${25.0} size)")
-            except BinanceAPIException as e:
-                logger.error(f"❌ Failed to create SPECIAL Entry 2 only order: {e.message} (Code: {e.code})")
-                send_slack_alert(
-                    error_type="Special Entry 2 Only Order Creation Failed",
-                    message=f"{e.message} (Code: {e.code})",
-                    details={'Error_Code': e.code, 'Entry_Price': entry2_only_price, 'Quantity': entry2_quantity, 'Side': side},
-                    symbol=symbol,
-                    severity='ERROR'
-                )
-                return {'success': False, 'error': f'Failed to create Entry 2 only order: {e.message}'}
-            except Exception as e:
-                logger.error(f"❌ Unexpected error creating SPECIAL Entry 2 only order: {e}")
-                send_slack_alert(
-                    error_type="Special Entry 2 Only Order Creation Failed",
-                    message=str(e),
-                    details={'Entry_Price': entry2_only_price, 'Quantity': entry2_quantity},
-                    symbol=symbol,
-                    severity='ERROR'
-                )
-                return {'success': False, 'error': f'Unexpected error creating Entry 2 only order: {str(e)}'}
-            
-            # Send special notification for Entry 2 only case
-            try:
-                # Use custom notification format for Entry 2 only case
-                if SLACK_SIGNAL_WEBHOOK_URL:
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
-                    environment = 'TESTNET' if BINANCE_TESTNET else 'PRODUCTION'
-                    side_emoji = '📈' if signal_side == 'LONG' else '📉'
-                    formatted_symbol = symbol.replace('.P', '').upper()
-                    formatted_timeframe = timeframe.upper() if timeframe else 'N/A'
-                    
-                    slack_message = f"""{side_emoji} *SPECIAL ENTRY 2 ONLY SIGNAL - ORDER OPENED*
-
-*Symbol:* `{formatted_symbol}`
-*Timeframe:* `{formatted_timeframe}`
-*Environment:* {environment}
-*Time:* {timestamp}
-
-🎯 *SPECIAL CASE: Entry 1 Rejected, Entry 2 Only*
-
-*Entry Order:*
-  • Entry 2 Only: ${entry2_only_price:,.8f} - $25.00 (Entry 1 skipped - not optimal)
-
-*Risk Management:*
-  • Stop Loss: {f'${stop_loss:,.8f}' if stop_loss else 'N/A'}
-  • Take Profit: ${custom_tp:,.8f} ({f'{tp_percentage}% from entry' if tp_percentage is not None else 'from signal'} - Custom TP)
-
-*Reason:*
-{validation_result.get('special_case_reason', 'Entry 1 rejected but Entry 2 is optimal')}
-
-*AI Analysis:*
-{validation_result.get('reasoning', 'No detailed reasoning')[:600]}"""
-                    
-                    def send_async():
-                        try:
-                            payload = {'text': slack_message}
-                            response = requests.post(
-                                SLACK_SIGNAL_WEBHOOK_URL,
-                                json=payload,
-                                headers={'Content-Type': 'application/json'},
-                                timeout=5
-                            )
-                            response.raise_for_status()
-                            logger.info(f"✅ Special Entry 2 only notification sent to Slack for {symbol}")
-                        except Exception as e:
-                            logger.debug(f"Failed to send Slack special Entry 2 only notification: {e}")
-                    
-                    thread = threading.Thread(target=send_async, daemon=True)
-                    thread.start()
-            except Exception as e:
-                logger.warning(f"Failed to send special Entry 2 only notification: {e}")
-            
-            return {
-                'success': True,
-                'message': 'Special Entry 2 only order created successfully',
-                'order_id': entry2_order_result.get('orderId'),
-                'entry_price': entry2_only_price,
-                'custom_tp': custom_tp,
-                'special_case': 'ENTRY2_ONLY'
-            }
-        
-        # Check if AI rejection alternative order should be created
-        ai_rejection_alternative = signal_data.get('_ai_rejection_alternative_order', False)
         is_big_wick = signal_data.get('signal_source') == 'big_wick_only'
         
-        # Extract SMV direction from JSON (new field from Pine script)
-        smv_direction = indicators.get('smv_direction', 'Neutral') if indicators else 'Neutral'
-        # Convert to boolean for backward compatibility
-        smart_money_buying = smv_direction == 'Buy'
-        smart_money_selling = smv_direction == 'Sell'
-        # Fallback to old boolean fields if smv_direction not present
-        if smv_direction == 'Neutral' and indicators and 'smart_money_buying' in indicators:
-            smart_money_buying = indicators.get('smart_money_buying', False)
-            smart_money_selling = indicators.get('smart_money_selling', False)
-        
-        # Determine if we should use alternative order logic based on smart money flags OR AI rejection
-        use_alternative_order_logic = False
-        alternative_order_price = None
-        alternative_order_size = 20.0  # $20 order
-        alternative_order_reason = None
-        
-        # Priority 1: AI Rejection Alternative Order (if AI validation failed)
-        if ai_rejection_alternative:
-            use_alternative_order_logic = True
-            if signal_side == 'LONG':
-                # For LONG: Create order 5% lower from entry1
-                alternative_order_price = original_entry1_price * (1 - 0.05)
-                alternative_order_reason = f"AI Rejection Alternative: AI validation failed (confidence: {signal_data.get('_ai_rejection_confidence', 0):.1f}%)"
-                logger.info(f"🔄 [AI REJECTION ALTERNATIVE] LONG trade: AI validation failed, creating alternative $20 order")
-                logger.info(f"   Using alternative order: $20 order at ${alternative_order_price:,.8f} (5% lower from Entry 1: ${original_entry1_price:,.8f})")
-            else:  # SHORT
-                # For SHORT: Create order 5% higher from entry1
-                alternative_order_price = original_entry1_price * (1 + 0.05)
-                alternative_order_reason = f"AI Rejection Alternative: AI validation failed (confidence: {signal_data.get('_ai_rejection_confidence', 0):.1f}%)"
-                logger.info(f"🔄 [AI REJECTION ALTERNATIVE] SHORT trade: AI validation failed, creating alternative $20 order")
-                logger.info(f"   Using alternative order: $20 order at ${alternative_order_price:,.8f} (5% higher from Entry 1: ${original_entry1_price:,.8f})")
-        
-        # Priority 2: Smart Money Alternative Order (if AI passed but smart money contradicts). Skipped for big wick signals.
-        if not use_alternative_order_logic and not is_big_wick:
-            if signal_side == 'LONG':
-                # For LONG trades:
-                # - If smart_money_buying is true: use original entry1 and entry2
-                # - If smart_money_buying is false AND smart_money_selling is true: create one $20 order 5% lower from entry1
-                # - If both are false: use original entries
-                if not smart_money_buying and smart_money_selling:
-                    use_alternative_order_logic = True
-                    # Create order 5% lower from entry1
-                    alternative_order_price = original_entry1_price * (1 - 0.05)
-                    alternative_order_reason = "Smart Money Logic: smart_money_buying=False, smart_money_selling=True"
-                    logger.info(f"🔄 [SMART MONEY LOGIC] LONG trade: smart_money_buying=False, smart_money_selling=True")
-                    logger.info(f"   Using alternative order: $20 order at ${alternative_order_price:,.8f} (5% lower from Entry 1: ${original_entry1_price:,.8f})")
-                else:
-                    logger.info(f"ℹ️  [SMART MONEY LOGIC] LONG trade: Using original entries (smart_money_buying={smart_money_buying}, smart_money_selling={smart_money_selling})")
-            else:  # SHORT
-                # For SHORT trades:
-                # - If smart_money_selling is true: use original entry1 and entry2
-                # - If smart_money_selling is false AND smart_money_buying is true: create one $20 order 5% higher from entry1
-                # - If both are false: use original entries
-                if not smart_money_selling and smart_money_buying:
-                    use_alternative_order_logic = True
-                    # Create order 5% higher from entry1
-                    alternative_order_price = original_entry1_price * (1 + 0.05)
-                    alternative_order_reason = "Smart Money Logic: smart_money_selling=False, smart_money_buying=True"
-                    logger.info(f"🔄 [SMART MONEY LOGIC] SHORT trade: smart_money_selling=False, smart_money_buying=True")
-                    logger.info(f"   Using alternative order: $20 order at ${alternative_order_price:,.8f} (5% higher from Entry 1: ${original_entry1_price:,.8f})")
-                else:
-                    logger.info(f"ℹ️  [SMART MONEY LOGIC] SHORT trade: Using original entries (smart_money_buying={smart_money_buying}, smart_money_selling={smart_money_selling})")
-        elif not use_alternative_order_logic and is_big_wick:
-            logger.info(f"ℹ️  [BIG WICK] Skipping Smart Money alternative order logic - using original entries")
-        
-        # If using alternative order logic, create single $20 order and skip normal order creation
-        if use_alternative_order_logic and is_primary_entry:
-            # Format alternative order price
-            price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
-            tick_size = float(price_filter['tickSize']) if price_filter else 0.01
-            alternative_order_price = format_price_precision(alternative_order_price, tick_size)
-            
-            # Calculate quantity for $20 order
-            alternative_quantity = calculate_quantity(alternative_order_price, symbol_info, entry_size_usd=alternative_order_size)
-            
-            # Format quantity precision
-            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
-            if lot_size_filter:
-                step_size = float(lot_size_filter['stepSize'])
-                alternative_quantity = format_quantity_precision(alternative_quantity, step_size)
-            
-            # Create single $20 order
-            alternative_order_params = {
-                'symbol': symbol,
-                'side': side,
-                'type': 'LIMIT',
-                'timeInForce': 'GTC',
-                'quantity': alternative_quantity,
-                'price': alternative_order_price,
-            }
-            if is_hedge_mode:
-                alternative_order_params['positionSide'] = position_side
-            
-            order_reason = alternative_order_reason or "Alternative Order Logic"
-            logger.info(f"Creating ALTERNATIVE ORDER ({order_reason}, ${alternative_order_size}): {alternative_order_params}")
-            try:
-                alternative_order_result = client.futures_create_order(**alternative_order_params)
-                order_results.append(alternative_order_result)
-                active_trades[symbol]['primary_order_id'] = alternative_order_result.get('orderId')
-                active_trades[symbol]['primary_filled'] = False
-                active_trades[symbol]['dca_filled'] = False
-                active_trades[symbol]['optimized_entry1_filled'] = False
-                active_trades[symbol]['position_open'] = True
-                active_trades[symbol]['dca_order_id'] = None
-                active_trades[symbol]['optimized_entry1_order_id'] = None
-                active_trades[symbol]['original_entry1'] = alternative_order_price
-                active_trades[symbol]['original_entry2'] = None
-                active_trades[symbol]['_alternative_order'] = True
-                active_trades[symbol]['_alternative_order_reason'] = order_reason
-                # Store AI rejection info if applicable
-                if ai_rejection_alternative:
-                    active_trades[symbol]['_ai_rejection_alternative'] = True
-                    active_trades[symbol]['_ai_rejection_confidence'] = signal_data.get('_ai_rejection_confidence', 0)
-                else:
-                    active_trades[symbol]['_alternative_smart_money_order'] = True
-                # Ensure TP/SL are stored (they should already be stored above, but ensure they're set)
-                if stop_loss:
-                    active_trades[symbol]['original_stop_loss'] = stop_loss
-                if take_profit:
-                    active_trades[symbol]['take_profit'] = take_profit
-                    active_trades[symbol]['use_single_tp'] = True
-                    active_trades[symbol]['tp2_price'] = format_price_precision(take_profit, tick_size)
-                    active_trades[symbol]['tp2_quantity'] = alternative_quantity
-                    active_trades[symbol]['tp_side'] = 'SELL' if signal_side == 'LONG' else 'BUY'
-                    active_trades[symbol]['tp_working_type'] = 'MARK_PRICE'
-                logger.info(f"✅ ALTERNATIVE ORDER created successfully: Order ID {alternative_order_result.get('orderId')} @ ${alternative_order_price:,.8f} (${alternative_order_size} size)")
-                
-                # Track order
-                order_key = f"{symbol}_{alternative_order_price}_{side}_ALTERNATIVE"
-                recent_orders[order_key] = current_time
-                
-                # Send notification
-                # Use AI rejection confidence if it's an AI rejection alternative order
-                notification_confidence = signal_data.get('_ai_rejection_confidence', confidence_score) if ai_rejection_alternative else confidence_score
-                notification_risk_level = 'HIGH' if ai_rejection_alternative else validation_result.get('risk_level', 'MEDIUM')
-                
-                send_signal_notification(
-                    symbol=symbol,
-                    signal_side=signal_side,
-                    timeframe=timeframe,
-                    confidence_score=notification_confidence,
-                    risk_level=notification_risk_level,
-                    entry1_price=alternative_order_price,
-                    entry2_price=None,
-                    stop_loss=stop_loss,
-                    take_profit=take_profit,
-                    tp1_price=take_profit,
-                    use_single_tp=True,
-                    optimized_entry1_price=None
-                )
-                
-                return {
-                    'success': True,
-                    'message': f'Alternative order created ({order_reason}): {signal_side} {symbol} @ ${alternative_order_price:,.8f}',
-                    'order_id': alternative_order_result.get('orderId'),
-                    'orders': order_results,
-                    'alternative_order': True,
-                    'alternative_order_reason': order_reason
-                }
-            except BinanceAPIException as e:
-                logger.error(f"❌ Failed to create ALTERNATIVE ORDER: {e.message} (Code: {e.code})")
-                send_slack_alert(
-                    error_type="Alternative Smart Money Order Creation Failed",
-                    message=f"{e.message} (Code: {e.code})",
-                    details={'Error_Code': e.code, 'Entry_Price': alternative_order_price, 'Quantity': alternative_quantity, 'Side': side},
-                    symbol=symbol,
-                    severity='ERROR'
-                )
-                return {'success': False, 'error': f'Failed to create alternative smart money order: {e.message}'}
-            except Exception as e:
-                logger.error(f"❌ Unexpected error creating ALTERNATIVE ORDER: {e}")
-                send_slack_alert(
-                    error_type="Alternative Smart Money Order Creation Error",
-                    message=str(e),
-                    details={'Entry_Price': alternative_order_price, 'Quantity': alternative_quantity, 'Side': side},
-                    symbol=symbol,
-                    severity='ERROR'
-                )
-                return {'success': False, 'error': f'Unexpected error: {str(e)}'}
-        
-        # If this is a primary entry, create 3 entry orders:
-        # Order 1: $10 with original Entry 1 price
-        # Order 2: $10 with optimized Entry 1 price (if AI optimized, otherwise skip)
-        # Order 3: $10 with Entry 2 price (original or optimized)
+        # If this is a primary entry, create 2 limit orders (Entry 1 + Entry 2 from webhook, $20 each)
         if is_primary_entry:
-            # ORDER 1: $10 with original Entry 1 price
+            # ORDER 1: first webhook entry price
             # Re-format price and quantity to ensure correct precision before creating order
             price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
             tick_size = float(price_filter['tickSize']) if price_filter else 0.01
@@ -3893,13 +3438,13 @@ def create_limit_order(signal_data):
                 if is_hedge_mode:
                     order2_params['positionSide'] = position_side
                 
-                logger.info(f"Creating ORDER 2 (Optimized Entry 1, $10): {order2_params}")
+                logger.info(f"Creating ORDER 2 (Optimized Entry 1, ${entry2_size}): {order2_params}")
                 try:
                     order2_result = client.futures_create_order(**order2_params)
                     order_results.append(order2_result)
                     active_trades[symbol]['optimized_entry1_order_id'] = order2_result.get('orderId')
                     active_trades[symbol]['optimized_entry1_filled'] = False
-                    logger.info(f"✅ ORDER 2 created successfully: Order ID {order2_result.get('orderId')} @ ${optimized_entry1_price:,.8f} (${10.0} size)")
+                    logger.info(f"✅ ORDER 2 created successfully: Order ID {order2_result.get('orderId')} @ ${optimized_entry1_price:,.8f} (${entry2_size} size)")
                     
                     # Track Order 2
                     order_key = f"{symbol}_{optimized_entry1_price}_{side}_ORDER2"
