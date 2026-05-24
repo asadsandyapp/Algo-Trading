@@ -3106,7 +3106,7 @@ def create_limit_order(signal_data):
             primary_entry_price = original_entry1_price
             logger.info(
                 f"📌 Webhook dual-entry: LIMIT @ Entry1 ${original_entry1_price:,.8f}, "
-                f"LIMIT @ Entry2 ${dca_entry_price:,.8f} ($20 each)"
+                f"LIMIT @ Entry2 ${dca_entry_price:,.8f} (${ENTRY_SIZE_USD:.0f} each @ {LEVERAGE}X)"
             )
         
         # If this is a primary entry, we need both prices to create both orders
@@ -3158,11 +3158,10 @@ def create_limit_order(signal_data):
         # Get custom entry size from signal_data if present (for post-exit AI trades)
         custom_entry_size = safe_float(signal_data.get('_entry_size_usd'), default=None)
         
-        # Calculate quantities for 2 webhook legs (Entry 1 + second_entry); optional custom size for special flows
-        PRIMARY_LEG_USD = 20.0
-        entry1_size = custom_entry_size if custom_entry_size else PRIMARY_LEG_USD
-        entry2_size = (custom_entry_size / 2.0) if custom_entry_size else (PRIMARY_LEG_USD / 2.0)
-        entry3_size = custom_entry_size if custom_entry_size else PRIMARY_LEG_USD
+        # Calculate quantities for webhook legs ($ENTRY_SIZE_USD margin per entry × LEVERAGE notional)
+        entry1_size = custom_entry_size if custom_entry_size else ENTRY_SIZE_USD
+        entry2_size = custom_entry_size if custom_entry_size else ENTRY_SIZE_USD
+        entry3_size = custom_entry_size if custom_entry_size else ENTRY_SIZE_USD
         
         order1_quantity = calculate_quantity(original_entry1_price, symbol_info, entry_size_usd=entry1_size)
         order2_quantity = calculate_quantity(optimized_entry1_price, symbol_info, entry_size_usd=entry2_size) if optimized_entry1_price else None
@@ -3335,7 +3334,7 @@ def create_limit_order(signal_data):
         
         is_big_wick = signal_data.get('signal_source') == 'big_wick_only'
         
-        # If this is a primary entry, create 2 limit orders (Entry 1 + Entry 2 from webhook, $20 each)
+        # If this is a primary entry, create 2 limit orders (Entry 1 + Entry 2 from webhook, ENTRY_SIZE_USD each)
         if is_primary_entry:
             # ORDER 1: first webhook entry price
             # Re-format price and quantity to ensure correct precision before creating order
